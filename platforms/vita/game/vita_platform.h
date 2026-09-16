@@ -22,7 +22,4 @@ void melee_vita_audio_poll(void);
 void melee_vita_audio_shutdown(void);
 void melee_vita_card_poll(void);
 
-/* Capture a bounded set of GX draw-state summaries in the live Vita log. */
-void melee_vita_gx_begin_diagnostics(const char* label, u32 draw_count);
-
 #endif

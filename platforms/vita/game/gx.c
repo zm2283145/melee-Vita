@@ -101,17 +101,11 @@ typedef struct VitaImmediateState {
 typedef struct VitaDecodedVertex {
     f32 position[3];
     f32 normal[3];
-    f32 texture[GX_MAX_TEXCOORD][2];
+    f32 texture[2];
     u32 color;
     u8 position_matrix;
     u8 has_position_matrix;
 } VitaDecodedVertex;
-
-typedef struct VitaClipVertex {
-    f32 x, y, z, w;
-    f32 u, v;
-    u32 color;
-} VitaClipVertex;
 
 typedef struct VitaGXState {
     GXFifoObj fifo;
@@ -148,9 +142,7 @@ typedef struct VitaGXState {
 
     GXColor clear_color;
     u32 clear_depth;
-    VitaTexObj loaded_textures[GX_MAX_TEXMAP];
     const GXTexObj* textures[GX_MAX_TEXMAP];
-    VitaTlutObj loaded_tluts[20];
     const GXTlutObj* tluts[20];
     VitaLightObj lights[8];
     GXColor ambient_colors[2];
@@ -188,16 +180,6 @@ static VitaDecodedVertex* s_decode_vertices;
 static u32 s_decode_capacity;
 static MeleeVitaScreenVertex* s_triangle_vertices;
 static u32 s_triangle_capacity;
-static const char* s_diagnostic_label;
-static u32 s_diagnostic_draws;
-
-void melee_vita_gx_begin_diagnostics(const char* label, u32 draw_count)
-{
-    s_diagnostic_label = label != NULL ? label : "gx";
-    s_diagnostic_draws = draw_count;
-    melee_vita_log_info("[GXDIAG] %s armed for %u draws",
-                        s_diagnostic_label, draw_count);
-}
 
 static u16 read_u16(const u8* bytes, bool little_endian)
 {
@@ -353,12 +335,10 @@ static void decode_attribute(VitaDecodedVertex* vertex, GXAttr attr,
         vertex->normal[2] = read_component(source + step * 2u, format->type, format->fraction, little_endian);
     } else if (attr == GX_VA_CLR0) {
         vertex->color = decode_color(source, format->type, little_endian);
-    } else if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) {
-        const u32 coordinate = (u32) attr - (u32) GX_VA_TEX0;
+    } else if (attr == GX_VA_TEX0) {
         u32 components = attribute_components(attr, format->count);
-        vertex->texture[coordinate][0] = read_component(
-            source, format->type, format->fraction, little_endian);
-        vertex->texture[coordinate][1] = components >= 2
+        vertex->texture[0] = read_component(source, format->type, format->fraction, little_endian);
+        vertex->texture[1] = components >= 2
             ? read_component(source + step, format->type, format->fraction, little_endian) : 0.0f;
     }
 }
@@ -376,42 +356,27 @@ static u32 active_texture_stage(void)
     return GX_MAX_TEVSTAGE;
 }
 
-static void transform_vertex(const VitaDecodedVertex* input,
-                             VitaClipVertex* output)
+static void project_vertex(const VitaDecodedVertex* input,
+                           MeleeVitaScreenVertex* output)
 {
     const u32 matrix_id = input->has_position_matrix
         ? input->position_matrix : s_gx.current_matrix;
     const f32 (*matrix)[4] = s_gx.position_matrices[matrix_slot(matrix_id)];
-    const f32 ex = matrix[0][3] + matrix[0][0] * input->position[0] +
-        matrix[0][1] * input->position[1] + matrix[0][2] * input->position[2];
-    const f32 ey = matrix[1][3] + matrix[1][0] * input->position[0] +
-        matrix[1][1] * input->position[1] + matrix[1][2] * input->position[2];
-    const f32 ez = matrix[2][3] + matrix[2][0] * input->position[0] +
-        matrix[2][1] * input->position[1] + matrix[2][2] * input->position[2];
-    if (s_gx.projection[0] == (f32) GX_PERSPECTIVE) {
-        output->x = ex * s_gx.projection[1] + ez * s_gx.projection[2];
-        output->y = ey * s_gx.projection[3] + ez * s_gx.projection[4];
-        output->z = s_gx.projection[6] + ez * s_gx.projection[5];
-        output->w = -ez;
-    } else {
-        output->x = s_gx.projection[2] + ex * s_gx.projection[1];
-        output->y = s_gx.projection[4] + ey * s_gx.projection[3];
-        output->z = s_gx.projection[6] + ez * s_gx.projection[5];
-        output->w = 1.0f;
-    }
-    f32 tex[3] = { input->texture[0][0], input->texture[0][1], 1.0f };
+    f32 x, y, z;
+    const f32 vita_scale = 544.0f / 480.0f;
+    GXProject(input->position[0], input->position[1], input->position[2],
+              matrix, s_gx.projection, s_gx.viewport, &x, &y, &z);
+    output->x = (960.0f - 640.0f * vita_scale) * 0.5f + x * vita_scale;
+    output->y = y * vita_scale;
+    output->z = z;
+    f32 tex[3] = { input->texture[0], input->texture[1], 1.0f };
     const u32 texture_stage = active_texture_stage();
     GXTexCoordID coordinate = texture_stage < GX_MAX_TEVSTAGE
         ? s_gx.tev_coordinates[texture_stage] : GX_TEXCOORD_NULL;
     if ((unsigned) coordinate < GX_MAX_TEXCOORD &&
         (unsigned) coordinate < s_gx.texture_generator_count) {
         const VitaTexGenState* generator = &s_gx.texture_generators[coordinate];
-        if (generator->source >= GX_TG_TEX0 && generator->source <= GX_TG_TEX7) {
-            const u32 input_coordinate =
-                (u32) generator->source - (u32) GX_TG_TEX0;
-            tex[0] = input->texture[input_coordinate][0];
-            tex[1] = input->texture[input_coordinate][1];
-        } else if (generator->source == GX_TG_POS) {
+        if (generator->source == GX_TG_POS) {
             tex[0] = input->position[0]; tex[1] = input->position[1]; tex[2] = input->position[2];
         } else if (generator->source == GX_TG_NRM) {
             tex[0] = input->normal[0]; tex[1] = input->normal[1]; tex[2] = input->normal[2];
@@ -439,45 +404,9 @@ static void transform_vertex(const VitaDecodedVertex* input,
             }
         }
     }
-    output->u = tex[0]; output->v = tex[1];
+    output->u = tex[0];
+    output->v = tex[1];
     output->color = input->color;
-}
-
-static void clip_to_screen(const VitaClipVertex* input,
-                           MeleeVitaScreenVertex* output)
-{
-    const f32 inverse_w = 1.0f / input->w;
-    const f32 screen_x = s_gx.viewport[0] + s_gx.viewport[2] * 0.5f +
-        input->x * inverse_w * s_gx.viewport[2] * 0.5f;
-    const f32 screen_y = s_gx.viewport[1] + s_gx.viewport[3] * 0.5f -
-        input->y * inverse_w * s_gx.viewport[3] * 0.5f;
-    const f32 vita_scale = 544.0f / 480.0f;
-    output->x = (960.0f - 640.0f * vita_scale) * 0.5f + screen_x * vita_scale;
-    output->y = screen_y * vita_scale;
-    output->z = s_gx.viewport[5] + input->z * inverse_w *
-        (s_gx.viewport[5] - s_gx.viewport[4]);
-    output->u = input->u; output->v = input->v;
-    output->color = input->color;
-}
-
-static void project_vertex(const VitaDecodedVertex* input,
-                           MeleeVitaScreenVertex* output)
-{
-    VitaClipVertex clip;
-    transform_vertex(input, &clip);
-    if (clip.w < 1.0e-6f) clip.w = 1.0e-6f;
-    clip_to_screen(&clip, output);
-}
-
-static u32 emit_clipped_triangle(const VitaDecodedVertex* a,
-                                 const VitaDecodedVertex* b,
-                                 const VitaDecodedVertex* c,
-                                 MeleeVitaScreenVertex* output)
-{
-    project_vertex(a, &output[0]);
-    project_vertex(b, &output[1]);
-    project_vertex(c, &output[2]);
-    return 3;
 }
 
 static const MeleeVitaTextureSource* current_texture_source(
@@ -628,31 +557,28 @@ static void submit_decoded(GXPrimitive primitive,
     else if (primitive == GX_QUADS) triangle_vertices = count / 4u * 6u;
     else if (primitive == GX_TRIANGLESTRIP || primitive == GX_TRIANGLEFAN)
         triangle_vertices = count >= 3u ? (count - 2u) * 3u : 0u;
-    if (triangle_vertices == 0 ||
-        triangle_vertices > UINT32_MAX / 8u ||
-        !reserve_triangles(triangle_vertices * 8u)) return;
+    if (triangle_vertices == 0 || !reserve_triangles(triangle_vertices)) return;
 
-#define EMIT_TRIANGLE(a, b, c) \
-    output += emit_clipped_triangle(&vertices[(a)], &vertices[(b)], \
-                                    &vertices[(c)], \
-                                    &s_triangle_vertices[output])
+#define PROJECT_INDEX(index) project_vertex(&vertices[(index)], &s_triangle_vertices[output++])
     if (primitive == GX_TRIANGLES) {
-        for (i = 0; i + 2u < count; i += 3u)
-            EMIT_TRIANGLE(i, i + 1u, i + 2u);
+        for (i = 0; i < triangle_vertices; ++i) PROJECT_INDEX(i);
     } else if (primitive == GX_QUADS) {
         for (i = 0; i + 3u < count; i += 4u) {
-            EMIT_TRIANGLE(i, i + 1u, i + 2u);
-            EMIT_TRIANGLE(i, i + 2u, i + 3u);
+            PROJECT_INDEX(i); PROJECT_INDEX(i + 1u); PROJECT_INDEX(i + 2u);
+            PROJECT_INDEX(i); PROJECT_INDEX(i + 2u); PROJECT_INDEX(i + 3u);
         }
     } else if (primitive == GX_TRIANGLESTRIP) {
         for (i = 2; i < count; ++i) {
-            if (i & 1u) EMIT_TRIANGLE(i - 1u, i - 2u, i);
-            else EMIT_TRIANGLE(i - 2u, i - 1u, i);
+            if (i & 1u) { PROJECT_INDEX(i - 1u); PROJECT_INDEX(i - 2u); }
+            else { PROJECT_INDEX(i - 2u); PROJECT_INDEX(i - 1u); }
+            PROJECT_INDEX(i);
         }
     } else if (primitive == GX_TRIANGLEFAN) {
-        for (i = 2; i < count; ++i) EMIT_TRIANGLE(0, i - 1u, i);
+        for (i = 2; i < count; ++i) {
+            PROJECT_INDEX(0); PROJECT_INDEX(i - 1u); PROJECT_INDEX(i);
+        }
     }
-#undef EMIT_TRIANGLE
+#undef PROJECT_INDEX
     if (s_gx.cull_mode != GX_CULL_NONE) {
         u32 kept = 0;
         for (i = 0; i + 2u < output; i += 3u) {
@@ -676,50 +602,6 @@ static void submit_decoded(GXPrimitive primitive,
     const MeleeVitaTextureSource* texture_source =
         current_texture_source(&texture);
     const u32 texture_stage = active_texture_stage();
-    if (s_diagnostic_draws != 0) {
-        f32 min_x = vertices[0].position[0];
-        f32 max_x = min_x;
-        f32 min_y = vertices[0].position[1];
-        f32 max_y = min_y;
-        f32 screen_min_x = s_triangle_vertices[0].x;
-        f32 screen_max_x = screen_min_x;
-        f32 screen_min_y = s_triangle_vertices[0].y;
-        f32 screen_max_y = screen_min_y;
-        u32 vertex_index;
-        const GXTexCoordID coordinate = texture_stage < GX_MAX_TEVSTAGE
-            ? s_gx.tev_coordinates[texture_stage] : GX_TEXCOORD_NULL;
-        for (vertex_index = 1; vertex_index < count; ++vertex_index) {
-            if (vertices[vertex_index].position[0] < min_x) min_x = vertices[vertex_index].position[0];
-            if (vertices[vertex_index].position[0] > max_x) max_x = vertices[vertex_index].position[0];
-            if (vertices[vertex_index].position[1] < min_y) min_y = vertices[vertex_index].position[1];
-            if (vertices[vertex_index].position[1] > max_y) max_y = vertices[vertex_index].position[1];
-        }
-        for (vertex_index = 1; vertex_index < output; ++vertex_index) {
-            if (s_triangle_vertices[vertex_index].x < screen_min_x) screen_min_x = s_triangle_vertices[vertex_index].x;
-            if (s_triangle_vertices[vertex_index].x > screen_max_x) screen_max_x = s_triangle_vertices[vertex_index].x;
-            if (s_triangle_vertices[vertex_index].y < screen_min_y) screen_min_y = s_triangle_vertices[vertex_index].y;
-            if (s_triangle_vertices[vertex_index].y > screen_max_y) screen_max_y = s_triangle_vertices[vertex_index].y;
-        }
-        melee_vita_log_info(
-            "[GXDIAG] %s prim=%u in=%u out=%u pm=%u cur=%u proj=%u tev=%u tg=%u cull=%u",
-            s_diagnostic_label, (u32) primitive, count, output,
-            vertices[0].has_position_matrix ? vertices[0].position_matrix : 255u,
-            s_gx.current_matrix, (u32) s_gx.projection[0],
-            s_gx.tev_stage_count, s_gx.texture_generator_count,
-            (u32) s_gx.cull_mode);
-        melee_vita_log_info(
-            "[GXDIAG] pos=%d..%d,%d..%d screen=%d..%d,%d..%d tex=%ux%u fmt=%u stage=%u coord=%u uv=%d,%d",
-            (int) min_x, (int) max_x, (int) min_y, (int) max_y,
-            (int) screen_min_x, (int) screen_max_x,
-            (int) screen_min_y, (int) screen_max_y,
-            texture_source != NULL ? texture_source->width : 0,
-            texture_source != NULL ? texture_source->height : 0,
-            texture_source != NULL ? (u32) texture_source->format : 0xffffffffu,
-            texture_stage, (u32) coordinate,
-            (int) (s_triangle_vertices[0].u * 1000.0f),
-            (int) (s_triangle_vertices[0].v * 1000.0f));
-        --s_diagnostic_draws;
-    }
     u32 tint = texture_source != NULL && texture_source->chroma_u != NULL
         ? 0xffffffffu
         : texture_source != NULL && texture_stage < GX_MAX_TEVSTAGE
@@ -1352,25 +1234,15 @@ void GXColor1x16(u16 index) { immediate_indexed_color(index); }
 void GXColor1x8(u8 index) { immediate_indexed_color(index); }
 
 static void immediate_texcoord(f32 s, f32 t)
-{
-    VitaDecodedVertex* v = immediate_vertex();
-    const GXAttr attr = immediate_attribute();
-    if (v != NULL && attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) {
-        const u32 coordinate = (u32) attr - (u32) GX_VA_TEX0;
-        v->texture[coordinate][0] = s;
-        v->texture[coordinate][1] = t;
-    }
-    note_value();
-    immediate_advance();
-}
+{ VitaDecodedVertex* v = immediate_vertex(); if (v != NULL) { v->texture[0] = s; v->texture[1] = t; } note_value(); immediate_advance(); }
 void GXTexCoord2f32(f32 s, f32 t) { immediate_texcoord(s, t); }
-void GXTexCoord2u16(u16 s, u16 t) { GXAttr a = immediate_attribute(); immediate_texcoord(immediate_scaled(s, a), immediate_scaled(t, a)); }
-void GXTexCoord2s16(s16 s, s16 t) { GXAttr a = immediate_attribute(); immediate_texcoord(immediate_scaled(s, a), immediate_scaled(t, a)); }
-void GXTexCoord2u8(u8 s, u8 t) { GXAttr a = immediate_attribute(); immediate_texcoord(immediate_scaled(s, a), immediate_scaled(t, a)); }
-void GXTexCoord2s8(s8 s, s8 t) { GXAttr a = immediate_attribute(); immediate_texcoord(immediate_scaled(s, a), immediate_scaled(t, a)); }
+void GXTexCoord2u16(u16 s, u16 t) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), immediate_scaled(t, GX_VA_TEX0)); }
+void GXTexCoord2s16(s16 s, s16 t) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), immediate_scaled(t, GX_VA_TEX0)); }
+void GXTexCoord2u8(u8 s, u8 t) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), immediate_scaled(t, GX_VA_TEX0)); }
+void GXTexCoord2s8(s8 s, s8 t) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), immediate_scaled(t, GX_VA_TEX0)); }
 void GXTexCoord1f32(f32 s) { immediate_texcoord(s, 0.0f); }
-void GXTexCoord1u16(u16 s) { GXAttr a = immediate_attribute(); immediate_texcoord(immediate_scaled(s, a), 0.0f); }
-void GXTexCoord1s16(s16 s) { GXAttr a = immediate_attribute(); immediate_texcoord(immediate_scaled(s, a), 0.0f); }
+void GXTexCoord1u16(u16 s) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), 0.0f); }
+void GXTexCoord1s16(s16 s) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), 0.0f); }
 void GXTexCoord1u8(u8 s)
 {
     GXAttr attr = immediate_attribute();
@@ -1383,7 +1255,7 @@ void GXTexCoord1u8(u8 s)
         immediate_advance();
     } else immediate_texcoord(immediate_scaled(s, attr), 0.0f);
 }
-void GXTexCoord1s8(s8 s) { GXAttr a = immediate_attribute(); immediate_texcoord(immediate_scaled(s, a), 0.0f); }
+void GXTexCoord1s8(s8 s) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), 0.0f); }
 
 static void immediate_indexed_texcoord(u32 index)
 {
@@ -1397,14 +1269,7 @@ static void immediate_indexed_texcoord(u32 index)
     if (array->size != 0 && offset >= array->size) { note_value(); immediate_advance(); return; }
     memset(&decoded, 0, sizeof(decoded));
     decode_attribute(&decoded, attr, format, (const u8*) array->data + offset, array->little_endian);
-    if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) {
-        const u32 coordinate = (u32) attr - (u32) GX_VA_TEX0;
-        immediate_texcoord(decoded.texture[coordinate][0],
-                           decoded.texture[coordinate][1]);
-    } else {
-        note_value();
-        immediate_advance();
-    }
+    immediate_texcoord(decoded.texture[0], decoded.texture[1]);
 }
 void GXTexCoord1x16(u16 index) { immediate_indexed_texcoord(index); }
 void GXTexCoord1x8(u8 index) { immediate_indexed_texcoord(index); }
@@ -1528,13 +1393,7 @@ void GXInitTexObjWrapMode(GXTexObj* object, GXTexWrapMode s, GXTexWrapMode t) { 
 
 void GXLoadTexObj(GXTexObj* object, GXTexMapID id)
 {
-    if (object != NULL && (unsigned) id < GX_MAX_TEXMAP) {
-        /* Real GX copies the texture registers. HSD commonly constructs this
-         * object on the stack, so retaining its address leaves the Vita with
-         * unrelated stack data by the time the draw is submitted. */
-        s_gx.loaded_textures[id] = *const_tex_obj(object);
-        s_gx.textures[id] = (const GXTexObj*) &s_gx.loaded_textures[id];
-    }
+    if ((unsigned) id < GX_MAX_TEXMAP) s_gx.textures[id] = object;
 }
 
 u16 GXGetTexObjWidth(GXTexObj* object) { return tex_obj(object)->width; }
@@ -1584,15 +1443,7 @@ void GXInitTlutObj(GXTlutObj* object, const void* data, GXTlutFmt format, u16 en
 
 void GXInitTlutObjData(GXTlutObj* object, const void* data)
 { tlut_obj(object)->data = data; melee_vita_gxm_invalidate_textures(); }
-void GXLoadTlut(const GXTlutObj* object, u32 index)
-{
-    if (object != NULL && index < 20) {
-        /* Palette objects have the same temporary lifetime pattern as texture
-         * objects, and GX likewise copies their register state when loaded. */
-        s_gx.loaded_tluts[index] = *(const VitaTlutObj*) object;
-        s_gx.tluts[index] = (const GXTlutObj*) &s_gx.loaded_tluts[index];
-    }
-}
+void GXLoadTlut(const GXTlutObj* object, u32 index) { if (index < 20) s_gx.tluts[index] = object; }
 
 void GXInitLightAttn(GXLightObj* object, f32 a0, f32 a1, f32 a2, f32 k0, f32 k1, f32 k2)
 {

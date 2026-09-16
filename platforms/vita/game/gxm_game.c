@@ -86,65 +86,29 @@ static u8 clamp_color(s32 value)
     return value < 0 ? 0 : value > 255 ? 255 : (u8) value;
 }
 
-static s32 s_yuv_luma[256];
-static s32 s_yuv_red[256];
-static s32 s_yuv_green_u[256];
-static s32 s_yuv_green_v[256];
-static s32 s_yuv_blue[256];
-static int s_yuv_tables_ready;
-
-static void initialize_yuv_tables(void)
-{
-    u32 value;
-    if (s_yuv_tables_ready) return;
-    for (value = 0; value < 256; ++value) {
-        const s32 chroma = (s32) value - 128;
-        const s32 luma = value > 16 ? (s32) value - 16 : 0;
-        s_yuv_luma[value] = 298 * luma + 128;
-        s_yuv_red[value] = 409 * chroma;
-        s_yuv_green_u[value] = -100 * chroma;
-        s_yuv_green_v[value] = -208 * chroma;
-        s_yuv_blue[value] = 516 * chroma;
-    }
-    s_yuv_tables_ready = 1;
-}
-
-static u32 yuv_pixel(u8 luma, u8 chroma_u, u8 chroma_v)
-{
-    const s32 y = s_yuv_luma[luma];
-    const u8 r = clamp_color((y + s_yuv_red[chroma_v]) >> 8);
-    const u8 g = clamp_color(
-        (y + s_yuv_green_u[chroma_u] + s_yuv_green_v[chroma_v]) >> 8);
-    const u8 b = clamp_color((y + s_yuv_blue[chroma_u]) >> 8);
-    return (u32) r | (u32) g << 8 | (u32) b << 16 | 0xff000000u;
-}
-
-static int decode_yuv420(const MeleeVitaTextureSource* source,
-                         u8* destination, u32 stride)
+static int decode_yuv420(const MeleeVitaTextureSource* source, u32* output)
 {
     const u8* y_plane = source->data;
     const u8* u_plane = source->chroma_u;
     const u8* v_plane = source->chroma_v;
+    u32 x;
     u32 y;
     if (y_plane == NULL || u_plane == NULL || v_plane == NULL ||
         source->chroma_width == 0 || source->chroma_height == 0) return -1;
-    initialize_yuv_tables();
     for (y = 0; y < source->height; ++y) {
-        u32 x;
-        u32* output = (u32*) (destination + (size_t) y * stride);
-        for (x = 0; x < source->width; x += 2u) {
-            const u8 chroma_u = tiled_i8_sample(
-                u_plane, source->chroma_width, x >> 1, y >> 1);
-            const u8 chroma_v = tiled_i8_sample(
-                v_plane, source->chroma_width, x >> 1, y >> 1);
-            output[x] = yuv_pixel(
-                tiled_i8_sample(y_plane, source->width, x, y),
-                chroma_u, chroma_v);
-            if (x + 1u < source->width) {
-                output[x + 1u] = yuv_pixel(
-                    tiled_i8_sample(y_plane, source->width, x + 1u, y),
-                    chroma_u, chroma_v);
-            }
+        for (x = 0; x < source->width; ++x) {
+            const s32 luma = tiled_i8_sample(y_plane, source->width, x, y);
+            const s32 chroma_u = tiled_i8_sample(
+                u_plane, source->chroma_width, x / 2u, y / 2u) - 128;
+            const s32 chroma_v = tiled_i8_sample(
+                v_plane, source->chroma_width, x / 2u, y / 2u) - 128;
+            const s32 c = luma > 16 ? luma - 16 : 0;
+            const u8 r = clamp_color((298 * c + 409 * chroma_v + 128) >> 8);
+            const u8 g = clamp_color(
+                (298 * c - 100 * chroma_u - 208 * chroma_v + 128) >> 8);
+            const u8 b = clamp_color((298 * c + 516 * chroma_u + 128) >> 8);
+            output[(size_t) y * source->width + x] =
+                (u32) r | (u32) g << 8 | (u32) b << 16 | 0xff000000u;
         }
     }
     return 0;
@@ -157,21 +121,18 @@ static int refresh_texture(VitaTextureCacheEntry* entry,
     u8* destination;
     u32 stride;
     u32 y;
-    destination = vita2d_texture_get_datap(entry->texture);
-    stride = vita2d_texture_get_stride(entry->texture);
-    if (source->chroma_u != NULL) {
-        if (decode_yuv420(source, destination, stride) != 0) return -1;
-        entry->content_generation = s_texture_content_generation;
-        return 0;
-    }
     pixels = malloc((size_t) source->width * source->height * sizeof(*pixels));
-    if (pixels == NULL || melee_vita_decode_texture_raw(
-            source->data, source->width, source->height, source->format,
-            source->palette, source->palette_format, source->palette_entries,
-            pixels, (u32) source->width * source->height) != 0) {
+    if (pixels == NULL || (source->chroma_u != NULL
+        ? decode_yuv420(source, pixels)
+        : melee_vita_decode_texture_raw(source->data, source->width,
+              source->height, source->format, source->palette,
+              source->palette_format, source->palette_entries, pixels,
+              (u32) source->width * source->height)) != 0) {
         free(pixels);
         return -1;
     }
+    destination = vita2d_texture_get_datap(entry->texture);
+    stride = vita2d_texture_get_stride(entry->texture);
     for (y = 0; y < source->height; ++y)
         memcpy(destination + (size_t) y * stride,
                pixels + (size_t) y * source->width,

@@ -93,13 +93,13 @@ static void decode_8bit(const unsigned char* source, uint32_t width,
                     const uint8_t value = block[y * 8u + x];
                     if (format == GX_TF_I8)
                         output[py * width + px] =
-                            rgba8(value, value, value, 255u);
+                            rgba8(value, value, value, value);
                     else
                         output[py * width + px] =
-                            rgba8(expand4(value >> 4),
-                                  expand4(value >> 4),
-                                  expand4(value >> 4),
-                                  expand4(value & 0x0fu));
+                            rgba8(expand4(value & 0x0fu),
+                                  expand4(value & 0x0fu),
+                                  expand4(value & 0x0fu),
+                                  expand4(value >> 4));
                 }
             }
         }
@@ -122,10 +122,10 @@ static void decode_16bit(const unsigned char* source, uint32_t width,
                     if (px >= width || py >= height) continue;
                     const uint16_t value = be16(block + (y * 4u + x) * 2u);
                     if (format == GX_TF_IA8) {
-                        const uint32_t intensity = value >> 8;
+                        const uint32_t intensity = value & 0xffu;
                         output[py * width + px] =
                             rgba8(intensity, intensity, intensity,
-                                  value & 0xffu);
+                                  value >> 8);
                     } else if (format == GX_TF_RGB565) {
                         output[py * width + px] = rgb565(value);
                     } else {
@@ -224,7 +224,7 @@ static void decode_i4(const unsigned char* source, uint32_t width,
                     const uint32_t py = by * 8u + y;
                     if (px < width && py < height)
                         output[py * width + px] =
-                            rgba8(intensity, intensity, intensity, 255u);
+                            rgba8(intensity, intensity, intensity, intensity);
                 }
             }
         }

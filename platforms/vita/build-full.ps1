@@ -1,7 +1,8 @@
 param(
     [string]$VitaSdk = $env:VITASDK,
     [string]$BuildDirectory = "$PSScriptRoot/../../build-vita/full",
-    [int]$Jobs = 8
+    [int]$Jobs = 8,
+    [switch]$EnableDebugger
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +42,7 @@ $platformSources = @(
     'platforms/vita/game/compat.c',
     'platforms/vita/game/dvd.c',
     'platforms/vita/game/gx.c',
+    'platforms/vita/game/gx_render.c',
     'platforms/vita/game/gxm_game.c',
     'platforms/vita/game/heap.c',
     'platforms/vita/game/main.c',
@@ -53,7 +55,7 @@ $platformSources = @(
 
 $common = @(
     '-std=gnu11', '-O2', '-g3',
-    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1', '-DMELEE_VITA_GX_IGNORE_DEPTH=1',
+    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
     "-I$(Join-Path $root 'extern/aurora/include')",
     "-I$(Join-Path $root 'src')",
     "-I$(Join-Path $root 'src/sdk_include')",
@@ -73,6 +75,7 @@ $commonCpp = @(
     '-fno-exceptions', '-fno-rtti', '-fno-short-enums', '-c'
 )
 
+if ($EnableDebugger) { $common = @('-DMELEE_VITA_WAIT_FOR_DEBUGGER=1') + $common }
 $platformObjects = foreach ($relative in $platformSources) {
     $source = Join-Path $root $relative
     $name = ($relative -replace '[:\\/]', '__') -replace '\.(c|cpp)$', '.o'
@@ -110,6 +113,7 @@ $link = @(
     '-lSceCommonDialog_stub', '-lm', '-lSceProcessmgr_stub',
     '-lSceSysmem_stub', '-lSceLibKernel_stub', '-lSceKernelModulemgr_stub', '-lSceNet_stub',
     '-lSceNetCtl_stub', '-lSceNetPs_stub', '-lSceSysmodule_stub',
+    '-lvitashark', '-lSceShaccCgExt', '-ltaihen_stub', '-lSceShaccCg_stub_weak',
     '-lstdc++', '-pthread', '-o', $elf
 )
 

@@ -9,6 +9,9 @@
 /* Reserve enough libc heap for MEM1 now and ARAM plus backend allocations in
  * later milestones. GXM allocations remain outside this heap. */
 unsigned int _newlib_heap_size_user = 128u * 1024u * 1024u;
+/* The runtime shader compiler (libshacccg) recurses deeply; the default
+ * 256 KiB main-thread stack is not enough for it. */
+int sceUserMainThreadStackSize = 4 * 1024 * 1024;
 
 int melee_main(void);
 

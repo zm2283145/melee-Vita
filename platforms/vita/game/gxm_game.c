@@ -2,10 +2,13 @@
 /* GXM-backed frame sink used by the original game's GX compatibility layer. */
 #include "gxm_game.h"
 #include "../texture_decoder.h"
+#include "gx_render.h"
+#include "../vita_log.h"
 
 #include <psp2/gxm.h>
 #include <vita2d.h>
 
+#include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -18,10 +21,35 @@ typedef struct VitaTextureCacheEntry {
     MeleeVitaTextureSource source;
     vita2d_texture* texture;
     u32 content_generation;
+    u32 sample_hash;
+    u32 last_used_frame;
     struct VitaTextureCacheEntry* next;
 } VitaTextureCacheEntry;
 
 static VitaTextureCacheEntry* s_textures;
+static u32 s_frame_counter;
+static u32 s_texture_uploads;
+static u32 s_texture_failures;
+
+/* Archives are frequently reloaded at the same address with different
+ * contents, so a cheap content sample is part of cache validation. */
+static u32 texture_sample_hash(const MeleeVitaTextureSource* source)
+{
+    const u8* data = source->data;
+    u32 hash = 2166136261u;
+    /* Sample ~256 bytes spread over the whole (compressed) image so mutable
+     * textures such as movie planes are noticed without hashing everything. */
+    const u32 bytes = (u32) source->width * source->height / 2u;
+    const u32 step = bytes > 256u ? bytes / 256u : 1u;
+    u32 i;
+    if (data == NULL) return 0;
+    for (i = 0; i < bytes; i += step) { hash ^= data[i]; hash *= 16777619u; }
+    if (source->palette != NULL) {
+        const u8* palette = source->palette;
+        for (i = 0; i < 32u; ++i) { hash ^= palette[i]; hash *= 16777619u; }
+    }
+    return hash;
+}
 
 static SceGxmTextureAddrMode address_mode(u32 mode)
 {
@@ -184,21 +212,36 @@ static int refresh_texture(VitaTextureCacheEntry* entry,
 static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
 {
     VitaTextureCacheEntry* entry;
-    if (s_texture_invalidation_pending && s_frame_open) return NULL;
+    u32 sample;
     if (source == NULL || source->data == NULL || source->width == 0 ||
         source->height == 0) return NULL;
+    sample = texture_sample_hash(source);
     for (entry = s_textures; entry != NULL; entry = entry->next) {
         if (same_texture(&entry->source, source)) {
-            if (entry->content_generation != s_texture_content_generation &&
-                refresh_texture(entry, source) != 0) return NULL;
+            entry->last_used_frame = s_frame_counter;
+            if (entry->content_generation != s_texture_content_generation ||
+                entry->sample_hash != sample) {
+                ++s_texture_uploads;
+                entry->sample_hash = sample;
+                if (refresh_texture(entry, source) != 0) { ++s_texture_failures; return NULL; }
+            }
             return entry->texture;
         }
     }
     entry = calloc(1, sizeof(*entry));
     if (entry == NULL) return NULL;
     entry->source = *source;
+    entry->sample_hash = sample;
+    entry->last_used_frame = s_frame_counter;
     entry->texture = vita2d_create_empty_texture(source->width, source->height);
+    ++s_texture_uploads;
     if (entry->texture == NULL || refresh_texture(entry, source) != 0) {
+        static u32 logged;
+        ++s_texture_failures;
+        if (logged++ < 16u)
+            melee_vita_log_info("[GXR] texture decode failed fmt=%u %ux%u pal=%p",
+                                (unsigned) source->format, source->width,
+                                source->height, source->palette);
         if (entry->texture != NULL) vita2d_free_texture(entry->texture);
         free(entry);
         return NULL;
@@ -221,11 +264,15 @@ int melee_vita_gxm_init(void)
 {
     int result;
     if (s_initialized) return 0;
-    result = vita2d_init_advanced(4u * 1024u * 1024u);
+    result = vita2d_init_advanced(32u * 1024u * 1024u);
     if (result == 0) return -1;
     vita2d_set_vblank_wait(0);
     vita2d_set_clear_color(RGBA8(0, 0, 0, 255));
     s_initialized = 1;
+#ifndef MELEE_VITA_GX_LEGACY_RENDERER
+    if (gxr_init() != 0)
+        melee_vita_log_info("[GXR] falling back to the legacy vita2d GX path");
+#endif
     return 0;
 }
 
@@ -244,10 +291,25 @@ void melee_vita_gxm_shutdown(void)
 
 static void begin_frame(void)
 {
+    SceGxmContext* context;
     if (!s_initialized || s_frame_open) return;
     vita2d_start_drawing();
+    /* vita2d's clear quad must not leave its own depth in the buffer: GX
+     * scenes clear depth to the far plane and test against it. */
+    context = vita2d_get_context();
+    sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
+    sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
     vita2d_clear_screen();
     s_frame_open = 1;
+}
+
+void melee_vita_gxm_begin_frame(void) { begin_frame(); }
+
+vita2d_texture* melee_vita_gxm_texture(const MeleeVitaTextureSource* source)
+{
+    return get_texture(source);
 }
 
 static SceGxmDepthFunc depth_function(u32 function) __attribute__((unused));
@@ -270,7 +332,7 @@ static void apply_render_state(const MeleeVitaRenderState* state)
     u32 line_width = 1;
     u32 point_size = 1;
     if (state != NULL) {
-#ifndef MELEE_VITA_GX_IGNORE_DEPTH
+#ifdef MELEE_VITA_GX_LEGACY_DEPTH /* legacy path: depth kept off, see gx_render.c */
         if (state->depth_compare) function = depth_function(state->depth_function);
 #endif
         if (state->depth_write) write = SCE_GXM_DEPTH_WRITE_ENABLED;
@@ -369,11 +431,32 @@ void melee_vita_gxm_present(u32 clear_color)
     if (!s_frame_open) begin_frame();
     vita2d_end_drawing();
     vita2d_swap_buffers();
-    if (s_texture_invalidation_pending) {
-        vita2d_wait_rendering_done();
-        free_textures();
-        s_texture_invalidation_pending = 0;
+    ++s_frame_counter;
+    if ((s_frame_counter % 60u) == 0u) {
+        /* Evict textures that have not been sampled for a few seconds. */
+        VitaTextureCacheEntry** link = &s_textures;
+        bool waited = false;
+        u32 count = 0;
+        while (*link != NULL) {
+            VitaTextureCacheEntry* entry = *link;
+            if (s_frame_counter - entry->last_used_frame > 180u) {
+                if (!waited) { vita2d_wait_rendering_done(); waited = true; }
+                *link = entry->next;
+                if (entry->texture != NULL) vita2d_free_texture(entry->texture);
+                free(entry);
+                continue;
+            }
+            ++count;
+            link = &entry->next;
+        }
+        if ((s_frame_counter % 300u) == 0u) {
+            melee_vita_log_info("[GXR] textures live=%u uploads=%u failures=%u",
+                                count, s_texture_uploads, s_texture_failures);
+            s_texture_uploads = 0;
+            s_texture_failures = 0;
+        }
     }
+    s_texture_invalidation_pending = 0;
     vita2d_set_clear_color(clear_color);
     s_frame_open = 0;
 }

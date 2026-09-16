@@ -1,22 +1,42 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* Initial Vita ARAM/AX backend. It advances the game's audio engine silently
- * until the SceAudioOut mixer is connected. */
+/* Vita ARAM/AX backend. Melee drives GameCube AX voices backed by ARAM; this
+ * file decodes and mixes those voices into a native SceAudioOut stream. */
 #include "vita_platform.h"
+#include "../vita_log.h"
 
 #include <dolphin/ai.h>
 #include <dolphin/ar.h>
 #include <dolphin/ax.h>
 #include <dolphin/axfx.h>
 
+#include <psp2/audioout.h>
+
 #include <stdlib.h>
 #include <string.h>
 
 #define VITA_AX_VOICES 64
 #define VITA_ARQ_CAPACITY 128
+#define VITA_AX_RATE 32000
+#define VITA_AX_FRAME 160
+#define VITA_AUDIO_GRAIN 512
+#define VITA_AX_FALLBACK_FRAMES 3
+
+#define AX_FORMAT_ADPCM 0
+#define AX_FORMAT_PCM16 10
+#define AX_FORMAT_PCM8 25
 
 typedef struct VitaVoice {
     AXVPB voice;
     GXBool used;
+    s16 previous_sample;
+    s16 current_sample;
+    u32 fraction;
+    u16 predictor_scale;
+    s32 yn1;
+    s32 yn2;
+    u32 loop_address;
+    u32 end_address;
+    u32 current_address;
 } VitaVoice;
 
 typedef struct VitaArqJob {
@@ -44,11 +64,143 @@ static void (*s_aux_b_callback)(void*, void*);
 static void* s_aux_b_context;
 static void* (*s_fx_alloc)(size_t);
 static void (*s_fx_free)(void*);
+static int s_audio_port = -1;
 
 static u16 from_be16(u16 value) { return __builtin_bswap16(value); }
 static u32 pair(u16 high, u16 low) { return (u32) high << 16 | low; }
 static void set_pair(u16* high, u16* low, u32 value)
 { *high = (u16) (value >> 16); *low = (u16) value; }
+
+static s16 clamp_s16(s64 value)
+{
+    return value > 32767 ? 32767 : value < -32768 ? -32768 : (s16) value;
+}
+
+static GXBool next_sample(VitaVoice* voice, s16* output)
+{
+    AXPB* pb = &voice->voice.pb;
+    const u16 format = pb->addr.format;
+    if (pb->state == 0 || s_aram == NULL) return GX_FALSE;
+    switch (format) {
+    case AX_FORMAT_ADPCM: {
+        if ((voice->current_address & 15u) == 0) {
+            if ((voice->current_address >> 1) + 2u > MELEE_VITA_ARAM_SIZE)
+                return GX_FALSE;
+            voice->predictor_scale = s_aram[voice->current_address >> 1];
+            voice->current_address += 2u;
+        }
+        if ((voice->current_address >> 1) >= MELEE_VITA_ARAM_SIZE)
+            return GX_FALSE;
+        const u8 byte = s_aram[voice->current_address >> 1];
+        s32 nibble = (voice->current_address & 1u) ? byte & 15u : byte >> 4;
+        const u32 coefficient = (voice->predictor_scale >> 4) & 7u;
+        const s32 scale = 1 << (voice->predictor_scale & 15u);
+        if (nibble >= 8) nibble -= 16;
+        const s64 decoded = (s64) nibble * scale * 2048 + 1024 +
+            (s64) (s16) pb->adpcm.a[coefficient][0] * voice->yn1 +
+            (s64) (s16) pb->adpcm.a[coefficient][1] * voice->yn2;
+        const s16 sample = clamp_s16(decoded >> 11);
+        voice->yn2 = voice->yn1;
+        voice->yn1 = sample;
+        *output = sample;
+        break;
+    }
+    case AX_FORMAT_PCM16: {
+        if (voice->current_address >= MELEE_VITA_ARAM_SIZE / 2u)
+            return GX_FALSE;
+        const u8* sample = s_aram + voice->current_address * 2u;
+        *output = (s16) ((u16) sample[0] << 8 | sample[1]);
+        break;
+    }
+    case AX_FORMAT_PCM8:
+        if (voice->current_address >= MELEE_VITA_ARAM_SIZE) return GX_FALSE;
+        *output = (s16) ((s8) s_aram[voice->current_address] * 256);
+        break;
+    default:
+        return GX_FALSE;
+    }
+    if (voice->current_address == voice->end_address) {
+        if (pb->addr.loopFlag != 0) {
+            voice->current_address = voice->loop_address;
+            if (format == AX_FORMAT_ADPCM) {
+                voice->predictor_scale = pb->adpcmLoop.loop_pred_scale;
+                voice->yn1 = (s16) pb->adpcmLoop.loop_yn1;
+                voice->yn2 = (s16) pb->adpcmLoop.loop_yn2;
+            }
+        } else {
+            pb->state = 0;
+        }
+    } else {
+        ++voice->current_address;
+    }
+    return GX_TRUE;
+}
+
+static void mix_voice(VitaVoice* voice, float* mix)
+{
+    AXPB* pb = &voice->voice.pb;
+    const u32 ratio = pair(pb->src.ratioHi, pb->src.ratioLo);
+    s32 volume = pb->ve.currentVolume;
+    const s32 delta = pb->ve.currentDelta;
+    const float left = pb->mix.vL / 32767.0f;
+    const float right = pb->mix.vR / 32767.0f;
+    u32 sample;
+    for (sample = 0; sample < VITA_AX_FRAME; ++sample) {
+        voice->fraction += ratio;
+        while (voice->fraction >= 0x10000u) {
+            s16 decoded;
+            if (!next_sample(voice, &decoded)) {
+                pb->state = 0;
+                set_pair(&pb->addr.currentAddressHi,
+                         &pb->addr.currentAddressLo, voice->current_address);
+                pb->ve.currentVolume = (u16) volume;
+                return;
+            }
+            voice->previous_sample = voice->current_sample;
+            voice->current_sample = decoded;
+            voice->fraction -= 0x10000u;
+        }
+        const float phase = voice->fraction * (1.0f / 65536.0f);
+        const float value = ((float) voice->previous_sample + phase *
+            (float) (voice->current_sample - voice->previous_sample)) *
+            (1.0f / 32768.0f) * ((float) volume / 32767.0f);
+        mix[sample * 2u] += value * left;
+        mix[sample * 2u + 1u] += value * right;
+        volume += delta;
+        if (volume < 0) volume = 0;
+        else if (volume > 32767) volume = 32767;
+    }
+    pb->ve.currentVolume = (u16) volume;
+    set_pair(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo,
+             voice->current_address);
+}
+
+static void render_audio_frame(s16* output)
+{
+    static GXBool logged_running_voice;
+    float mix[VITA_AX_FRAME * 2] = { 0 };
+    u32 i;
+    if (s_ax_callback != NULL) s_ax_callback();
+    for (i = 0; i < VITA_AX_VOICES; ++i) {
+        if (s_voices[i].used && s_voices[i].voice.pb.state != 0) {
+            if (!logged_running_voice) {
+                melee_vita_log_info(
+                    "[AUDIO] first AX voice: format=%u ratio=%u volume=%u",
+                    s_voices[i].voice.pb.addr.format,
+                    pair(s_voices[i].voice.pb.src.ratioHi,
+                         s_voices[i].voice.pb.src.ratioLo),
+                    s_voices[i].voice.pb.ve.currentVolume);
+                logged_running_voice = GX_TRUE;
+            }
+            mix_voice(&s_voices[i], mix);
+        }
+    }
+    for (i = 0; i < VITA_AX_FRAME * 2u; ++i) {
+        float value = mix[i] * 32767.0f;
+        output[i] = value > 32767.0f ? 32767 :
+                    value < -32768.0f ? -32768 : (s16) value;
+    }
+}
 
 u8* aurora_aram_base(void) { return s_aram; }
 void* ARGetStorageAddress(void) { return s_aram; }
@@ -137,6 +289,22 @@ void AXInit(void)
     u32 i;
     memset(s_voices, 0, sizeof(s_voices));
     for (i = 0; i < VITA_AX_VOICES; ++i) s_voices[i].voice.index = i;
+    if (s_audio_port < 0) {
+        s_audio_port = sceAudioOutOpenPort(
+            SCE_AUDIO_OUT_PORT_TYPE_BGM,
+            VITA_AUDIO_GRAIN,
+            VITA_AX_RATE, SCE_AUDIO_OUT_MODE_STEREO);
+        melee_vita_log_info("[AUDIO] SceAudioOut port result: %d",
+                            s_audio_port);
+    }
+}
+
+void AXQuit(void)
+{
+    if (s_audio_port >= 0) {
+        sceAudioOutReleasePort(s_audio_port);
+        s_audio_port = -1;
+    }
 }
 
 AXVPB* AXAcquireVoice(u32 priority, void (*callback)(void*), u32 user_context)
@@ -186,14 +354,43 @@ void AXSetVoiceItdTarget(AXVPB* p, u16 l, u16 r)
 { if (p) { p->pb.itd.targetShiftL = l; p->pb.itd.targetShiftR = r; } }
 void AXSetVoiceVe(AXVPB* p, AXPBVE* v) { if (p && v) p->pb.ve = *v; }
 void AXSetVoiceVeDelta(AXVPB* p, s16 v) { if (p) p->pb.ve.currentDelta = v; }
-void AXSetVoiceAdpcm(AXVPB* p, AXPBADPCM* v) { if (p && v) p->pb.adpcm = *v; }
-void AXSetVoiceAdpcmLoop(AXVPB* p, AXPBADPCMLOOP* v) { if (p && v) p->pb.adpcmLoop = *v; }
-void AXSetVoiceSrc(AXVPB* p, AXPBSRC* v) { if (p && v) p->pb.src = *v; }
+void AXSetVoiceAdpcm(AXVPB* p, AXPBADPCM* value)
+{
+    VitaVoice* voice = (VitaVoice*) p;
+    u32 i;
+    if (p == NULL || value == NULL) return;
+    for (i = 0; i < 8; ++i) {
+        p->pb.adpcm.a[i][0] = from_be16(value->a[i][0]);
+        p->pb.adpcm.a[i][1] = from_be16(value->a[i][1]);
+    }
+    p->pb.adpcm.gain = from_be16(value->gain);
+    p->pb.adpcm.pred_scale = from_be16(value->pred_scale);
+    p->pb.adpcm.yn1 = from_be16(value->yn1);
+    p->pb.adpcm.yn2 = from_be16(value->yn2);
+    voice->predictor_scale = p->pb.adpcm.pred_scale;
+    voice->yn1 = (s16) p->pb.adpcm.yn1;
+    voice->yn2 = (s16) p->pb.adpcm.yn2;
+}
+void AXSetVoiceAdpcmLoop(AXVPB* p, AXPBADPCMLOOP* value)
+{
+    if (p == NULL || value == NULL) return;
+    p->pb.adpcmLoop.loop_pred_scale = from_be16(value->loop_pred_scale);
+    p->pb.adpcmLoop.loop_yn1 = from_be16(value->loop_yn1);
+    p->pb.adpcmLoop.loop_yn2 = from_be16(value->loop_yn2);
+}
+void AXSetVoiceSrc(AXVPB* p, AXPBSRC* value)
+{
+    VitaVoice* voice = (VitaVoice*) p;
+    if (p == NULL || value == NULL) return;
+    p->pb.src = *value;
+    voice->fraction = value->currentAddressFrac;
+}
 void AXSetVoiceSrcRatio(AXVPB* p, float ratio)
 { if (p) { u32 fixed = (u32) (ratio * 65536.0f); p->pb.src.ratioHi = fixed >> 16; p->pb.src.ratioLo = fixed; } }
 
 void AXSetVoiceAddr(AXVPB* p, AXPBADDR* value)
 {
+    VitaVoice* voice = (VitaVoice*) p;
     if (p == NULL || value == NULL) return;
     p->pb.addr.loopFlag = from_be16(value->loopFlag);
     p->pb.addr.format = from_be16(value->format);
@@ -203,47 +400,55 @@ void AXSetVoiceAddr(AXVPB* p, AXPBADDR* value)
     p->pb.addr.endAddressLo = from_be16(value->endAddressLo);
     p->pb.addr.currentAddressHi = from_be16(value->currentAddressHi);
     p->pb.addr.currentAddressLo = from_be16(value->currentAddressLo);
+    voice->loop_address = pair(p->pb.addr.loopAddressHi,
+                               p->pb.addr.loopAddressLo);
+    voice->end_address = pair(p->pb.addr.endAddressHi,
+                              p->pb.addr.endAddressLo);
+    voice->current_address = pair(p->pb.addr.currentAddressHi,
+                                  p->pb.addr.currentAddressLo);
+    voice->fraction = 0;
+    voice->previous_sample = 0;
+    voice->current_sample = 0;
 }
 
 void AXSetVoiceLoop(AXVPB* p, u16 value) { if (p) p->pb.addr.loopFlag = value; }
-void AXSetVoiceLoopAddr(AXVPB* p, u32 value) { if (p) set_pair(&p->pb.addr.loopAddressHi, &p->pb.addr.loopAddressLo, value); }
-void AXSetVoiceEndAddr(AXVPB* p, u32 value) { if (p) set_pair(&p->pb.addr.endAddressHi, &p->pb.addr.endAddressLo, value); }
-void AXSetVoiceCurrentAddr(AXVPB* p, u32 value) { if (p) set_pair(&p->pb.addr.currentAddressHi, &p->pb.addr.currentAddressLo, value); }
-
-static void advance_voices(void)
-{
-    u32 i;
-    for (i = 0; i < VITA_AX_VOICES; ++i) {
-        AXVPB* voice = &s_voices[i].voice;
-        u32 current, end, loop, ratio, advance;
-        if (!s_voices[i].used || voice->pb.state == 0) continue;
-        current = pair(voice->pb.addr.currentAddressHi, voice->pb.addr.currentAddressLo);
-        end = pair(voice->pb.addr.endAddressHi, voice->pb.addr.endAddressLo);
-        loop = pair(voice->pb.addr.loopAddressHi, voice->pb.addr.loopAddressLo);
-        ratio = pair(voice->pb.src.ratioHi, voice->pb.src.ratioLo);
-        advance = (160u * (ratio != 0 ? ratio : 0x10000u)) >> 16;
-        current += advance != 0 ? advance : 1;
-        if (current >= end) {
-            if (voice->pb.addr.loopFlag) current = loop;
-            else voice->pb.state = 0;
-        }
-        set_pair(&voice->pb.addr.currentAddressHi,
-                 &voice->pb.addr.currentAddressLo, current);
-    }
-}
+void AXSetVoiceLoopAddr(AXVPB* p, u32 value)
+{ if (p) { ((VitaVoice*) p)->loop_address = value; set_pair(&p->pb.addr.loopAddressHi, &p->pb.addr.loopAddressLo, value); } }
+void AXSetVoiceEndAddr(AXVPB* p, u32 value)
+{ if (p) { ((VitaVoice*) p)->end_address = value; set_pair(&p->pb.addr.endAddressHi, &p->pb.addr.endAddressLo, value); } }
+void AXSetVoiceCurrentAddr(AXVPB* p, u32 value)
+{ if (p) { ((VitaVoice*) p)->current_address = value; set_pair(&p->pb.addr.currentAddressHi, &p->pb.addr.currentAddressLo, value); } }
 
 void melee_vita_audio_poll(void)
 {
-    u32 i;
+    static s16 output[VITA_AUDIO_GRAIN * 2] __attribute__((aligned(64)));
+    static s16 ax_frame[VITA_AX_FRAME * 2] __attribute__((aligned(64)));
+    static u32 ax_frame_offset = VITA_AX_FRAME;
+    u32 sample;
     poll_arq();
-    for (i = 0; i < 3; ++i) {
-        advance_voices();
-        if (s_ax_callback != NULL) s_ax_callback();
+    if (s_audio_port >= 0) {
+        /* SceAudioOut requires a multiple-of-64 grain, whereas AX produces
+         * 160 samples per callback. Preserve AX's clock with a small carry
+         * buffer instead of padding or dropping samples. */
+        for (sample = 0; sample < VITA_AUDIO_GRAIN; ++sample) {
+            if (ax_frame_offset == VITA_AX_FRAME) {
+                render_audio_frame(ax_frame);
+                ax_frame_offset = 0;
+            }
+            output[sample * 2u] = ax_frame[ax_frame_offset * 2u];
+            output[sample * 2u + 1u] = ax_frame[ax_frame_offset * 2u + 1u];
+            ++ax_frame_offset;
+        }
+        sceAudioOutOutput(s_audio_port, output);
+    } else {
+        for (sample = 0; sample < VITA_AX_FALLBACK_FRAMES; ++sample)
+            if (s_ax_callback != NULL) s_ax_callback();
     }
 }
 
 void melee_vita_audio_shutdown(void)
 {
+    AXQuit();
     free(s_aram);
     s_aram = NULL;
 }

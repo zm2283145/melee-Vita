@@ -52,7 +52,7 @@ $platformSources = @(
 )
 
 $common = @(
-    '-std=gnu11', '-O0', '-g3',
+    '-std=gnu11', '-O2', '-g3',
     '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
     "-I$(Join-Path $root 'extern/aurora/include')",
     "-I$(Join-Path $root 'src')",
@@ -105,7 +105,7 @@ $link = @(
     '-Wl,--start-group', $gameArchive, '-Wl,--end-group',
     'D:/Claude/VitaDebugger/libuvdb.a',
     (Join-Path $root 'build-vita/kubridge-build/libkubridge_stub.a'),
-    '-lSceCtrl_stub', '-lSceDisplay_stub', '-lSceKernelThreadMgr_stub',
+    '-lSceCtrl_stub', '-lSceDisplay_stub', '-lSceAudio_stub', '-lSceKernelThreadMgr_stub',
     '-lvita2d', '-lSceGxm_stub', '-lSceDisplay_stub', '-lSceAppMgr_stub',
     '-lSceCommonDialog_stub', '-lm', '-lSceProcessmgr_stub',
     '-lSceSysmem_stub', '-lSceLibKernel_stub', '-lSceKernelModulemgr_stub', '-lSceNet_stub',

@@ -43,7 +43,6 @@ void VIWaitForRetrace(void)
     sceDisplayWaitVblankStart();
     ++s_retrace_count;
     melee_vita_os_run_alarms();
-    melee_vita_audio_poll();
     melee_vita_card_poll();
     if (s_pre_callback != NULL) s_pre_callback(s_retrace_count);
     s_current_framebuffer = s_next_framebuffer;

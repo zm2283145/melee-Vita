@@ -23,6 +23,7 @@ typedef struct VitaTextureCacheEntry {
     u32 content_generation;
     u32 sample_hash;
     u32 last_used_frame;
+    u32 hash_frame;
     struct VitaTextureCacheEntry* next;
 } VitaTextureCacheEntry;
 
@@ -215,10 +216,26 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     u32 sample;
     if (source == NULL || source->data == NULL || source->width == 0 ||
         source->height == 0) return NULL;
-    sample = texture_sample_hash(source);
+    /* Only formats the decoder understands are hashed/uploaded; copy
+     * textures and other special formats (e.g. 0x11) point at buffers that
+     * may not be readable for width*height/2 bytes. */
+    switch (source->format) {
+    case 0x0: case 0x1: case 0x2: case 0x3: case 0x4: case 0x5: case 0x6:
+    case 0x8: case 0x9: case 0xa: case 0xe:
+        break;
+    default:
+        return NULL;
+    }
     for (entry = s_textures; entry != NULL; entry = entry->next) {
         if (same_texture(&entry->source, source)) {
             entry->last_used_frame = s_frame_counter;
+            /* Content sampling once per frame per texture is enough to see
+             * mutable textures change between frames. */
+            if (entry->hash_frame == s_frame_counter &&
+                entry->content_generation == s_texture_content_generation)
+                return entry->texture;
+            entry->hash_frame = s_frame_counter;
+            sample = texture_sample_hash(source);
             if (entry->content_generation != s_texture_content_generation ||
                 entry->sample_hash != sample) {
                 ++s_texture_uploads;
@@ -231,7 +248,9 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     entry = calloc(1, sizeof(*entry));
     if (entry == NULL) return NULL;
     entry->source = *source;
+    sample = texture_sample_hash(source);
     entry->sample_hash = sample;
+    entry->hash_frame = s_frame_counter;
     entry->last_used_frame = s_frame_counter;
     entry->texture = vita2d_create_empty_texture(source->width, source->height);
     ++s_texture_uploads;

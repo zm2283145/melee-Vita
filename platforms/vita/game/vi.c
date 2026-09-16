@@ -6,6 +6,7 @@
 #include <dolphin/vi.h>
 
 #include <psp2/display.h>
+#include <psp2/kernel/processmgr.h>
 
 static u32 s_retrace_count;
 static VIRetraceCallback s_pre_callback;
@@ -38,9 +39,15 @@ void VIConfigurePan(u16 x, u16 y, u16 width, u16 height)
 }
 void VIFlush(void) {}
 
+u64 g_melee_vita_vi_wait_us;
+u32 g_melee_vita_vi_calls;
+
 void VIWaitForRetrace(void)
 {
+    const u64 wait_start = sceKernelGetProcessTimeWide();
     sceDisplayWaitVblankStart();
+    g_melee_vita_vi_wait_us += sceKernelGetProcessTimeWide() - wait_start;
+    ++g_melee_vita_vi_calls;
     ++s_retrace_count;
     melee_vita_os_run_alarms();
     melee_vita_card_poll();

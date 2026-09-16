@@ -69,8 +69,11 @@ typedef struct GxrDraw {
 
 int gxr_init(void);
 bool gxr_available(void);
+/* Vertex memory for gxr_draw must come from gxr_alloc_vertices (GPU-visible,
+ * valid until the end of the frame). */
+GxrVertex* gxr_alloc_vertices(u32 count);
 /* Returns false if the draw could not be issued (caller may fall back). */
-bool gxr_draw(const GxrDraw* draw, const GxrVertex* vertices, u32 count);
+bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, u32 count);
 void gxr_log_stats(void);
 
 #endif

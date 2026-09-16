@@ -706,7 +706,14 @@ static SceGxmDepthFunc depth_func(u8 function)
     return functions[function & 7u];
 }
 
-bool gxr_draw(const GxrDraw* draw, const GxrVertex* vertices, u32 count)
+GxrVertex* gxr_alloc_vertices(u32 count)
+{
+    if (!s_ready || count == 0) return NULL;
+    melee_vita_gxm_begin_frame();
+    return vita2d_pool_memalign(count * sizeof(GxrVertex), sizeof(void*));
+}
+
+bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, u32 count)
 {
     if (!s_ready || draw == NULL || vertices == NULL || count == 0) return false;
     GxrProgram* program = find_program(&draw->key);
@@ -723,12 +730,7 @@ bool gxr_draw(const GxrDraw* draw, const GxrVertex* vertices, u32 count)
     melee_vita_gxm_begin_frame();
     SceGxmContext* context = vita2d_get_context();
 
-    GxrVertex* gpu = vita2d_pool_memalign(count * sizeof(GxrVertex), sizeof(void*));
-    if (gpu == NULL) {
-        ++s_stats.fallback;
-        return false;
-    }
-    memcpy(gpu, vertices, count * sizeof(GxrVertex));
+    GxrVertex* gpu = vertices;
 
     sceGxmSetVertexProgram(context, s_vertex_program);
     sceGxmSetFragmentProgram(context, fragment);

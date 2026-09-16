@@ -10,6 +10,7 @@
 #include <dolphin/axfx.h>
 
 #include <psp2/audioout.h>
+#include <psp2/kernel/threadmgr.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -65,6 +66,50 @@ static void* s_aux_b_context;
 static void* (*s_fx_alloc)(size_t);
 static void (*s_fx_free)(void*);
 static int s_audio_port = -1;
+
+/* Audio output runs on its own thread so a slow game frame never starves
+ * SceAudioOut.  The game thread still runs the AX callback and mixing (all
+ * AX state stays single-threaded) and keeps a ring buffer ~100 ms ahead. */
+#define VITA_RING_FRAMES 16384u
+#define VITA_RING_TARGET 3200u
+#define VITA_RING_MAX_RENDER 64u
+static s16 s_ring[VITA_RING_FRAMES * 2u];
+static volatile u32 s_ring_read;
+static volatile u32 s_ring_write;
+static volatile int s_audio_thread_running;
+static SceUID s_audio_thread = -1;
+static volatile u32 s_audio_underruns;
+
+static u32 ring_fill(void)
+{
+    return __atomic_load_n(&s_ring_write, __ATOMIC_ACQUIRE) -
+           __atomic_load_n(&s_ring_read, __ATOMIC_ACQUIRE);
+}
+
+static int audio_output_thread(SceSize args, void* argp)
+{
+    static s16 grain[VITA_AUDIO_GRAIN * 2] __attribute__((aligned(64)));
+    (void) args;
+    (void) argp;
+    while (__atomic_load_n(&s_audio_thread_running, __ATOMIC_ACQUIRE)) {
+        u32 available = ring_fill();
+        u32 take = available < VITA_AUDIO_GRAIN ? available : VITA_AUDIO_GRAIN;
+        u32 read = __atomic_load_n(&s_ring_read, __ATOMIC_ACQUIRE);
+        u32 i;
+        for (i = 0; i < take; ++i) {
+            const u32 slot = (read + i) % VITA_RING_FRAMES;
+            grain[i * 2u] = s_ring[slot * 2u];
+            grain[i * 2u + 1u] = s_ring[slot * 2u + 1u];
+        }
+        if (take < VITA_AUDIO_GRAIN) {
+            memset(grain + take * 2u, 0, (VITA_AUDIO_GRAIN - take) * 2u * sizeof(grain[0]));
+            if (take != 0u || s_audio_underruns == 0u) ++s_audio_underruns;
+        }
+        __atomic_add_fetch(&s_ring_read, take, __ATOMIC_RELEASE);
+        sceAudioOutOutput(s_audio_port, grain);
+    }
+    return 0;
+}
 
 static u16 from_be16(u16 value) { return __builtin_bswap16(value); }
 static u32 pair(u16 high, u16 low) { return (u32) high << 16 | low; }
@@ -296,11 +341,26 @@ void AXInit(void)
             VITA_AX_RATE, SCE_AUDIO_OUT_MODE_STEREO);
         melee_vita_log_info("[AUDIO] SceAudioOut port result: %d",
                             s_audio_port);
+        if (s_audio_port >= 0 && s_audio_thread < 0) {
+            s_audio_thread_running = 1;
+            s_audio_thread = sceKernelCreateThread(
+                "melee audio out", audio_output_thread, 0x10000100 - 20,
+                0x10000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+            if (s_audio_thread >= 0)
+                sceKernelStartThread(s_audio_thread, 0, NULL);
+            melee_vita_log_info("[AUDIO] output thread=%d", s_audio_thread);
+        }
     }
 }
 
 void AXQuit(void)
 {
+    if (s_audio_thread >= 0) {
+        __atomic_store_n(&s_audio_thread_running, 0, __ATOMIC_RELEASE);
+        sceKernelWaitThreadEnd(s_audio_thread, NULL, NULL);
+        sceKernelDeleteThread(s_audio_thread);
+        s_audio_thread = -1;
+    }
     if (s_audio_port >= 0) {
         sceAudioOutReleasePort(s_audio_port);
         s_audio_port = -1;
@@ -426,10 +486,33 @@ void melee_vita_audio_poll(void)
     static u32 ax_frame_offset = VITA_AX_FRAME;
     u32 sample;
     poll_arq();
-    if (s_audio_port >= 0) {
-        /* SceAudioOut requires a multiple-of-64 grain, whereas AX produces
-         * 160 samples per callback. Preserve AX's clock with a small carry
-         * buffer instead of padding or dropping samples. */
+    (void) output;
+    (void) ax_frame_offset;
+    (void) sample;
+    if (s_audio_port >= 0 && s_audio_thread >= 0) {
+        /* Render whole AX frames until the output thread has ~100 ms queued.
+         * AX's clock advances exactly once per 160 rendered samples, so music
+         * tempo stays correct regardless of the game's frame rate. */
+        u32 rendered = 0;
+        static u32 last_underruns;
+        while (ring_fill() + VITA_AX_FRAME <= VITA_RING_TARGET &&
+               rendered < VITA_RING_MAX_RENDER) {
+            u32 write = __atomic_load_n(&s_ring_write, __ATOMIC_ACQUIRE);
+            u32 i;
+            render_audio_frame(ax_frame);
+            for (i = 0; i < VITA_AX_FRAME; ++i) {
+                const u32 slot = (write + i) % VITA_RING_FRAMES;
+                s_ring[slot * 2u] = ax_frame[i * 2u];
+                s_ring[slot * 2u + 1u] = ax_frame[i * 2u + 1u];
+            }
+            __atomic_add_fetch(&s_ring_write, VITA_AX_FRAME, __ATOMIC_RELEASE);
+            ++rendered;
+        }
+        if (s_audio_underruns != last_underruns && (s_audio_underruns % 50u) == 1u) {
+            melee_vita_log_info("[AUDIO] underruns=%u", s_audio_underruns);
+        }
+        last_underruns = s_audio_underruns;
+    } else if (s_audio_port >= 0) {
         for (sample = 0; sample < VITA_AUDIO_GRAIN; ++sample) {
             if (ax_frame_offset == VITA_AX_FRAME) {
                 render_audio_frame(ax_frame);

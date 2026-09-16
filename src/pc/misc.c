@@ -41,10 +41,12 @@ GXRenderModeObj GXNtsc480Prog = {
     VI_XFBMODE_SF,
     0,
     0,
-    { 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6 },
+    { { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 },
+      { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 } },
     { 0, 0, 21, 22, 21, 0, 0 },
 };
 
+#ifndef TARGET_VITA
 void GXSetCopyClamp(GXFBClamp clamp)
 {
     (void) clamp;
@@ -61,16 +63,19 @@ void OSSetSoundMode(u32 mode)
 {
     s_sound_mode = mode;
 }
+#endif
 
 BOOL OSGetResetSwitchState(void)
 {
     return 0;
 }
 
+#ifndef TARGET_VITA
 void PADSetSamplingRate(u32 msec)
 {
     (void) msec;
 }
+#endif
 
 /* MCC / FIO: host-PC debug communication over EXI. Never connected. */
 int MCCInit(enum MCC_EXI exiChannel, u8 timeout, MCC_CBSysEvent cb) { (void) exiChannel; (void) timeout; (void) cb; return 0; }

@@ -163,23 +163,37 @@ void gm_801A4014(GameMode* mode)
     PAD_STACK(2 * 4);
 
     sm = &state_machine;
+    OSReport("[SCENE] state resolve: mode %u state id %u\n", mode->kind,
+             sm->routing.curr_state_id);
     state = findState(mode->states);
     sm->routing.curr_state_id = state->id;
+    OSReport("[SCENE] state %u resolved, scene kind %u\n", state->id,
+             state->info.scene_kind);
 
     preloadState(state);
     if (state->on_enter != NULL) {
+        OSReport("[SCENE] state %u enter begin\n", state->id);
         state->on_enter(state);
+        OSReport("[SCENE] state %u enter complete\n", state->id);
     }
     info = &state->info;
     scene =
         (GameScene*) ((uintptr_t) gm_FindGameSceneHandler(info->scene_kind) |
                       (dead = 0));
+    OSReport("[SCENE] scene %u handler resolved at %p\n", info->scene_kind,
+             scene);
     gm_801A4BD4();
+    OSReport("[SCENE] scene globals reset\n");
     gm_801A4B88(info);
+    OSReport("[SCENE] scene info applied\n");
     if (scene->on_enter != NULL) {
+        OSReport("[SCENE] scene %u enter begin\n", info->scene_kind);
         scene->on_enter(info->enter_data);
+        OSReport("[SCENE] scene %u enter complete\n", info->scene_kind);
     }
+    OSReport("[SCENE] scene %u frame loop begin\n", info->scene_kind);
     gm_801A4D34(scene->on_frame, info);
+    OSReport("[SCENE] scene %u frame loop complete\n", info->scene_kind);
     if (!gmMainLib_8046B0F0.resetting && scene->on_exit != NULL) {
         scene->on_exit(info->exit_data);
     }
@@ -321,15 +335,21 @@ u8 runGameMode(u8 mode_kind)
     struct stateMachine* sm = &state_machine;
     PAD_STACK(2 * 4);
 
+    OSReport("[SCENE] run mode %u begin\n", mode_kind);
     mode = findMode(mode_kind);
+    OSReport("[SCENE] mode %u resolved at %p\n", mode_kind, mode);
 
     state_machine.pending_mode_change = false;
     state_machine.routing.curr_state_id = 0;
     state_machine.routing.prev_state_id = 0;
     state_machine.routing.next_state_id = 0;
+    OSReport("[SCENE] mode %u preload begin\n", mode_kind);
     lbDvd_80018F58(mode->preloaded);
+    OSReport("[SCENE] mode %u preload complete\n", mode_kind);
     if (mode->on_load != NULL) {
+        OSReport("[SCENE] mode %u load callback begin\n", mode_kind);
         mode->on_load();
+        OSReport("[SCENE] mode %u load callback complete\n", mode_kind);
     }
     while (!sm->pending_mode_change) {
         if (state_machine.get_override != NULL &&
@@ -363,14 +383,18 @@ void gm_801A4510(void)
     int i;
     PAD_STACK(2 * 4);
 
+    OSReport("[SCENE] mode table initialization begin\n");
     gm_GetAllGameModes();
     memzero(&state_machine, sizeof(struct stateMachine));
     modes = gm_GetAllGameModes();
     for (i = 0; modes[i].kind != GM_COUNT; i++) {
         if (modes[i].on_init != NULL) {
+            OSReport("[SCENE] init mode %u begin\n", modes[i].kind);
             modes[i].on_init();
+            OSReport("[SCENE] init mode %u complete\n", modes[i].kind);
         }
     }
+    OSReport("[SCENE] all mode initialization complete\n");
     if (VIGetDTVStatus() != 0 &&
         (db_gameLaunchButtonState & HSD_PAD_B || OSGetProgressiveMode() == 1))
     {
@@ -380,6 +404,7 @@ void gm_801A4510(void)
     }
     state_machine.routing.prev_mode = GM_COUNT;
 
+    OSReport("[SCENE] initial mode is %u\n", state_machine.routing.curr_mode);
     while (true) {
         u8 next_mode = runGameMode(state_machine.routing.curr_mode);
         if (gmMainLib_8046B0F0.resetting) {

@@ -1,6 +1,10 @@
 #include "dolphin/thp.h"
 
+#ifdef TARGET_VITA
+#include "../../../../../platforms/vita/game/aurora_thp_compat.hpp"
+#else
 #include "../../internal.hpp"
+#endif
 
 #include <algorithm>
 #include <array>

@@ -6,6 +6,15 @@ endif ()
 
 project(melee-pc LANGUAGES C CXX)
 
+# Vita starts with a deliberately small native smoke target.  Aurora's current
+# renderer is built on Dawn/WebGPU, which is not available on Vita; keeping the
+# bring-up target separate lets us validate the toolchain, packaging, memory,
+# input, and display before introducing a Vita GX backend.
+if (VITA)
+    add_subdirectory(platforms/vita)
+    return()
+endif ()
+
 if (NOT CMAKE_C_COMPILER_ID STREQUAL "GNU" AND NOT ANDROID)
     # Game code relies on __attribute__((scalar_storage_order("big-endian"))) for
     # on-disc structures, which only GCC implements (C only).

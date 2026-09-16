@@ -282,6 +282,9 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
 {
     int pad_queue_count;
     int i;
+    int traced_wait = 0;
+    int traced_update = 0;
+    int traced_render = 0;
     struct gm_80479D58_t* temp_r25;
 
     PAD_STACK(28);
@@ -300,7 +303,15 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
         gmMainLib_8046B0F0.xC = false;
 
         while ((pad_queue_count = lb_80019894()) == 0) {
+            if (!traced_wait) {
+                OSReport("[FRAME] waiting for first controller/frame sample\n");
+                traced_wait = 1;
+            }
             lb_800195D0();
+        }
+        if (!traced_update) {
+            OSReport("[FRAME] first update batch: %d sample(s)\n",
+                     pad_queue_count);
         }
         lb_800195D0();
 
@@ -372,10 +383,17 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
                 break;
             }
         }
+        if (!traced_update) {
+            OSReport("[FRAME] first update batch complete\n");
+            traced_update = 1;
+        }
         if (temp_r25->unk_C == 2) {
             break;
         }
 
+        if (!traced_render) {
+            OSReport("[FRAME] first render begin\n");
+        }
         lb_800195D0();
         GXInvalidateVtxCache();
         GXInvalidateTexAll();
@@ -384,6 +402,10 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
         HSD_Init_803755A8();
         HSD_PerfSetDrawTime();
         HSD_VICopyXFBAsync(HSD_RP_SCREEN);
+        if (!traced_render) {
+            OSReport("[FRAME] first render submitted\n");
+            traced_render = 1;
+        }
         if (temp_r25->unk_4 != -2U) {
             temp_r25->unk_4++;
         }

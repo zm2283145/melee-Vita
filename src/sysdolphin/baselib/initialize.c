@@ -49,7 +49,9 @@ static GXColor HSD_Init_804D5E1C = { 0 };
 
 void HSD_InitComponent(void)
 {
+    OSReport("[BOOT/HSD] OS/heap setup begin\n");
     HSD_OSInit();
+    OSReport("[BOOT/HSD] OS/heap setup complete\n");
     {
         HSD_VIStatus vi_status;
         GXColor black = { 0, 0, 0, 0 };
@@ -66,13 +68,20 @@ void HSD_InitComponent(void)
 
         HSD_VIInit(&vi_status, FrameBuffer[0], FrameBuffer[1], FrameBuffer[2]);
     }
+    OSReport("[BOOT/HSD] video setup complete\n");
 
     HSD_GXInit();
+    OSReport("[BOOT/HSD] GX state setup complete\n");
     HSD_DVDInit();
+    OSReport("[BOOT/HSD] DVD setup complete\n");
     HSD_IDSetup();
+    OSReport("[BOOT/HSD] ID setup complete\n");
     VIWaitForRetrace();
+    OSReport("[BOOT/HSD] first retrace complete\n");
     HSD_ObjInit();
+    OSReport("[BOOT/HSD] object classes initialized\n");
     HSD_LogInit();
+    OSReport("[BOOT/HSD] log initialized\n");
     init_done = true;
 }
 

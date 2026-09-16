@@ -244,8 +244,16 @@ void gm_801AF250(void)
 
 void gm_Scene_MemCard_OnFrame(void)
 {
+    static int s_vita_last_state = -1;
     int temp_r29;
     u8 _[0x14];
+
+#ifdef TARGET_VITA
+    if (s_vita_last_state != gm_80480DA8.unk14) {
+        OSReport("[MEMCARD] state %d\n", gm_80480DA8.unk14);
+        s_vita_last_state = gm_80480DA8.unk14;
+    }
+#endif
 
     if (DbLevel >= DbLKind_DebugRom && set_gm_804D6870_inline() != 0) {
         if (HSD_PadCopyStatus->trigger & HSD_PAD_L) {

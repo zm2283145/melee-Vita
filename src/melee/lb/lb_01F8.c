@@ -3,7 +3,7 @@
 #include "lbfile.h"
 #include "lbmthp.h"
 #include <dolphin/thp/thp.h>
-#ifdef TARGET_PC
+#if defined(TARGET_PC) || defined(TARGET_VITA)
 #include <pc/pc.h>
 #endif
 #include <sysdolphin/baselib/memory.h>
@@ -104,7 +104,7 @@ void lbMthp8001FAA0(const char* filename, int width, int height)
     DCInvalidateRange(lbl_804335B8.x44, (u32) uv_size);
     lbl_804335B8.x68 = HSD_MemAlloc(uv_size);
     DCInvalidateRange(lbl_804335B8.x68, (u32) uv_size);
-#ifdef TARGET_PC
+#if defined(TARGET_PC) || defined(TARGET_VITA)
     pc_thp_decode_frame(lbl_804335B8.unk94, lbl_804335B8.x20,
                         lbl_804335B8.x44, lbl_804335B8.x68);
 #else

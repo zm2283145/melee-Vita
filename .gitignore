@@ -1,5 +1,6 @@
 build/
 build-win/
+build-vita/
 dist/
 *.inc
 __pycache__/
@@ -24,3 +25,11 @@ platforms/android/release-signing.env
 # Proton/wine leavings from tools/run_proton.sh.
 vkd3d-proton.cache*
 steam_appid.txt
+
+# User-supplied retail game/disc data must never enter source control.
+*.iso
+*.gcm
+*.ciso
+*.rvz
+*.wbfs
+*.dol

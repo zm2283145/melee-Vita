@@ -7,7 +7,7 @@
 #include <dolphin/gx/GXTexture.h>
 #include <dolphin/os.h>
 #include <dolphin/thp/thp.h>
-#ifdef TARGET_PC
+#if defined(TARGET_PC) || defined(TARGET_VITA)
 #include <pc/pc.h>
 #endif
 #include <sysdolphin/baselib/debug.h>
@@ -20,7 +20,7 @@
 
 /* Frame buffers start with the packed size of the next frame, big-endian on
  * disc. */
-#ifdef TARGET_PC
+#if defined(TARGET_PC) || defined(TARGET_VITA)
 #define PACKED_SIZE(p) __builtin_bswap32(*(u32*) (uintptr_t) (p))
 #else
 #define PACKED_SIZE(p) (*(u32*) (p))
@@ -101,7 +101,9 @@ struct lbl_803BAFE8_t {
 }; /* size = 0x18 */
 
 /* 01F294 */ static s32 fn_8001F294(void);
-/* 4333E0 */ static THPDecComp MoviePlayer;
+/* DVD reads target this object directly, so its address must satisfy the
+ * Dolphin DMA destination alignment contract on native Vita builds too. */
+/* 4333E0 */ static THPDecComp MoviePlayer __attribute__((aligned(32)));
 
 static void fn_8001E910(int arg0, uintptr_t arg1, void* arg2, bool cancelflag)
 {
@@ -177,7 +179,7 @@ static s32 fn_8001EB14(THPDecComp* data, const char* path)
     THPInit();
     data->file_entrynum = DVDConvertPathToEntrynum(path);
     lbFile_800161C4(data->file_entrynum, 0, (uintptr_t) data, 0x40, 0x21, 1);
-#ifdef TARGET_PC
+#if defined(TARGET_PC) || defined(TARGET_VITA)
     /* The 0x40-byte file header is read verbatim and is big-endian. */
     for (u32* p = &data->version; p <= &data->first_frame_size; p++) {
         *p = __builtin_bswap32(*p);
@@ -243,7 +245,7 @@ size_t fn_8001EBF0(THPDecComp* data)
     size += wh_div4;
     size += wh_div4;
 
-#ifndef TARGET_PC
+#if !defined(TARGET_PC) && !defined(TARGET_VITA)
     size += THPDec_8032FD40(&data->unk_9C, data->height);
 #endif
 
@@ -351,7 +353,7 @@ static s32 fn_8001EF5C(THPDecComp* data)
     BOOL intr;
 
     if ((u32) data->unk_94 != data->unk_90) {
-#ifdef TARGET_PC
+#if defined(TARGET_PC) || defined(TARGET_VITA)
         pc_thp_decode_frame((void*) (uintptr_t) (data->frame_buffers[data->unk_90] + 4),
                             data->unk_50, data->unk_54, data->unk_58);
 #else

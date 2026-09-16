@@ -11,6 +11,10 @@
 #include <sysdolphin/baselib/hsd_3B27.h>
 #include <sysdolphin/baselib/memory.h>
 
+#ifdef TARGET_VITA
+extern void melee_vita_platform_poll(void);
+#endif
+
 #define _p(x) (lb_80432A68.x)
 
 int lb_80019BB8(int card_result)
@@ -712,6 +716,13 @@ int lb_8001B6F8(void)
     int enabled;
     int result;
 
+#ifdef TARGET_VITA
+    /* Vita card operations preserve the original asynchronous callback
+     * contract.  The original game also polls this routine from synchronous
+     * wait loops, so dispatch deferred completions here to prevent those
+     * loops from starving their own completion callback. */
+    melee_vita_platform_poll();
+#endif
     hsd_803AAA48();
     enabled = OSDisableInterrupts();
     if (_p(x8AC) != 0) {

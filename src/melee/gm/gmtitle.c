@@ -28,6 +28,10 @@
 #include <sysdolphin/baselib/random.h>
 #include <sysdolphin/baselib/sislib.h>
 
+#ifdef TARGET_VITA
+extern void melee_vita_gx_begin_diagnostics(const char* label, u32 draw_count);
+#endif
+
 static StaticModelDesc model_desc_0;
 static StaticModelDesc model_desc_1;
 static char debug_text_buffer[0x80];
@@ -343,6 +347,9 @@ void gm_Scene_Title_OnEnter(void* unused)
     HSD_Archive* archive;
 
     lbAudioAx_800236DC();
+#ifdef TARGET_VITA
+    melee_vita_gx_begin_diagnostics("title", 24);
+#endif
     countdown_timer = 20;
     frame_count = 0;
 

@@ -138,18 +138,27 @@ int main(void)
     char* unused_format_string = "Data %lx\n";
     u32 _[2];
 
+    OSReport("[BOOT] 01 OSInit begin\n");
     OSInit();
+    OSReport("[BOOT] 02 OSInit complete\n");
     VIInit();
+    OSReport("[BOOT] 03 VIInit complete\n");
     DVDInit();
+    OSReport("[BOOT] 04 DVDInit complete\n");
     PADInit();
+    OSReport("[BOOT] 05 PADInit complete\n");
 #ifdef TARGET_PC
     CARDInit("GALE", "01");
 #else
     CARDInit();
 #endif
+    OSReport("[BOOT] 06 CARDInit complete\n");
     OSInitAlarm();
+    OSReport("[BOOT] 07 OSInitAlarm complete\n");
     db_GetGameLaunchButtonState();
+    OSReport("[BOOT] 08 launch input/card probe complete\n");
     gmMain_8015FDA4();
+    OSReport("[BOOT] 09 debug level setup complete\n");
     if (OSGetConsoleSimulatedMemSize() / (1024 * 1024) == 48) {
         OSAllocFromArenaHi(0x01800000, 4);
     }
@@ -158,10 +167,20 @@ int main(void)
     HSD_SetInitParameter(HSD_INIT_RENDER_MODE_OBJ, &GXNtsc480IntDf);
     HSD_SetInitParameter(HSD_INIT_FIFO_SIZE, 0x40000);
     HSD_SetInitParameter(HSD_INIT_HEAP_MAX_NUM, 4);
+    OSReport("[BOOT] 10 arena/init parameters complete (%u bytes)\n",
+             arena_size);
     db_SetupCrashHandler();
+    OSReport("[BOOT] 11 crash handler setup complete\n");
     HSD_AllocateXFB(2, &GXNtsc480IntDf);
-    HSD_GXSetFifoObj(GXInit(HSD_AllocateFifo(0x40000), 0x40000));
+    OSReport("[BOOT] 12 XFB allocation complete\n");
+    {
+        void* fifo = HSD_AllocateFifo(0x40000);
+        OSReport("[BOOT] 13 FIFO allocation complete (%p)\n", fifo);
+        HSD_GXSetFifoObj(GXInit(fifo, 0x40000));
+    }
+    OSReport("[BOOT] 14 GXInit complete\n");
     HSD_InitComponent();
+    OSReport("[BOOT] 15 HSD_InitComponent complete\n");
     GXSetMisc(1, 8);
     *HSD_RandSeedPtr = OSGetTick();
 #ifdef TARGET_PC
@@ -171,21 +190,34 @@ int main(void)
     }
 #endif
     lbAudioAx_8002838C();
+    OSReport("[BOOT] 16 audio initialization complete\n");
     lb_80019AAC(&gmMain_8015FD24);
+    OSReport("[BOOT] 17 VI callbacks/pad library complete\n");
     HSD_VISetUserPostRetraceCallback(&gmMain_8015FDA0);
     HSD_VISetUserGXDrawDoneCallback(&HSD_VIDrawDoneXFB);
     HSD_VISetBlack(0);
     lbMemory_8001564C();
+    OSReport("[BOOT] 18 ARAM memory initialization complete\n");
     lbHeap_80015F3C();
+    OSReport("[BOOT] 19 game heaps initialized\n");
     lbDvd_80018F68();
+    OSReport("[BOOT] 20 game DVD service initialized\n");
     lbArq_80014D2C();
+    OSReport("[BOOT] 21 ARQ service initialized\n");
     lb_8001C5BC();
+    OSReport("[BOOT] 22 card service initialized\n");
     lb_8001D21C();
+    OSReport("[BOOT] 23 language/time services initialized\n");
     lbSnap_8001E290();
+    OSReport("[BOOT] 24 snapshot service initialized\n");
     gmMainLib_8015FCC0();
+    OSReport("[BOOT] 25 main library initialized\n");
     lbMthp_8001F87C();
+    OSReport("[BOOT] 26 THP service initialized\n");
     HSD_SisLib_803A6048(0xC000);
+    OSReport("[BOOT] 27 SIS library initialized\n");
     gmMainLib_8015FBA4();
+    OSReport("[BOOT] 28 persistent game data initialized\n");
 
     if (DbLevel != DbLKind_Master && db_gameLaunchButtonState & HSD_PAD_R &&
         hsd_803931A4(-1))
@@ -229,10 +261,14 @@ int main(void)
         db_EnableItemSpawns();
     }
 
+    OSReport("[BOOT] 29 CPU compatibility setup begin\n");
     init_spr_unk();
+    OSReport("[BOOT] 30 CPU compatibility setup complete\n");
 
     db_ClearFPUExceptions();
+    OSReport("[BOOT] 31 entering scene system\n");
     gm_801A4510();
+    OSReport("[BOOT] 32 scene loop returned\n");
     /* PPC build fell off the end here; 0 = success for the PC exit code. */
     return 0;
 }

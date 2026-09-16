@@ -9,6 +9,10 @@
 #include <dolphin/vi.h>
 #include <sysdolphin/baselib/controller.h>
 
+#ifdef TARGET_VITA
+extern void melee_vita_platform_poll(void);
+#endif
+
 struct lb_804329F0_t {
     union {
         struct UnkArrElem {
@@ -46,6 +50,12 @@ void lb_8001955C(void)
 
 void lb_800195D0(void)
 {
+#ifdef TARGET_VITA
+    /* Some original synchronous load waits spin here without reaching VI.
+     * Pump Vita's deferred DVD and ARQ completions so those waits can make
+     * forward progress just as they did from GameCube interrupt callbacks. */
+    melee_vita_platform_poll();
+#endif
     lb_800192A8(lb_8001955C);
     lb_8001CC84();
 }

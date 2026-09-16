@@ -13,7 +13,7 @@ static inline void Locate(HSD_Archive* archive)
      * host addresses. Every slot is 32 bits wide, so an image loaded above
      * 4GB would silently truncate every pointer in it; this is the same
      * check DP_SET makes, applied to the one site that bypasses DP_SET. */
-#ifdef TARGET_PC
+#if defined(TARGET_PC) && !defined(TARGET_VITA)
     if (archive->header.nb_reloc != 0 && ((uintptr_t) archive->data >> 32)) {
         pc_disc_ptr_overflow(archive->data, __FILE__, __LINE__);
     }

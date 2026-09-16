@@ -35,17 +35,28 @@ void db_GetGameLaunchButtonState(void)
     s32 sectorSize;
     int done;
     int pad;
+    u32 pad_attempts = 0;
+    u32 card_attempts = 0;
 
+    OSReport("[BOOT/PAD] waiting for initial controller sample\n");
     do {
         VIWaitForRetrace();
         PADRead(status);
+        ++pad_attempts;
         done = 1;
         for (pad = 0; pad < 4; ++pad) {
             if (status[pad].err == -2 || status[pad].err == -3) {
                 done = 0;
             }
         }
+        if (!done && (pad_attempts <= 3 || pad_attempts % 300 == 0)) {
+            OSReport("[BOOT/PAD] sample %u not ready: %d %d %d %d\n",
+                     pad_attempts, status[0].err, status[1].err,
+                     status[2].err, status[3].err);
+        }
     } while (!done);
+
+    OSReport("[BOOT/PAD] ready after %u sample(s)\n", pad_attempts);
 
     for (pad = 0; pad < 4; ++pad) {
         if (status[pad].err == 0) {
@@ -56,8 +67,14 @@ void db_GetGameLaunchButtonState(void)
     db_gameLaunchButtonState = (pad != 4) ? status[pad].button : 0;
 
     while (CARDProbeEx(0, &memSize, &sectorSize) == -1) {
+        ++card_attempts;
+        if (card_attempts <= 3 || card_attempts % 300 == 0) {
+            OSReport("[BOOT/CARD] probe busy (%u)\n", card_attempts);
+        }
         VIWaitForRetrace();
     }
+    OSReport("[BOOT/CARD] ready: %d MiB, sector %d\n", memSize,
+             sectorSize);
 }
 
 void db_Setup(void)

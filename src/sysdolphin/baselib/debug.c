@@ -41,11 +41,13 @@ void HSD_LogInit(void)
 }
 #endif
 
+#ifndef TARGET_VITA
 void __assert(const char* str, u32 arg1, const char* arg2)
 {
     OSReport("assertion \"%s\" failed", arg2);
     HSD_Panic(str, arg1, "");
 }
+#endif
 
 void HSD_Panic(const char* arg0, u32 line, const char* arg2)
 {

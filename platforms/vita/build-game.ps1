@@ -30,8 +30,8 @@ $sources = @(
 $sources += Join-Path $root 'src/pc/vtxarray.c'
 
 $common = @(
-    '-std=c11', '-O0', '-g3',
-    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
+    '-std=c11', '-O2', '-g3',
+    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1', '-DMELEE_VITA_SKIP_OPENING_MOVIE=1',
     "-I$includeAurora", "-I$includeSrc", "-I$includeSdk",
     '-Wno-all', '-Wno-extra',
     '-Werror=int-conversion', '-Werror=implicit-function-declaration',

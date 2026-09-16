@@ -176,6 +176,7 @@ typedef struct VitaGXState {
 } VitaGXState;
 
 static VitaGXState s_gx;
+static struct { u32 draws, tris_in, tris_culled, textured, tex_fail, lines; f32 zmin, zmax; u32 alpha0; u32 bm_none; } s_stats;
 static VitaDecodedVertex* s_decode_vertices;
 static u32 s_decode_capacity;
 static MeleeVitaScreenVertex* s_triangle_vertices;
@@ -368,7 +369,7 @@ static void project_vertex(const VitaDecodedVertex* input,
               matrix, s_gx.projection, s_gx.viewport, &x, &y, &z);
     output->x = (960.0f - 640.0f * vita_scale) * 0.5f + x * vita_scale;
     output->y = y * vita_scale;
-    output->z = z;
+    output->z = z < 0.0f ? 0.0f : z > 1.0f ? 1.0f : z;
     f32 tex[3] = { input->texture[0], input->texture[1], 1.0f };
     const u32 texture_stage = active_texture_stage();
     GXTexCoordID coordinate = texture_stage < GX_MAX_TEVSTAGE
@@ -579,6 +580,9 @@ static void submit_decoded(GXPrimitive primitive,
         }
     }
 #undef PROJECT_INDEX
+    s_stats.draws++; s_stats.tris_in += output / 3u;
+    for (i = 0; i < output; ++i) { if (s_triangle_vertices[i].z < s_stats.zmin) s_stats.zmin = s_triangle_vertices[i].z; if (s_triangle_vertices[i].z > s_stats.zmax) s_stats.zmax = s_triangle_vertices[i].z; }
+    { const u32 before_cull = output;
     if (s_gx.cull_mode != GX_CULL_NONE) {
         u32 kept = 0;
         for (i = 0; i + 2u < output; i += 3u) {
@@ -598,6 +602,7 @@ static void submit_decoded(GXPrimitive primitive,
         }
         output = kept;
     }
+    s_stats.tris_culled += (before_cull - output) / 3u; }
     if (output == 0) return;
     const MeleeVitaTextureSource* texture_source =
         current_texture_source(&texture);
@@ -607,6 +612,17 @@ static void submit_decoded(GXPrimitive primitive,
         : texture_source != NULL && texture_stage < GX_MAX_TEVSTAGE
         ? approximate_tev_tint(s_triangle_vertices[0].color, texture_stage)
         : 0xffffffffu;
+    if (texture_source != NULL) s_stats.textured++;
+    if ((tint >> 24) == 0u) s_stats.alpha0++;
+    if (s_gx.blend_mode != GX_BM_BLEND) s_stats.bm_none++;
+    if (s_gx.blend_mode != GX_BM_BLEND) {
+        /* With blending disabled GX ignores fragment alpha when writing the
+         * framebuffer. HSD materials frequently carry alpha 0 in their
+         * diffuse colour, so forcing opaque output here prevents vita2d's
+         * always-on alpha blend from discarding the whole draw. */
+        tint |= 0xff000000u;
+        for (i = 0; i < output; ++i) s_triangle_vertices[i].color |= 0xff000000u;
+    }
     melee_vita_gxm_draw_triangles(s_triangle_vertices, output,
                                    texture_source, tint, &render_state);
 }
@@ -1302,6 +1318,11 @@ void GXCopyDisp(void* destination, GXBool clear)
     (void) destination;
     (void) clear;
     ++s_gx.copied_frames;
+    if ((s_gx.copied_frames % 120u) == 1u) {
+        melee_vita_log_info("[GXSTAT] frame=%u draws=%u tris=%u culled=%u textured=%u alpha0=%u bm_none=%u z=[%.3f,%.3f] cull=%d proj=%.0f",
+            s_gx.copied_frames, s_stats.draws, s_stats.tris_in, s_stats.tris_culled, s_stats.textured, s_stats.alpha0, s_stats.bm_none, s_stats.zmin, s_stats.zmax, (int) s_gx.cull_mode, s_gx.projection[0]);
+    }
+    memset(&s_stats, 0, sizeof(s_stats)); s_stats.zmin = 1e9f; s_stats.zmax = -1e9f;
     melee_vita_gxm_present(color);
 }
 void GXSetDispCopyGamma(GXGamma gamma) { (void) gamma; }

@@ -250,6 +250,7 @@ static void begin_frame(void)
     s_frame_open = 1;
 }
 
+static SceGxmDepthFunc depth_function(u32 function) __attribute__((unused));
 static SceGxmDepthFunc depth_function(u32 function)
 {
     static const SceGxmDepthFunc functions[8] = {
@@ -269,7 +270,9 @@ static void apply_render_state(const MeleeVitaRenderState* state)
     u32 line_width = 1;
     u32 point_size = 1;
     if (state != NULL) {
+#ifndef MELEE_VITA_GX_IGNORE_DEPTH
         if (state->depth_compare) function = depth_function(state->depth_function);
+#endif
         if (state->depth_write) write = SCE_GXM_DEPTH_WRITE_ENABLED;
         line_width = state->line_width != 0 ? state->line_width : 1;
         point_size = state->point_size != 0 ? state->point_size : 1;

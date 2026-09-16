@@ -53,7 +53,7 @@ $platformSources = @(
 
 $common = @(
     '-std=gnu11', '-O2', '-g3',
-    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
+    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1', '-DMELEE_VITA_GX_IGNORE_DEPTH=1',
     "-I$(Join-Path $root 'extern/aurora/include')",
     "-I$(Join-Path $root 'src')",
     "-I$(Join-Path $root 'src/sdk_include')",
@@ -117,9 +117,18 @@ Invoke-VitaTool 'arm-vita-eabi-gcc' $link
 Invoke-VitaTool 'vita-elf-create' @($elf, $velf)
 Invoke-VitaTool 'vita-make-fself' @('-c', $velf, $eboot)
 Invoke-VitaTool 'vita-mksfoex' @(
-    '-s', 'TITLE_ID=MLVITA001', '-s', 'APP_VER=00.01',
-    'Melee Vita Full Boot', $sfo
+    '-s', 'TITLE_ID=MLVITA002', '-s', 'APP_VER=00.01',
+    'Melee Vita (Game Code)', $sfo
 )
-Invoke-VitaTool 'vita-pack-vpk' @('-s', $sfo, '-b', $eboot, $vpk)
+$livearea = Join-Path $PSScriptRoot 'livearea'
+Invoke-VitaTool 'vita-pack-vpk' @(
+    '-s', $sfo, '-b', $eboot,
+    '-a', "$(Join-Path $livearea 'icon0.png')=sce_sys/icon0.png",
+    '-a', "$(Join-Path $livearea 'pic0.png')=sce_sys/pic0.png",
+    '-a', "$(Join-Path $livearea 'bg.png')=sce_sys/livearea/contents/bg.png",
+    '-a', "$(Join-Path $livearea 'startup.png')=sce_sys/livearea/contents/startup.png",
+    '-a', "$(Join-Path $livearea 'template.xml')=sce_sys/livearea/contents/template.xml",
+    $vpk
+)
 
 Write-Output $vpk

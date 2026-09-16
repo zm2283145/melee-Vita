@@ -194,6 +194,16 @@ void gm_Scene_Opening_OnFrame(void)
     HSD_SObj* temp_r3_3;
     PAD_STACK(4);
 
+#ifdef MELEE_VITA_SKIP_OPENING_MOVIE
+    /* Development shortcut: behave as if Start was pressed on frame one. */
+    gmMainLib_8015F500();
+    lbAudioAx_800236DC();
+    lbAudioAx_80023694();
+    gm_801A4B60();
+    gm_SetPendingGameMode(GM_TITLE);
+    gm_SetNewGameModePending();
+    return;
+#endif
     lbMthp_8001F578();
     temp_r3 = lbMthp_8001F5C4();
     if (gm_804D67EC > 5400) {

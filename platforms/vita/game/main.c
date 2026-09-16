@@ -30,10 +30,12 @@ int main(void)
         return result;
     }
 
+#ifdef MELEE_VITA_WAIT_FOR_DEBUGGER
     if (melee_vita_debugger_wait() < 0) {
         melee_vita_log_info("[DEBUGGER] failed to enter GDB wait");
         printf("Melee Vita: debugger startup failed\n");
     }
+#endif
 
     melee_vita_log_info("Platform initialized; entering melee_main");
     result = melee_main();

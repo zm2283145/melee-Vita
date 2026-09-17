@@ -4396,6 +4396,22 @@ bool Camera_80030BBC(Vec3* arg0, S32Vec2* arg1)
 
     px = point.x;
     py = point.y;
+#ifdef TARGET_VITA
+    {
+        /* Widescreen shows more than the 4:3 view the projection describes:
+         * map the point into the widened picture so on-screen tests (the
+         * off-screen magnifier bubble) use the edge that is actually drawn. */
+        extern float melee_vita_widescreen_view_scale(void);
+        const f32 s = melee_vita_widescreen_view_scale();
+        if (s > 1.0f) {
+            Scissor sc;
+            f32 cx;
+            HSD_CObjGetScissor(cobj, &sc);
+            cx = 0.5f * (f32) (sc.left + sc.right);
+            px = (s32) (cx + (point.x - cx) / s);
+        }
+    }
+#endif
     if (arg1 != NULL) {
         arg1->x = px;
         arg1->y = py;

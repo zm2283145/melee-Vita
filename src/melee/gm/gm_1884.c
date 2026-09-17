@@ -448,6 +448,37 @@ void fn_80188EE8(HSD_GObj* gobj)
     HSD_JObjAnimAll(sub->jobjs[22]);
     HSD_JObjReqAnimAll(sub->jobjs[1], (f32) (u32) sub->anim_frames[1]);
     HSD_JObjAnimAll(sub->jobjs[1]);
+#ifdef TARGET_VITA
+    {
+        /* The closed menu parks just left of the 4:3 picture, which widescreen
+         * shows.  Push it out by the extra width, scaled by how closed it is
+         * (frames 0 and 30 closed, 10-20 open).  12 units = 1 logical pixel
+         * * 12 here, matching the text placement below. */
+        extern float melee_vita_widescreen_view_scale(void);
+        const f32 s = melee_vita_widescreen_view_scale();
+        if (s > 1.0f) {
+            const u32 frame = sub->anim_frames[22];
+            f32 closed = 0.0f;
+            if (frame < 10) closed = (10.0f - (f32) frame) / 10.0f;
+            else if (frame >= 20) closed = frame >= 30 ? 1.0f : ((f32) frame - 20.0f) / 10.0f;
+            if (closed > 0.0f) {
+                const f32 shift = closed * (s - 1.0f) * 320.0f / 12.0f;
+                HSD_JObj* a = sub->jobjs[22];
+                HSD_JObj* b = sub->jobjs[1];
+                HSD_JObj* j;
+                bool b_under_a = false, a_under_b = false;
+                for (j = b != NULL ? HSD_JObjGetParent(b) : NULL; j != NULL; j = HSD_JObjGetParent(j))
+                    if (j == a) b_under_a = true;
+                for (j = a != NULL ? HSD_JObjGetParent(a) : NULL; j != NULL; j = HSD_JObjGetParent(j))
+                    if (j == b) a_under_b = true;
+                if (a != NULL && !a_under_b)
+                    HSD_JObjSetTranslateX(a, HSD_JObjGetTranslationX(a) - shift);
+                if (b != NULL && !b_under_a && b != a)
+                    HSD_JObjSetTranslateX(b, HSD_JObjGetTranslationX(b) - shift);
+            }
+        }
+    }
+#endif
 
     sub->text->pos_x =
         (12.0f * (9.798828f + HSD_JObjGetTranslationX(jobj = sub->jobjs[1]))) +

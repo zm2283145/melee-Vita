@@ -32,15 +32,23 @@ void pc_widescreen_set_scene(bool supported)
 
 void pc_widescreen_update(void) {}
 
-/* Whether the logical framebuffer currently spans the full Vita screen. */
+/* Whether the logical framebuffer spans the full Vita screen.  Menus are
+ * stretched to fill it; only gameplay scenes widen their projections. */
 int melee_vita_widescreen_active(void)
 {
-    return s_mode != 0 && s_supported;
+    return s_mode != 0;
+}
+
+/* Horizontal widening of gameplay cameras, independent of the render pass so
+ * game logic (on-screen tests, HUD placement) can match what is drawn. */
+float melee_vita_widescreen_view_scale(void)
+{
+    return s_mode != 0 && s_supported ? VITA_ASPECT / ORIGINAL_ASPECT : 1.0f;
 }
 
 float pc_widescreen_scale(void)
 {
-    if (!melee_vita_widescreen_active()) return 1.0f;
+    if (s_mode == 0 || !s_supported) return 1.0f;
     if (HSD_GetCurrentRenderPass() != HSD_RP_SCREEN) return 1.0f;
     return VITA_ASPECT / ORIGINAL_ASPECT;
 }

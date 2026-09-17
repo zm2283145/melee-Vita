@@ -151,6 +151,8 @@ typedef struct VitaGXState {
     VitaArrayState arrays[GX_VA_MAX_ATTR];
     GXTexOffset line_offset;
     GXTexOffset point_offset;
+    u8 tex_offset_lines[GXR_MAX_TEXCOORDS];
+    u8 tex_offset_points[GXR_MAX_TEXCOORDS];
     u8 line_width;
     u8 point_size;
     GXClipMode clip_mode;
@@ -999,6 +1001,61 @@ static u32 s_prof_vertices;
 static u64 s_prof_decode_us, s_prof_fill_us;
 static u32 s_prof_draws;
 
+/* GX draws points as screen-aligned sprites: the point size is a screen-space
+ * square around the vertex, and GXEnableTexOffsets spreads texture coordinates
+ * across it.  GXM points are single-texel dots, so each point becomes a quad
+ * here, the same way the hardware would have rasterised it.  Particle effects
+ * (Bowser's fire, Mario's coins, hit sparks) are drawn this way. */
+static f32 tex_offset_span(GXTexOffset offset)
+{
+    switch (offset) {
+    case GX_TO_SIXTEENTH: return 1.0f / 16.0f;
+    case GX_TO_EIGHTH: return 1.0f / 8.0f;
+    case GX_TO_FOURTH: return 0.25f;
+    case GX_TO_HALF: return 0.5f;
+    case GX_TO_ONE: return 1.0f;
+    default: return 0.0f;
+    }
+}
+
+static void expand_points(const GxrXform* xform, const VitaDecodedVertex* vertices,
+                          u32 count, GxrVertex* out, u16* indices)
+{
+    static const f32 corner[4][2] = { { -1.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, -1.0f }, { -1.0f, -1.0f } };
+    const f32 size = s_gx.point_size / 6.0f; /* GX units are sixths of a pixel */
+    const f32 span = tex_offset_span(s_gx.point_offset);
+    f32 scale, offset, yscale;
+    f32 half_x, half_y;
+    u32 i, c, t, out_index = 0, index_out = 0;
+    screen_mapping(&scale, &offset, &yscale);
+    half_x = 0.5f * size * scale / 480.0f;   /* clip units per Vita pixel: 1/480 */
+    half_y = 0.5f * size * yscale / 272.0f;
+    for (i = 0; i < count; ++i) {
+        GxrVertex base;
+        build_gxr_vertex(xform, &vertices[i], &base);
+        for (c = 0; c < 4u; ++c) {
+            GxrVertex* v = &out[out_index + c];
+            *v = base;
+            v->position[0] += corner[c][0] * half_x * base.position[3];
+            v->position[1] += corner[c][1] * half_y * base.position[3];
+            if (span > 0.0f) {
+                for (t = 0; t < GXR_MAX_TEXCOORDS; ++t) {
+                    if (!s_gx.tex_offset_points[t]) continue;
+                    v->tex[t][0] = base.tex[t][0] + (corner[c][0] * 0.5f + 0.5f) * span;
+                    v->tex[t][1] = base.tex[t][1] + (0.5f - corner[c][1] * 0.5f) * span;
+                }
+            }
+        }
+        indices[index_out++] = (u16) (out_index);
+        indices[index_out++] = (u16) (out_index + 1u);
+        indices[index_out++] = (u16) (out_index + 2u);
+        indices[index_out++] = (u16) (out_index);
+        indices[index_out++] = (u16) (out_index + 2u);
+        indices[index_out++] = (u16) (out_index + 3u);
+        out_index += 4u;
+    }
+}
+
 static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices, u32 count)
 {
     const u64 prof_start = sceKernelGetProcessTimeWide();
@@ -1015,11 +1072,15 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
         needed = count >= 3u ? (count - 2u) * 3u : 0u;
     else if (primitive == GX_LINES) needed = count / 2u * 2u;
     else if (primitive == GX_LINESTRIP) needed = count >= 2u ? (count - 1u) * 2u : 0u;
-    else if (primitive == GX_POINTS) needed = count;
+    else if (primitive == GX_POINTS) needed = count * 6u; /* sprite quads */
     else return false;
     if (needed == 0) return true;
     if (count > 0xffffu) return false;
-    out = gxr_alloc_vertices(count);
+    {
+        const u32 vertex_count = primitive == GX_POINTS ? count * 4u : count;
+        if (vertex_count > 0xffffu) return false;
+        out = gxr_alloc_vertices(vertex_count);
+    }
     idx = gxr_alloc_indices(needed);
     if (out == NULL || idx == NULL) return false;
 
@@ -1028,9 +1089,13 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
     {
         GxrXform xform;
         prepare_xform(&xform);
+        if (primitive == GX_POINTS) {
+            expand_points(&xform, vertices, count, out, idx);
+            output = needed;
+        } else
         for (i = 0; i < count; ++i) build_gxr_vertex(&xform, &vertices[i], &out[i]);
 #define EMIT(index) idx[output++] = (u16) (index)
-        if (primitive == GX_TRIANGLES || primitive == GX_LINES) {
+        if (primitive == GX_POINTS) { /* already expanded */ } else if (primitive == GX_TRIANGLES || primitive == GX_LINES) {
             for (i = 0; i < needed; ++i) EMIT(i);
         } else if (primitive == GX_QUADS) {
             for (i = 0; i + 3u < count; i += 4u) { EMIT(i); EMIT(i + 1u); EMIT(i + 2u); EMIT(i); EMIT(i + 2u); EMIT(i + 3u); }
@@ -1089,9 +1154,6 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
     if (primitive == GX_LINES || primitive == GX_LINESTRIP) {
         draw->primitive = GXR_PRIM_LINES;
         draw->line_width = (s_gx.line_width / 6.0f) * (544.0f / 480.0f);
-    } else if (primitive == GX_POINTS) {
-        draw->primitive = GXR_PRIM_POINTS;
-        draw->line_width = (s_gx.point_size / 6.0f) * (544.0f / 480.0f);
     } else {
         draw->primitive = GXR_PRIM_TRIANGLES;
         draw->line_width = 1.0f;
@@ -1632,7 +1694,13 @@ void GXSetPointSize(u8 size, GXTexOffset offset) { s_gx.point_size = size; s_gx.
 void GXGetLineWidth(u8* width, GXTexOffset* offset) { if (width) *width = s_gx.line_width; if (offset) *offset = s_gx.line_offset; }
 void GXGetPointSize(u8* size, GXTexOffset* offset) { if (size) *size = s_gx.point_size; if (offset) *offset = s_gx.point_offset; }
 void GXInvalidateVtxCache(void) {}
-void GXEnableTexOffsets(GXTexCoordID coord, GXBool lines, GXBool points) { (void) coord; (void) lines; (void) points; }
+void GXEnableTexOffsets(GXTexCoordID coord, GXBool lines, GXBool points)
+{
+    if ((unsigned) coord < GXR_MAX_TEXCOORDS) {
+        s_gx.tex_offset_lines[coord] = lines ? 1u : 0u;
+        s_gx.tex_offset_points[coord] = points ? 1u : 0u;
+    }
+}
 void GXSetNumTexGens(u8 count)
 { s_gx.texture_generator_count = count > GX_MAX_TEXCOORD ? GX_MAX_TEXCOORD : count; }
 void GXSetTexCoordGen2(GXTexCoordID dst, GXTexGenType type, GXTexGenSrc src,

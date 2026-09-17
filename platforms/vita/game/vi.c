@@ -45,7 +45,14 @@ u32 g_melee_vita_vi_calls;
 void VIWaitForRetrace(void)
 {
     const u64 wait_start = sceKernelGetProcessTimeWide();
-    sceDisplayWaitVblankStart();
+    {
+        /* Game timing comes from the OS alarm pad sampler, not from VI.  Only
+         * block for vblank when the frame finished early; a late frame would
+         * otherwise lose most of another refresh (25 ms becomes 33 ms). */
+        static u64 last_retrace_us;
+        if (wait_start - last_retrace_us < 16000u) sceDisplayWaitVblankStart();
+        last_retrace_us = sceKernelGetProcessTimeWide();
+    }
     g_melee_vita_vi_wait_us += sceKernelGetProcessTimeWide() - wait_start;
     ++g_melee_vita_vi_calls;
     ++s_retrace_count;

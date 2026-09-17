@@ -608,7 +608,8 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 heig
     s_copy_textures[free_slot].width = width;
     s_copy_textures[free_slot].height = height;
     s_copy_textures[free_slot].frame = s_frame_counter;
-    s_copy_textures[free_slot].texture = vita2d_create_empty_texture(width, height);
+    s_copy_textures[free_slot].texture =
+        vita2d_create_empty_texture_rendertarget(width, height, SCE_GXM_TEXTURE_FORMAT_A8B8G8R8);
     if (s_copy_textures[free_slot].texture != NULL)
         vita2d_texture_set_filters(s_copy_textures[free_slot].texture, SCE_GXM_TEXTURE_FILTER_LINEAR,
                                    SCE_GXM_TEXTURE_FILTER_LINEAR);
@@ -631,33 +632,66 @@ typedef struct RqCopy {
     u32 clear;
 } RqCopy;
 
+/* vita2d_get_current_fb() returns the buffer most recently queued for display,
+ * not the one this frame renders into.  The render buffer is found from the
+ * swap history: vita2d cycles its display buffers, so the buffer being drawn
+ * is the one that was presented one full cycle ago. */
+#define FB_HISTORY 8u
+static void* s_fb_history[FB_HISTORY];
+static u32 s_fb_history_count;
+
+static void note_presented_fb(void)
+{
+    memmove(s_fb_history + 1, s_fb_history, sizeof(s_fb_history[0]) * (FB_HISTORY - 1u));
+    s_fb_history[0] = vita2d_get_current_fb();
+    if (s_fb_history_count < FB_HISTORY) ++s_fb_history_count;
+}
+
+static void* render_fb(void)
+{
+    /* s_fb_history[0] is the last presented buffer; with a cycle of N buffers
+     * the current back buffer was presented N-1 swaps before that. */
+    for (u32 period = 2; period <= 4u; ++period) {
+        bool ok = s_fb_history_count >= period * 2u;
+        for (u32 i = 0; ok && i + period < s_fb_history_count; ++i)
+            if (s_fb_history[i] != s_fb_history[i + period]) ok = false;
+        if (ok) return s_fb_history[period - 1u];
+    }
+    return NULL;
+}
+
 static void exec_copy(const void* payload)
 {
     const RqCopy* c = payload;
-    const u8* fb;
+    SceGxmContext* context = vita2d_get_context();
+    const void* fb = render_fb();
     vita2d_end_drawing();
-    vita2d_wait_rendering_done();
-    fb = vita2d_get_current_fb();
-    if (fb != NULL && c->target != NULL) {
-        const u8* out_base = vita2d_texture_get_datap(c->target);
-        const u32 stride = vita2d_texture_get_stride(c->target);
-        for (u32 y = 0; y < c->height; ++y) {
-            s32 fy = (s32) (c->y0 + (y + 0.5f) * c->sy);
-            u8* out = (u8*) out_base + (size_t) y * stride;
-            if (fy < 0) fy = 0; else if (fy > 543) fy = 543;
-            for (u32 x = 0; x < c->width; ++x) {
-                s32 fx = (s32) (c->x0 + (x + 0.5f) * c->sx);
-                if (fx < 0) fx = 0; else if (fx > 959) fx = 959;
-                memcpy(out + x * 4u, fb + ((u32) fy * 960u + (u32) fx) * 4u, 3);
-                out[x * 4u + 3u] = 0xff;
-            }
-        }
+    if (fb != NULL && c->target != NULL && c->target->gxm_rtgt != NULL) {
+        /* GPU copy: sample the partially rendered back buffer (alpha forced to
+         * one) into the render-target texture.  GXM runs scenes in submission
+         * order, so no wait for the GPU is needed. */
+        static vita2d_texture source;
+        const f32 tex_w = (f32) c->width * c->sx;
+        const f32 tex_h = (f32) c->height * c->sy;
+        sceGxmTextureInitLinear(&source.gxm_tex, fb, SCE_GXM_TEXTURE_FORMAT_X8U8U8U8_1BGR, 960, 544, 0);
+        sceGxmTextureSetMinFilter(&source.gxm_tex, SCE_GXM_TEXTURE_FILTER_LINEAR);
+        sceGxmTextureSetMagFilter(&source.gxm_tex, SCE_GXM_TEXTURE_FILTER_LINEAR);
+        vita2d_start_drawing_advanced(c->target, 0);
+        sceGxmSetViewport(context, (f32) c->width * 0.5f, (f32) c->width * 0.5f,
+                          (f32) c->height * 0.5f, -(f32) c->height * 0.5f, 0.0f, 1.0f);
+        sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
+        rt_default_depth();
+        vita2d_set_blend_mode_add(0);
+        if (tex_w > 0.0f && tex_h > 0.0f)
+            vita2d_draw_texture_part_scale(&source, 0.0f, 0.0f, c->x0, c->y0, tex_w, tex_h,
+                                           960.0f / tex_w, 544.0f / tex_h);
+        vita2d_end_drawing();
+        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
     }
     /* Continue the frame without clearing what was drawn so far unless the
      * copy asked for it. */
     rt_begin_scene(s_exec_frame->clear_color, c->clear ? 1 : 0);
 }
-
 void melee_vita_gxm_queue_copy(struct vita2d_texture* target, u32 width, u32 height,
                                f32 x0, f32 y0, f32 sx, f32 sy, int clear)
 {
@@ -813,6 +847,7 @@ static void exec_present(const void* payload)
     }
     vita2d_end_drawing();
     vita2d_swap_buffers();
+    note_presented_fb();
 }
 
 void melee_vita_gxm_present(u32 clear_color)

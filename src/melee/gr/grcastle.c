@@ -1651,6 +1651,17 @@ s32 grCastle_801CFBD4(Ground_GObj* gobj, s32 arg1)
                         target = jobj;
                     }
 
+#ifdef TARGET_VITA
+                    {
+                        extern void melee_vita_log_info(const char*, ...);
+                        static u32 tick;
+                        if (i == 0 && (tick++ % 60u) == 0u)
+                            melee_vita_log_info("[CASTLE] jobj=%p f=%08x sy=%.3f a=%p f=%08x sy=%.3f b=%p f=%08x sy=%.3f",
+                                                (void*) jobj, (unsigned) HSD_JObjGetFlags(jobj), HSD_JObjGetScaleY(jobj),
+                                                (void*) eff_a, eff_a ? (unsigned) HSD_JObjGetFlags(eff_a) : 0u, eff_a ? HSD_JObjGetScaleY(eff_a) : -1.0f,
+                                                (void*) eff_b, eff_b ? (unsigned) HSD_JObjGetFlags(eff_b) : 0u, eff_b ? HSD_JObjGetScaleY(eff_b) : -1.0f);
+                    }
+#endif
                     if ((newScale = HSD_JObjGetScaleY(target)) < 1.0f) {
                         newScale += yakumono_param->x48;
                         if (newScale >= 1.0f) {

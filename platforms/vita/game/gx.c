@@ -1092,6 +1092,16 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
         if (primitive == GX_POINTS) {
             expand_points(&xform, vertices, count, out, idx);
             output = needed;
+            {
+                static u32 logged;
+                if (logged++ < 20u)
+                    melee_vita_log_info("[PTS] n=%u size=%u span=%d off0=%u tex=%p pos=%.1f,%.1f,%.1f,%.1f blend=%u,%u,%u ac=%u,%u",
+                                        count, (unsigned) s_gx.point_size, (int) s_gx.point_offset,
+                                        (unsigned) s_gx.tex_offset_points[0], (void*) s_gx.textures[0],
+                                        out[0].position[0], out[0].position[1], out[0].position[2], out[0].position[3],
+                                        (unsigned) s_gx.blend_mode, (unsigned) s_gx.blend_source, (unsigned) s_gx.blend_destination,
+                                        (unsigned) s_gx.alpha_comp[0], (unsigned) s_gx.alpha_ref[0]);
+            }
         } else
         for (i = 0; i < count; ++i) build_gxr_vertex(&xform, &vertices[i], &out[i]);
 #define EMIT(index) idx[output++] = (u16) (index)

@@ -7,6 +7,7 @@
 
 #include <psp2/gxm.h>
 #include <vita2d.h>
+#include <psp2/kernel/processmgr.h>
 
 #include <stdbool.h>
 #include <string.h>
@@ -197,8 +198,20 @@ static int decode_yuv420(const MeleeVitaTextureSource* source,
     return 0;
 }
 
+static int refresh_texture_impl(VitaTextureCacheEntry* entry,
+                                const MeleeVitaTextureSource* source);
+void melee_vita_prof_add(int zone, u64 us);
 static int refresh_texture(VitaTextureCacheEntry* entry,
                            const MeleeVitaTextureSource* source)
+{
+    const u64 t0 = sceKernelGetProcessTimeWide();
+    const int r = refresh_texture_impl(entry, source);
+    melee_vita_prof_add(4 /* VPZ_TEXUPLOAD */, sceKernelGetProcessTimeWide() - t0);
+    return r;
+}
+
+static int refresh_texture_impl(VitaTextureCacheEntry* entry,
+                                const MeleeVitaTextureSource* source)
 {
     u32* pixels;
     u8* destination;
@@ -350,6 +363,9 @@ void melee_vita_gxm_shutdown(void)
 
 /* Bumped whenever something other than gx_render changes GXM context state. */
 u32 g_melee_vita_gxm_state_epoch;
+void melee_vita_prof_add(int zone, u64 us);
+#define VPZ_SWAP 2
+#define VPZ_TEXUPLOAD 4
 
 static void begin_frame(void)
 {
@@ -552,8 +568,25 @@ void melee_vita_gxm_present(u32 clear_color)
 {
     if (!s_initialized) return;
     if (!s_frame_open) begin_frame();
-    vita2d_end_drawing();
-    vita2d_swap_buffers();
+#ifndef MELEE_VITA_WIDESCREEN
+    {
+        /* The game renders a 4:3 picture; mask the extra 16:9 area like
+         * Dolphin's 4:3 output so overlays that only cover 640x480 do not
+         * leave bright or stray content at the edges. */
+        const f32 bar = (960.0f - 640.0f * (544.0f / 480.0f)) * 0.5f;
+        ++g_melee_vita_gxm_state_epoch;
+        sceGxmSetFrontDepthFunc(vita2d_get_context(), SCE_GXM_DEPTH_FUNC_ALWAYS);
+        sceGxmSetBackDepthFunc(vita2d_get_context(), SCE_GXM_DEPTH_FUNC_ALWAYS);
+        vita2d_draw_rectangle(0.0f, 0.0f, bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
+        vita2d_draw_rectangle(960.0f - bar - 1.0f, 0.0f, bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
+    }
+#endif
+    {
+        const u64 t0 = sceKernelGetProcessTimeWide();
+        vita2d_end_drawing();
+        vita2d_swap_buffers();
+        melee_vita_prof_add(VPZ_SWAP, sceKernelGetProcessTimeWide() - t0);
+    }
     ++s_frame_counter;
     if ((s_frame_counter % 60u) == 0u) {
         /* Evict textures that have not been sampled for a few seconds. */

@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define GXR_CACHE_VERSION 3u
+#define GXR_CACHE_VERSION 4u
 #define GXR_CACHE_DIR "ux0:data/melee/shadercache"
 #define GXR_PROGRAM_BUCKETS 256u
 #define GXR_MAX_INDEX 63000u
@@ -324,7 +324,7 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         }
     }
 
-    emit(s, "float4 main(\n");
+    emit(s, "half4 main(\n");
     emit(s, "    float4 vColor0 : COLOR0,\n    float4 vColor1 : COLOR1");
     for (u32 i = 0; i < GXR_MAX_TEXCOORDS; ++i)
         if (uses_coord[i]) emit(s, ",\n    float2 vTex%u : TEXCOORD%u", i, i);
@@ -332,9 +332,9 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         if (uses_map[i]) emit(s, ",\n    uniform sampler2D uMap%u : TEXUNIT%u", i, i);
     emit(s, ",\n    uniform float4 uPrev, uniform float4 uReg0, uniform float4 uReg1, uniform float4 uReg2");
     emit(s, ",\n    uniform float4 uK0, uniform float4 uK1, uniform float4 uK2, uniform float4 uK3) : COLOR\n{\n");
-    emit(s, "    float4 prev = uPrev;\n    float4 r0 = uReg0;\n    float4 r1 = uReg1;\n    float4 r2 = uReg2;\n");
-    emit(s, "    float4 k0 = uK0;\n    float4 k1 = uK1;\n    float4 k2 = uK2;\n    float4 k3 = uK3;\n");
-    emit(s, "    float4 ras0 = vColor0;\n    float4 ras1 = vColor1;\n");
+    emit(s, "    half4 prev = uPrev;\n    half4 r0 = uReg0;\n    half4 r1 = uReg1;\n    half4 r2 = uReg2;\n");
+    emit(s, "    half4 k0 = uK0;\n    half4 k1 = uK1;\n    half4 k2 = uK2;\n    half4 k3 = uK3;\n");
+    emit(s, "    half4 ras0 = vColor0;\n    half4 ras1 = vColor1;\n");
 
     static const char* reg_names[] = { "prev", "r0", "r1", "r2" };
     for (u32 i = 0; i < key->stage_count; ++i) {
@@ -347,17 +347,17 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
                     emit(s, "    uv%u.x = 1.0 - abs(frac(uv%u.x * 0.5) * 2.0 - 1.0);\n", i, i);
                 if (st->mirror & 2u)
                     emit(s, "    uv%u.y = 1.0 - abs(frac(uv%u.y * 0.5) * 2.0 - 1.0);\n", i, i);
-                emit(s, "    float4 s%u = tex2D(uMap%u, uv%u);\n", i, st->tex_map, i);
+                emit(s, "    half4 s%u = tex2D(uMap%u, uv%u);\n", i, st->tex_map, i);
             } else if (st->tex_coord < GXR_MAX_TEXCOORDS)
-                emit(s, "    float4 s%u = tex2D(uMap%u, vTex%u);\n", i, st->tex_map, st->tex_coord);
+                emit(s, "    half4 s%u = tex2D(uMap%u, vTex%u);\n", i, st->tex_map, st->tex_coord);
             else
-                emit(s, "    float4 s%u = tex2D(uMap%u, float2(0.0,0.0));\n", i, st->tex_map);
+                emit(s, "    half4 s%u = tex2D(uMap%u, float2(0.0,0.0));\n", i, st->tex_map);
         }
         color_arg(a, sizeof(a), key, st, i, st->color_in[0]);
         color_arg(b, sizeof(b), key, st, i, st->color_in[1]);
         color_arg(c, sizeof(c), key, st, i, st->color_in[2]);
         color_arg(d, sizeof(d), key, st, i, st->color_in[3]);
-        emit(s, "    float3 c%u = clamp(", i);
+        emit(s, "    half3 c%u = clamp(", i);
         op_expr(s, st->color_op, st->color_bias, st->color_scale, true, a, b, c, d);
         emit(s, st->color_clamp ? ", 0.0, 1.0);\n" : ", -4.0, 4.0);\n");
 
@@ -365,7 +365,7 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         alpha_arg(b, sizeof(b), key, st, i, st->alpha_in[1]);
         alpha_arg(c, sizeof(c), key, st, i, st->alpha_in[2]);
         alpha_arg(d, sizeof(d), key, st, i, st->alpha_in[3]);
-        emit(s, "    float a%u = clamp(", i);
+        emit(s, "    half a%u = clamp(", i);
         op_expr(s, st->alpha_op, st->alpha_bias, st->alpha_scale, false, a, b, c, d);
         emit(s, st->alpha_clamp ? ", 0.0, 1.0);\n" : ", -4.0, 4.0);\n");
         emit(s, "    %s.rgb = c%u;\n    %s.a = a%u;\n",
@@ -615,23 +615,6 @@ static GxrProgram* find_program(const GxrShaderKey* key)
             melee_vita_log_info("[GXR] src: %s", chunk);
         }
         return p;
-    }
-    {
-        char line[512];
-        size_t n = 0;
-        n += snprintf(line + n, sizeof(line) - n, "[GXRKEY] frag %016llx stages=%u ac=%u/%u,%u/%u op%u:",
-                      (unsigned long long) hash, key->stage_count, key->alpha_comp[0], key->alpha_ref[0],
-                      key->alpha_comp[1], key->alpha_ref[1], key->alpha_op);
-        for (u32 i = 0; i < key->stage_count && n < sizeof(line) - 80u; ++i) {
-            const GxrStage* st = &key->stages[i];
-            n += snprintf(line + n, sizeof(line) - n, " [c%x%x%x%x o%u b%u s%u>%u a%x%x%x%x o%u>%u m%d t%d ch%u k%x/%x]",
-                          st->color_in[0], st->color_in[1], st->color_in[2], st->color_in[3], st->color_op,
-                          st->color_bias, st->color_scale, st->color_out, st->alpha_in[0], st->alpha_in[1],
-                          st->alpha_in[2], st->alpha_in[3], st->alpha_op, st->alpha_out,
-                          st->tex_map == 0xff ? -1 : st->tex_map, st->tex_coord == 0xff ? -1 : st->tex_coord,
-                          st->channel, st->kcsel, st->kasel);
-        }
-        melee_vita_log_info("%s", line);
     }
     static const char* reg_names[] = { "uPrev", "uReg0", "uReg1", "uReg2" };
     static const char* k_names[] = { "uK0", "uK1", "uK2", "uK3" };
@@ -896,7 +879,7 @@ bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
 
 /* ===================================================== GPU vertex pipeline */
 
-#define GXR_VTX_VERSION 1u
+#define GXR_VTX_VERSION 2u
 #define GXR_ARENA_SIZE (48u * 1024u * 1024u)
 
 typedef struct GxrVtxProgram {
@@ -989,7 +972,7 @@ static bool build_vertex_source(const GxrVtxKey* key, Source* s)
     if (key->has_mtxidx)
         emit(s, "    int m = int(floor(aMtx / 3.0 + 0.01)) * 3;\n");
     else
-        emit(s, "    int m = int(uProj[3].w + 0.5) * 3;\n");
+        emit(s, "    int m = 0;\n");
     emit(s, "    float4 p = float4(aPos, 1.0);\n");
     emit(s, "    float3 eye = float3(dot(uPos[m], p), dot(uPos[m + 1], p), dot(uPos[m + 2], p));\n");
     emit(s, "    float3 nrm = float3(dot(uNrm[m].xyz, aNrm), dot(uNrm[m + 1].xyz, aNrm), dot(uNrm[m + 2].xyz, aNrm));\n");
@@ -1117,21 +1100,6 @@ static GxrVtxProgram* find_vertex_program(const GxrVtxKey* key)
         melee_vita_log_info("[GXR] vertex program patch failed hash=%016llx", (unsigned long long) hash);
         return p;
     }
-    {
-        char line[512];
-        size_t n = snprintf(line, sizeof(line), "[GXRKEY] vtx %016llx mtx=%u persp=%u chans=%u tg=%u",
-                            (unsigned long long) hash, key->has_mtxidx, key->perspective,
-                            key->channel_count, key->texgen_count);
-        for (u32 i = 0; i < 4u; ++i) {
-            const GxrVtxChan* c = &key->chan[i];
-            n += snprintf(line + n, sizeof(line) - n, " ch%u[en%u amb%u mat%u l%02x df%u at%u]",
-                          i, c->enabled, c->amb_src, c->mat_src, c->lights, c->diffuse, c->atten);
-        }
-        for (u32 i = 0; i < key->texgen_count && n < sizeof(line) - 40u; ++i)
-            n += snprintf(line + n, sizeof(line) - n, " tg%u[t%u s%u m%u p%u n%u]", i, key->tg[i].type,
-                          key->tg[i].source, key->tg[i].has_matrix, key->tg[i].has_post, key->tg[i].normalize);
-        melee_vita_log_info("%s", line);
-    }
     p->u_pos = sceGxmProgramFindParameterByName(p->program, "uPos");
     p->u_nrm = sceGxmProgramFindParameterByName(p->program, "uNrm");
     p->u_proj = sceGxmProgramFindParameterByName(p->program, "uProj");
@@ -1235,7 +1203,10 @@ bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
     if (!s_ready || draw == NULL || vertices == NULL || indices == NULL || count == 0)
         return false;
     if (cull == GXR_CULL_ALL) return true;
-    GxrVtxProgram* vp = find_vertex_program(vkey);
+    static GxrVtxProgram* last_vp;
+    GxrVtxProgram* vp = (last_vp != NULL && memcmp(&last_vp->key, vkey, sizeof(*vkey)) == 0)
+        ? last_vp : find_vertex_program(vkey);
+    last_vp = vp;
     if (vp == NULL || vp->failed) { ++s_stats.fallback; return false; }
     GxrProgram* program;
     melee_vita_gxm_begin_frame();
@@ -1313,27 +1284,9 @@ bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
     if (vbuf != NULL) {
         const u32 lights_used = (u32) (vkey->chan[0].lights | vkey->chan[1].lights |
                                        vkey->chan[2].lights | vkey->chan[3].lights);
-        if (vp->logged < 2u && lights_used) {
-            ++vp->logged;
-            melee_vita_log_info("[GXRUNI] vtx %016llx mat0=%.2f,%.2f,%.2f,%.2f amb0=%.2f,%.2f,%.2f,%.2f mat1=%.2f,%.2f,%.2f,%.2f amb1=%.2f,%.2f,%.2f,%.2f",
-                (unsigned long long) vp->hash, u->mat[0][0], u->mat[0][1], u->mat[0][2], u->mat[0][3],
-                u->amb[0][0], u->amb[0][1], u->amb[0][2], u->amb[0][3], u->mat[1][0], u->mat[1][1], u->mat[1][2], u->mat[1][3],
-                u->amb[1][0], u->amb[1][1], u->amb[1][2], u->amb[1][3]);
-            for (u32 l = 0; l < 8u; ++l) {
-                if ((lights_used & (1u << l)) == 0u) continue;
-                const f32 (*L)[4] = u->light + l * 5u;
-                melee_vita_log_info("[GXRUNI]  light%u col=%.2f,%.2f,%.2f,%.2f pos=%.1f,%.1f,%.1f dir=%.2f,%.2f,%.2f a=%.3f,%.3f,%.3f k=%.3f,%.3f,%.3f",
-                    l, L[0][0], L[0][1], L[0][2], L[0][3], L[1][0], L[1][1], L[1][2], L[2][0], L[2][1], L[2][2],
-                    L[3][0], L[3][1], L[3][2], L[4][0], L[4][1], L[4][2]);
-            }
-            melee_vita_log_info("[GXRUNI]  reg0=%.2f,%.2f,%.2f,%.2f reg1=%.2f,%.2f,%.2f,%.2f k0=%.2f,%.2f,%.2f,%.2f k1=%.2f,%.2f,%.2f,%.2f",
-                draw->registers[1][0], draw->registers[1][1], draw->registers[1][2], draw->registers[1][3],
-                draw->registers[2][0], draw->registers[2][1], draw->registers[2][2], draw->registers[2][3],
-                draw->konst[0][0], draw->konst[0][1], draw->konst[0][2], draw->konst[0][3],
-                draw->konst[1][0], draw->konst[1][1], draw->konst[1][2], draw->konst[1][3]);
-        }
-        if (vp->u_pos) set_uniform(vbuf, vp->u_pos, 120, (const f32*) u->pos, "u_pos");
-        if (vp->u_nrm) set_uniform(vbuf, vp->u_nrm, 120, (const f32*) u->nrm, "u_nrm");
+        const u32 mtx_comps = vkey->has_mtxidx ? 120u : 12u;
+        if (vp->u_pos) set_uniform(vbuf, vp->u_pos, mtx_comps, (const f32*) u->pos, "u_pos");
+        if (vp->u_nrm) set_uniform(vbuf, vp->u_nrm, mtx_comps, (const f32*) u->nrm, "u_nrm");
         if (vp->u_proj) set_uniform(vbuf, vp->u_proj, 16, (const f32*) u->proj, "u_proj");
         if (vp->u_tex && vkey->texgen_count)
             set_uniform(vbuf, vp->u_tex, vkey->texgen_count * 12u, (const f32*) u->tex, "tex");

@@ -8,6 +8,7 @@
  */
 #include <math.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -209,6 +210,23 @@ typedef struct VitaGXState {
 
 static VitaGXState s_gx;
 static struct { u32 draws, tris_in, tris_culled, textured, tex_fail, lines; f32 zmin, zmax; u32 alpha0; u32 bm_none; } s_stats;
+/* ---- lightweight zone profiler (reported as [PROF] every 120 frames) ---- */
+enum {
+    VPZ_GOBJ_RENDER, VPZ_PRESENT, VPZ_SWAP, VPZ_COPYTEX, VPZ_TEXUPLOAD,
+    VPZ_DL_HASH, VPZ_DL_BUILD, VPZ_DRAW_SETUP, VPZ_GPU_SUBMIT, VPZ_IMMEDIATE,
+    VPZ_COUNT
+};
+static const char* const k_vpz_names[VPZ_COUNT] = {
+    "gobj_render", "present", "swap", "copytex", "tex_upload",
+    "dl_hash", "dl_build", "draw_setup", "gpu_submit", "immediate",
+};
+static u64 s_vpz_us[VPZ_COUNT];
+static u32 s_vpz_calls[VPZ_COUNT];
+void melee_vita_prof_add(int zone, u64 us)
+{
+    if ((unsigned) zone < VPZ_COUNT) { s_vpz_us[zone] += us; ++s_vpz_calls[zone]; }
+}
+
 static VitaDecodedVertex* s_decode_vertices;
 static u32 s_decode_capacity;
 static MeleeVitaScreenVertex* s_triangle_vertices;
@@ -1631,9 +1649,12 @@ void GXBeginIndexed(GXVtxFmt format, u16 vertices, const u16* indices, u32 count
 
 void GXEnd(void)
 {
-    if (s_gx.immediate.active && s_gx.immediate.vertex_count != 0)
+    if (s_gx.immediate.active && s_gx.immediate.vertex_count != 0) {
+        const u64 t0 = sceKernelGetProcessTimeWide();
         submit_decoded(s_gx.immediate.primitive, s_decode_vertices,
                        s_gx.immediate.vertex_count);
+        melee_vita_prof_add(VPZ_IMMEDIATE, sceKernelGetProcessTimeWide() - t0);
+    }
     s_gx.immediate.active = GX_FALSE;
 }
 
@@ -1713,6 +1734,20 @@ static u32 current_state_hash(void)
     return s_dl_state_hash;
 }
 
+/* Vertex arrays are validated with a sparse content sample: skinning and
+ * shape animation rewrite whole buffers, so 48 spread-out 8-byte windows catch
+ * real changes without hashing every byte every frame. */
+static u32 sample_hash(const u8* data, u32 length)
+{
+    if (length <= 512u) return hash_bytes(data, length, 0x2545f491u ^ length);
+    {
+        u32 h = 0x2545f491u ^ length;
+        const u32 step = (length - 8u) / 47u;
+        for (u32 i = 0; i < 48u; ++i) h = hash_bytes(data + i * step, 8u, h);
+        return h;
+    }
+}
+
 static u32 array_slot(const void* data)
 {
     return (u32) (((uintptr_t) data >> 4) ^ ((uintptr_t) data >> 13)) & (ARRAY_HASH_SLOTS - 1u);
@@ -1731,7 +1766,7 @@ static u32 array_content_hash(const void* data, u32 length)
         s_array_hash[slot].length == length)
         return s_array_hash[slot].hash;
     {
-        const u32 h = hash_bytes(data, length, 0x2545f491u ^ length);
+        const u32 h = sample_hash(data, length);
         s_array_hash[slot].data = data;
         s_array_hash[slot].length = length;
         s_array_hash[slot].hash = h;
@@ -2033,9 +2068,16 @@ static void fill_vertex_key_uniforms(GxrVtxKey* key, GxrVtxUniforms* u, bool has
             k->atten = c->lights ? c->attenuation : 0u;
         }
     }
-    for (u32 m = 0; m < 10u; ++m) {
-        copy_rows(u->pos + m * 3u, (const f32 (*)[4]) s_gx.position_matrices[m], 3u);
-        copy_rows(u->nrm + m * 3u, (const f32 (*)[4]) s_gx.normal_matrices[m], 3u);
+    if (has_mtxidx) {
+        for (u32 m = 0; m < 10u; ++m) {
+            copy_rows(u->pos + m * 3u, (const f32 (*)[4]) s_gx.position_matrices[m], 3u);
+            copy_rows(u->nrm + m * 3u, (const f32 (*)[4]) s_gx.normal_matrices[m], 3u);
+        }
+    } else {
+        /* Only the current matrix is used: it goes in slot 0. */
+        const unsigned cur = matrix_slot(s_gx.current_matrix);
+        copy_rows(u->pos, (const f32 (*)[4]) s_gx.position_matrices[cur], 3u);
+        copy_rows(u->nrm, (const f32 (*)[4]) s_gx.normal_matrices[cur], 3u);
     }
     u->proj[0][0] = s_gx.projection[1]; u->proj[0][1] = s_gx.projection[2];
     u->proj[0][2] = s_gx.projection[3]; u->proj[0][3] = s_gx.projection[4];
@@ -2121,11 +2163,13 @@ static bool draw_display_list_gpu(const void* list, u32 bytes)
             }
         }
         s_dl_stats.hash_us += sceKernelGetProcessTimeWide() - t0;
+        melee_vita_prof_add(VPZ_DL_HASH, sceKernelGetProcessTimeWide() - t0);
     }
     if (e == NULL) {
         const u64 t0 = sceKernelGetProcessTimeWide();
         e = build_dl_entry(list, bytes, state_hash);
         s_prof_decode_us += sceKernelGetProcessTimeWide() - t0;
+        melee_vita_prof_add(VPZ_DL_BUILD, sceKernelGetProcessTimeWide() - t0);
         if (e == NULL) { ++s_dl_stats.fallbacks; return false; }
         e->validated_frame = s_array_epoch;
         e->next = s_dl_cache[bucket];
@@ -2146,6 +2190,7 @@ static bool draw_display_list_gpu(const void* list, u32 bytes)
         fill_vertex_key_uniforms(&key, &uniforms, e->has_mtxidx != 0);
         fill_gxr_draw(draw);
         s_prof_fill_us += sceKernelGetProcessTimeWide() - fill_start;
+        melee_vita_prof_add(VPZ_DRAW_SETUP, sceKernelGetProcessTimeWide() - fill_start);
         {
             const u64 draw_start = sceKernelGetProcessTimeWide();
             if (e->tri_count) {
@@ -2167,6 +2212,7 @@ static bool draw_display_list_gpu(const void* list, u32 bytes)
                 ++s_prof_draws;
             }
             s_prof_draw_us += sceKernelGetProcessTimeWide() - draw_start;
+            melee_vita_prof_add(VPZ_GPU_SUBMIT, sceKernelGetProcessTimeWide() - draw_start);
         }
         s_prof_vertices += e->vertex_count;
         /* A shader failure falls back to the CPU path for this draw only if
@@ -2487,6 +2533,21 @@ void GXCopyDisp(void* destination, GXBool clear)
             melee_vita_log_info("[PERF] display_fps=%.1f game_fps=%.1f (60 = full speed) update=%.1fms render=%.1fms ticks/frame=%.2f", sum_us > 0 ? 120.0 * 1000000.0 / sum_us : 0.0, sum_us > 0 ? g_melee_vita_update_ticks * 1000000.0 / sum_us : 0.0, g_melee_vita_update_us / 120.0 / 1000.0, g_melee_vita_render_us / 120.0 / 1000.0, g_melee_vita_update_ticks / 120.0);
             g_melee_vita_update_us = g_melee_vita_render_us = 0;
             g_melee_vita_update_ticks = 0;
+            {
+                char line[512];
+                size_t n = snprintf(line, sizeof(line), "[PROF] ms/frame:");
+                u64 gx_total = 0;
+                for (u32 z = 0; z < VPZ_COUNT; ++z) {
+                    n += snprintf(line + n, sizeof(line) - n, " %s=%.1f", k_vpz_names[z], s_vpz_us[z] / 120.0 / 1000.0);
+                    if (z >= VPZ_COPYTEX) gx_total += s_vpz_us[z];
+                }
+                n += snprintf(line + n, sizeof(line) - n, " | hsd_other=%.1f copies=%u uploads=%u",
+                              ((double) s_vpz_us[VPZ_GOBJ_RENDER] - (double) gx_total) / 120.0 / 1000.0,
+                              s_vpz_calls[VPZ_COPYTEX], s_vpz_calls[VPZ_TEXUPLOAD]);
+                melee_vita_log_info("%s", line);
+                memset(s_vpz_us, 0, sizeof(s_vpz_us));
+                memset(s_vpz_calls, 0, sizeof(s_vpz_calls));
+            }
             melee_vita_log_info("[DLCACHE] hits/frame=%u builds=%u rebuilds=%u fallbacks=%u entries=%u hash=%.1fms",
                                 s_dl_stats.hits / 120u, s_dl_stats.builds, s_dl_stats.rebuilds,
                                 s_dl_stats.fallbacks, s_dl_stats.entries, s_dl_stats.hash_us / 120.0 / 1000.0);
@@ -2523,6 +2584,9 @@ void GXSetCopyClamp(GXFBClamp clamp) { (void) clamp; }
 void GXSetCopyFilter(GXBool aa, u8 pattern[12][2], GXBool vertical, u8 filter[7])
 { (void) aa; (void) pattern; (void) vertical; (void) filter; }
 void GXSetPixelFmt(GXPixelFmt color, GXZFmt16 depth) { (void) color; (void) depth; }
+#ifndef MELEE_VITA_COPY_INTERVAL
+#define MELEE_VITA_COPY_INTERVAL 4u
+#endif
 static u16 s_tex_copy_src[4] = { 0, 0, 640, 480 };
 void* g_melee_vita_last_copy_dst;
 void GXSetTexCopySrc(u16 left, u16 top, u16 width, u16 height)
@@ -2542,7 +2606,15 @@ void GXSetTexCopyDst(u16 width, u16 height, GXTexFmt format, GXBool mipmap)
  * sampled from the Vita back buffer into that texture, and the scene resumes.
  * HSD shadow maps (GX_CTF_R4) stay fully lit because the shadow pass itself is
  * skipped on Vita. */
+static void copy_tex_impl(void* destination, GXBool clear);
 void GXCopyTex(void* destination, GXBool clear)
+{
+    const u64 t0 = sceKernelGetProcessTimeWide();
+    copy_tex_impl(destination, clear);
+    melee_vita_prof_add(VPZ_COPYTEX, sceKernelGetProcessTimeWide() - t0);
+}
+
+static void copy_tex_impl(void* destination, GXBool clear)
 {
     u32 dst_w, dst_h;
     const u8* fb;
@@ -2567,6 +2639,22 @@ void GXCopyTex(void* destination, GXBool clear)
     if (dst_w > 1024u || dst_h > 1024u) return;
     target = melee_vita_gxm_copy_texture(destination, dst_w, dst_h);
     if (target == NULL) return;
+    {
+        /* Each copy forces the GPU to finish the scene so far (tens of ms).
+         * Live screens such as the Pokemon Stadium monitor are refreshed at a
+         * reduced rate; the previous copy stays bound in between. */
+        static struct { const void* key; u32 frame; } recent[8];
+        u32 slot = 0, i;
+        for (i = 0; i < 8u; ++i) {
+            if (recent[i].key == destination) { slot = i; break; }
+            if (recent[i].frame < recent[slot].frame) slot = i;
+        }
+        if (i < 8u && s_gx.copied_frames - recent[slot].frame < MELEE_VITA_COPY_INTERVAL &&
+            !clear)
+            return;
+        recent[slot].key = destination;
+        recent[slot].frame = s_gx.copied_frames;
+    }
     fb = melee_vita_gxm_flush_and_read();
     if (fb != NULL) {
         const u8* out_base = vita2d_texture_get_datap(target);

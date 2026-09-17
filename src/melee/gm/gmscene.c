@@ -422,10 +422,25 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
         GXInvalidateVtxCache();
         GXInvalidateTexAll();
         HSD_StartRender(HSD_RP_SCREEN);
+#ifdef TARGET_VITA
+        {
+            extern u64 sceKernelGetProcessTimeWide(void);
+            extern void melee_vita_prof_add(int zone, u64 us);
+            u64 t0 = sceKernelGetProcessTimeWide(), t1;
+            HSD_GObj_80390FC0();
+            t1 = sceKernelGetProcessTimeWide();
+            melee_vita_prof_add(0 /* gobj_render */, t1 - t0);
+            HSD_Init_803755A8();
+            HSD_PerfSetDrawTime();
+            HSD_VICopyXFBAsync(HSD_RP_SCREEN);
+            melee_vita_prof_add(1 /* present */, sceKernelGetProcessTimeWide() - t1);
+        }
+#else
         HSD_GObj_80390FC0();
         HSD_Init_803755A8();
         HSD_PerfSetDrawTime();
         HSD_VICopyXFBAsync(HSD_RP_SCREEN);
+#endif
 #ifdef TARGET_VITA
         {
             extern u64 sceKernelGetProcessTimeWide(void);

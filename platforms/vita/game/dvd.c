@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Direct, uncompressed GameCube ISO backend for the Vita port. */
 #include "vita_platform.h"
+#include "../vita_log.h"
 
 #include <dolphin/dvd.h>
 #include <dolphin/os.h>
@@ -153,6 +154,94 @@ void melee_vita_dvd_poll(void)
     }
 }
 
+/* The decomp keeps the two HSD font atlases (debug font and the sislib glyphs
+ * used for menu description text) out of the repo; the PC port lifts them
+ * from main.dol at boot (src/pc/discfont.c).  Do the same from the ISO. */
+/* Raw byte views of the atlases; the real headers clash with dolphin/types. */
+extern u8 HSD_DebugFontAtlas[];  /* 128 x DebugFontGlyph (56 bytes) */
+extern u8 HSD_SisLib_FontAtlas[]; /* 287 x TextGlyphTexture (512 bytes) */
+#define MELEE_VITA_DEBUG_FONT_BYTES (56 * 128)
+#define MELEE_VITA_SIS_GLYPH_BYTES 512
+#define MELEE_VITA_SIS_GLYPH_COUNT 287
+
+static long vita_find_bytes(const u8* hay, long hay_len, const u8* needle,
+                            long needle_len)
+{
+    long i;
+    for (i = 0; i + needle_len <= hay_len; i++) {
+        if (hay[i] == needle[0] &&
+            memcmp(hay + i, needle, (size_t) needle_len) == 0)
+            return i;
+    }
+    return -1;
+}
+
+static void melee_vita_load_disc_fonts(const u8* header)
+{
+    static const u32 marks[4] = { 0x10808000u, 0x46808000u, 0x7C808000u,
+                                  0xB3808000u };
+    static const u8 kern_sig[] = { 0x09, 0x08, 0x09, 0x0C,
+                                   0x09, 0x08, 0x08, 0x08 };
+    static const u8 keys_sig[] = {
+        0, 0, 0, 0x26, 0, 0, 0, 0xFF, 0, 0, 0, 0xE8, 0, 0, 0, 0xEF,
+        0, 0, 0, 0x42, 0, 0, 0, 0xD6, 0, 0, 0, 0x01, 0, 0, 0, 0x54,
+        0, 0, 0, 0x14, 0, 0, 0, 0xA3, 0, 0, 0, 0x80, 0, 0, 0, 0xFD,
+        0, 0, 0, 0x6E,
+    };
+    u32 dol_off = read_be32(header + 0x420);
+    u32 fst_off = read_be32(header + 0x424);
+    long len, i, debug_off = -1, kern, keys, start, end, glyphs;
+    u8* dol;
+
+    if (fst_off <= dol_off || fst_off - dol_off > (8u << 20)) {
+        OSReport("[FONT] implausible DOL extent %u..%u\n", dol_off, fst_off);
+        return;
+    }
+    len = (long) (fst_off - dol_off);
+    dol = malloc((size_t) len);
+    if (dol == NULL || read_at(dol, (u32) len, dol_off) < 0) {
+        OSReport("[FONT] cannot read main.dol\n");
+        free(dol);
+        return;
+    }
+
+    for (i = 0; i + 0x20 + MELEE_VITA_DEBUG_FONT_BYTES <= len; i += 4) {
+        if (read_be32(dol + i) == marks[0] && read_be32(dol + i + 8) == marks[1] &&
+            read_be32(dol + i + 16) == marks[2] &&
+            read_be32(dol + i + 24) == marks[3])
+        {
+            debug_off = i + 0x20;
+            break;
+        }
+    }
+    if (debug_off >= 0)
+        memcpy(HSD_DebugFontAtlas, dol + debug_off,
+               (size_t) MELEE_VITA_DEBUG_FONT_BYTES);
+    else
+        OSReport("[FONT] debug font not found\n");
+
+    kern = vita_find_bytes(dol, len, kern_sig, (long) sizeof kern_sig);
+    keys = vita_find_bytes(dol, len, keys_sig, (long) sizeof keys_sig);
+    if (kern < 0 || keys < 0) {
+        OSReport("[FONT] sislib font boundaries not found\n");
+        free(dol);
+        return;
+    }
+    start = (kern + 0x240 + 31) & ~31L; /* GALE01 kerning table length */
+    end = (keys - 0x8C) & ~31L;
+    glyphs = (end - start) / MELEE_VITA_SIS_GLYPH_BYTES;
+    if (glyphs <= 0 || glyphs > MELEE_VITA_SIS_GLYPH_COUNT ||
+        start + glyphs * MELEE_VITA_SIS_GLYPH_BYTES > len)
+    {
+        OSReport("[FONT] implausible sislib glyph count %ld\n", glyphs);
+    } else {
+        memcpy(HSD_SisLib_FontAtlas, dol + start,
+               (size_t) (glyphs * MELEE_VITA_SIS_GLYPH_BYTES));
+        OSReport("[FONT] loaded %ld sislib glyphs\n", glyphs);
+    }
+    free(dol);
+}
+
 void DVDInit(void)
 {
     u8 header[0x42C];
@@ -175,6 +264,7 @@ void DVDInit(void)
         s_fst_count > s_fst_size / 12u) goto failure;
     s_current_dir = 0;
     s_initialized = TRUE;
+    melee_vita_load_disc_fonts(header);
     OSReport("Melee Vita DVD: mounted %s (%u FST entries)\n",
              MELEE_VITA_DISC_PATH, s_fst_count);
     return;
@@ -262,11 +352,20 @@ BOOL DVDReadAsyncPrio(DVDFileInfo* info, void* output, s32 length, s32 offset,
     (void) priority;
     if (info == NULL || length < 0 || offset < 0 ||
         (uint64_t) (u32) offset + (u32) length >
-            (uint64_t) info->length + DVD_MIN_TRANSFER_SIZE - 1u)
+            (uint64_t) info->length + DVD_MIN_TRANSFER_SIZE - 1u) {
+        melee_vita_log_info("[DVD] async read rejected start=0x%08x file_len=%u off=%d len=%d",
+                            info != NULL ? (unsigned) info->startAddr : 0u,
+                            info != NULL ? (unsigned) info->length : 0u,
+                            (int) offset, (int) length);
         return FALSE;
+    }
     info->callback = callback;
     info->cb.state = DVD_STATE_BUSY;
     result = read_at(output, (u32) length, info->startAddr + (u32) offset);
+    if (result < 0)
+        melee_vita_log_info("[DVD] async read failed start=0x%08x file_len=%u off=%d len=%d",
+                            (unsigned) info->startAddr, (unsigned) info->length,
+                            (int) offset, (int) length);
     queue_completion(&info->cb, info, NULL, callback, result,
                      result >= 0 ? (u32) result : 0);
     return TRUE;

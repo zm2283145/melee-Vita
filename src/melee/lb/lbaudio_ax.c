@@ -1836,14 +1836,14 @@ void lbAudioAx_80027168(void)
         return;
     }
 
-    fn_800269AC();
+    OSReport("[SFXLOAD] cancel-begin pending=%d\n", HSD_SynthSFXGetPendingLoadCount()); fn_800269AC(); OSReport("[SFXLOAD] cancel-done\n");
 
     for (i = 0; i < 55; i++) {
         lbl_804338A4[i] = lbl_804337C4[i];
     }
 
     fn_800268B4();
-    fn_800267B0();
+    fn_800267B0(); OSReport("[SFXLOAD] 267B0 done\n");
 
     if (lbl_804D6438 < lbl_804D6448 + lbl_804D6450) {
         OSReport("******** CAUTION ********\n"
@@ -1851,7 +1851,7 @@ void lbAudioAx_80027168(void)
         HSD_ASSERT(0xDB3, 0);
     }
 
-    lbAudioAx_80027168_inline_2();
+    lbAudioAx_80027168_inline_2(); OSReport("[SFXLOAD] load-started\n");
 }
 
 static int fn_80027488(void)
@@ -1876,6 +1876,16 @@ static int fn_80027488(void)
 void lbAudioAx_80027648(void)
 {
     while (fn_80027488() == 1) {
+#ifdef TARGET_VITA
+        /* A requested sound bank is still unloaded but nothing is queued: the
+         * fn_80026C04 load chain was broken (seen when returning from the
+         * main menu to the title). Restart the chain instead of spinning
+         * forever; it picks the highest-priority missing bank. */
+        if (HSD_SynthSFXGetPendingLoadCount() == 0) {
+            OSReport("[AUDIO] restarting stalled SFX bank load chain\n");
+            fn_80026C04(-1, 0);
+        }
+#endif
         HSD_SynthSFXWaitForLoadCompletion(lb_800195D0);
     }
 }
@@ -2000,7 +2010,7 @@ void lbAudioAx_80027DBC(void)
     HSD_AudioSFXKeyOffAll();
     lbAudioAx_800236DC();
     lbAudioAx_80024C84();
-    fn_800269AC();
+    OSReport("[SFXLOAD] cancel-begin pending=%d\n", HSD_SynthSFXGetPendingLoadCount()); fn_800269AC(); OSReport("[SFXLOAD] cancel-done\n");
 }
 
 static inline void lbAudioAx_80027DF8_inline(void)

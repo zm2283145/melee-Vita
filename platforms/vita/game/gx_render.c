@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define GXR_CACHE_VERSION 2u
+#define GXR_CACHE_VERSION 3u
 #define GXR_CACHE_DIR "ux0:data/melee/shadercache"
 #define GXR_PROGRAM_BUCKETS 256u
 #define GXR_MAX_INDEX 63000u
@@ -340,7 +340,14 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         const GxrStage* st = &key->stages[i];
         char a[96], b[96], c[96], d[96];
         if (st->tex_map < GXR_MAX_TEXMAPS) {
-            if (st->tex_coord < GXR_MAX_TEXCOORDS)
+            if (st->tex_coord < GXR_MAX_TEXCOORDS && st->mirror != 0u) {
+                emit(s, "    float2 uv%u = vTex%u;\n", i, st->tex_coord);
+                if (st->mirror & 1u)
+                    emit(s, "    uv%u.x = 1.0 - abs(frac(uv%u.x * 0.5) * 2.0 - 1.0);\n", i, i);
+                if (st->mirror & 2u)
+                    emit(s, "    uv%u.y = 1.0 - abs(frac(uv%u.y * 0.5) * 2.0 - 1.0);\n", i, i);
+                emit(s, "    float4 s%u = tex2D(uMap%u, uv%u);\n", i, st->tex_map, i);
+            } else if (st->tex_coord < GXR_MAX_TEXCOORDS)
                 emit(s, "    float4 s%u = tex2D(uMap%u, vTex%u);\n", i, st->tex_map, st->tex_coord);
             else
                 emit(s, "    float4 s%u = tex2D(uMap%u, float2(0.0,0.0));\n", i, st->tex_map);

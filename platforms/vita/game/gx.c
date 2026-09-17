@@ -938,6 +938,10 @@ static void fill_gxr_draw(GxrDraw* draw)
         if (st->tex_map < GXR_MAX_TEXMAPS && !draw->texture_valid[st->tex_map])
             draw->texture_valid[st->tex_map] =
                 texture_source_for_map(st->tex_map, &draw->textures[st->tex_map]);
+        if (st->tex_map < GXR_MAX_TEXMAPS && draw->texture_valid[st->tex_map]) {
+            st->mirror = (u8) ((draw->textures[st->tex_map].wrap_s == GX_MIRROR ? 1u : 0u) |
+                               (draw->textures[st->tex_map].wrap_t == GX_MIRROR ? 2u : 0u));
+        }
     }
     draw->blend_mode = (u8) s_gx.blend_mode;
     draw->blend_src = (u8) s_gx.blend_source;

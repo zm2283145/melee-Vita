@@ -12,6 +12,9 @@
 #include <dolphin/ar.h>
 #include <dolphin/os.h>
 
+#ifdef TARGET_VITA
+void melee_vita_platform_poll(void);
+#endif
 /* Cached once: getenv() scans the whole environment, and these guards sit
  * on per-draw / per-voice paths where that cost is not acceptable even
  * when the diagnostic is switched off. */
@@ -210,7 +213,13 @@ int HSD_SynthSFXLoad(const char* filename, int bankID, void (*cb)(int, int),
 
     entrynum = DVDConvertPathToEntrynum(filename);
 
+#ifdef TARGET_VITA
+    if (HSD_Synth_804D772C >= 6) OSReport("[SYNTH] load queue full; spinning\n");
+#endif
     while (HSD_Synth_804D772C >= 6) {
+#ifdef TARGET_VITA
+        melee_vita_platform_poll();
+#endif
     }
 
     enabled = OSDisableInterrupts();
@@ -228,10 +237,25 @@ int HSD_SynthSFXLoad(const char* filename, int bankID, void (*cb)(int, int),
     return entrynum;
 }
 
+#ifdef TARGET_VITA
+void HSD_DevComDebugDump(void);
+#endif
 void HSD_SynthSFXWaitForLoadCompletion(void (*callback)(void))
 {
+#ifdef TARGET_VITA
+    u32 spins = 0;
+#endif
     while (HSD_Synth_804D772C != 0) {
         callback();
+#ifdef TARGET_VITA
+        if (++spins == 2000u) {
+            spins = 0;
+            OSReport("[SYNTH] waiting: queued=%d cancel=%d entry=%d bank=%d\n",
+                     HSD_Synth_804D772C, HSD_Synth_804D7738,
+                     HSD_Synth_804C2A60[0].entrynum, HSD_Synth_804C2A60[0].bankID);
+            HSD_DevComDebugDump();
+        }
+#endif
     }
 }
 
@@ -429,9 +453,20 @@ void HSD_SynthSFXBankDeflag(int bank_id)
 
 void HSD_SynthSFXBankDeflagSync(void)
 {
+#ifdef TARGET_VITA
+    OSReport("[SYNTH] deflag sync begin counter=%d\n", (int) sfxGroupDataReaddressCounter);
+#endif
     while (sfxGroupDataReaddressCounter) {
+#ifdef TARGET_VITA
+        /* ARQ readdress callbacks only run from the platform poll on Vita. */
+        melee_vita_platform_poll();
+#else
         continue;
+#endif
     }
+#ifdef TARGET_VITA
+    OSReport("[SYNTH] deflag sync done\n");
+#endif
 }
 
 u32 HSD_SynthGetSoundMode(void)

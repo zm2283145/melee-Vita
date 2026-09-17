@@ -346,6 +346,23 @@ static void HSD_DevComDVDCallback(s32 result, DVDFileInfo* unused)
     DEVCOM_CB_LEAVE();
 }
 
+#ifdef TARGET_VITA
+void HSD_DevComDebugDump(void)
+{
+    int i;
+    OSReport("[DEVCOM] read_error=%d dvd_busy=%d relay=%d,%d aramstate=%d status=%p,%p,%p,%p pendingARAM=%p,%p\n",
+             HSD_DevCom_804D7804, HSD_DevCom_804D77F5, devComRelayBufFlag[0], devComRelayBufFlag[1],
+             aramstate, devComStatus[0], devComStatus[1], devComStatus[2], devComStatus[3],
+             HSD_DevCom_804D77FC[0], HSD_DevCom_804D77FC[1]);
+    for (i = 0; i < 4; i++) {
+        if (devComStatus[i] != NULL)
+            OSReport("[DEVCOM] q%d type=0x%x file=%d src=0x%x size=%u cancel=%d\n", i,
+                     devComStatus[i]->type, devComStatus[i]->file, (unsigned) devComStatus[i]->src,
+                     (unsigned) devComStatus[i]->size, devComStatus[i]->cancelflag);
+    }
+}
+#endif
+
 void HSD_DevComDVDWakeUp(void)
 {
     bool enabled = OSDisableInterrupts();

@@ -272,6 +272,11 @@ void gm_Scene_Title_OnFrame(void)
         return;
     }
     frame_count++;
+#ifdef MELEE_VITA_DISABLE_ATTRACT_DEMO
+    /* The attract-mode demo battle is not playable on Vita yet; stay on the
+     * title screen instead of timing out into it. */
+    if (frame_count > 600) frame_count = 0;
+#endif
     if (frame_count > 600) {
         tmp = gm_GetCurrentSceneExitData();
         *tmp = 0;
@@ -346,6 +351,7 @@ void gm_Scene_Title_OnEnter(void* unused)
     countdown_timer = 20;
     frame_count = 0;
 
+    OSReport("[TITLE] enter step 1\n");
     archive = gmTitle_801A1AC0();
     (void) archive;
 
@@ -353,15 +359,23 @@ void gm_Scene_Title_OnEnter(void* unused)
     lbAudioAx_8002702C(2, 4);
     lbAudioAx_80027168();
 
+    OSReport("[TITLE] enter step 2\n");
     gmTitle_801A1A3C();
+    OSReport("[TITLE] enter step 3\n");
     gmTitle_801A19AC();
+    OSReport("[TITLE] enter step 4\n");
     gmTitle_801A1944();
+    OSReport("[TITLE] enter step 5\n");
     gmTitle_801A185C();
+    OSReport("[TITLE] enter step 6\n");
     gmTitle_801A165C();
 
+    OSReport("[TITLE] enter step 7\n");
     lbAudioAx_80027648();
+    OSReport("[TITLE] enter step 8\n");
     gm_PreloadTitleDemo();
 
+    OSReport("[TITLE] enter step 9\n");
     fn_801A1498_inline();
 
     // Debug shows the build timestamp on the title screen

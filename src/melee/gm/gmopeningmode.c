@@ -1,3 +1,4 @@
+#include <dolphin/os.h>
 #include <stdlib.h>
 #include <sysdolphin/baselib/random.h>
 #include <melee/ft/forward.h>
@@ -444,13 +445,16 @@ void gm_PreloadTitleDemo(void)
     int c_kind;
 
     var_r31 = &lbDvd_GetPreloadCacheScene()->game_cache;
+    OSReport("[DEMOPRE] step 1\n");
     lbDvd_80018C6C();
 
     for (i = 0; i < 4; i++) {
         var_r31->entries[i].char_id = gm_801BF648(i);
         var_r31->entries[i].color = gm_801BF670(i);
     }
+    OSReport("[DEMOPRE] step 2\n");
     var_r31->stkind = gm_801BF694();
+    OSReport("[DEMOPRE] step 3\n");
     lbDvd_80018254();
 
     temp_ret = 4;
@@ -460,9 +464,13 @@ void gm_PreloadTitleDemo(void)
             temp_ret |= lbAudioAx_80026E84(c_kind);
         }
     }
+    OSReport("[DEMOPRE] step 4\n");
     temp_ret |= lbAudioAx_80026EBC(gm_801BF694());
+    OSReport("[DEMOPRE] step 5\n");
     lbAudioAx_80026F2C(0x1E);
+    OSReport("[DEMOPRE] step 6\n");
     lbAudioAx_8002702C(0xE, temp_ret);
+    OSReport("[DEMOPRE] step 7\n");
     lbAudioAx_80027168();
 }
 

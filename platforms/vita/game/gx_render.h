@@ -27,7 +27,7 @@ typedef struct GxrStage {
     u8 color_op, color_bias, color_scale, color_clamp, color_out;
     u8 alpha_op, alpha_bias, alpha_scale, alpha_clamp, alpha_out;
     u8 tex_coord, tex_map, channel, kcsel, kasel, swap_ras, swap_tex;
-    u8 reserved;
+    u8 mirror; /* bit0: mirror S, bit1: mirror T (GXM rejects ADDR_MIRROR) */
 } GxrStage;
 
 /* Everything that changes the generated fragment source.  Zero padding is

@@ -55,7 +55,9 @@ static u32 texture_sample_hash(const MeleeVitaTextureSource* source)
 static SceGxmTextureAddrMode address_mode(u32 mode)
 {
     if (mode == 1u) return SCE_GXM_TEXTURE_ADDR_REPEAT;
-    if (mode == 2u) return SCE_GXM_TEXTURE_ADDR_MIRROR;
+    /* GXM rejects ADDR_MIRROR (0x805b0009) for these textures; the shader
+     * folds mirrored coordinates and samples with REPEAT instead. */
+    if (mode == 2u) return SCE_GXM_TEXTURE_ADDR_REPEAT;
     return SCE_GXM_TEXTURE_ADDR_CLAMP;
 }
 
@@ -270,10 +272,22 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
                                  : SCE_GXM_TEXTURE_FILTER_LINEAR,
         source->mag_filter == 0u ? SCE_GXM_TEXTURE_FILTER_POINT
                                  : SCE_GXM_TEXTURE_FILTER_LINEAR);
-    sceGxmTextureSetUAddrMode(&entry->texture->gxm_tex,
-                              address_mode(source->wrap_s));
-    sceGxmTextureSetVAddrMode(&entry->texture->gxm_tex,
-                              address_mode(source->wrap_t));
+    {
+        const int ru = sceGxmTextureSetUAddrMode(&entry->texture->gxm_tex,
+                                                 address_mode(source->wrap_s));
+        const int rv = sceGxmTextureSetVAddrMode(&entry->texture->gxm_tex,
+                                                 address_mode(source->wrap_t));
+        if (source->wrap_s != 0u || source->wrap_t != 0u) {
+            static u32 logged;
+            if (logged++ < 24u)
+                melee_vita_log_info("[GXR] wrap tex %ux%u fmt=%u wrap=%u,%u set=0x%08x,0x%08x",
+                                    source->width, source->height,
+                                    (unsigned) source->format,
+                                    (unsigned) source->wrap_s,
+                                    (unsigned) source->wrap_t,
+                                    (unsigned) ru, (unsigned) rv);
+        }
+    }
     entry->next = s_textures;
     s_textures = entry;
     return entry->texture;

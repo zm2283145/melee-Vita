@@ -56,7 +56,7 @@ $platformSources = @(
 
 $common = @(
     '-std=gnu11', '-O2', '-g3',
-    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1', '-DMELEE_VITA_HANG_WATCHDOG=25',
+    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
     "-I$(Join-Path $root 'extern/aurora/include')",
     "-I$(Join-Path $root 'src')",
     "-I$(Join-Path $root 'src/sdk_include')",

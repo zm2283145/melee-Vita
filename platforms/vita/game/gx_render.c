@@ -17,7 +17,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef MELEE_VITA_TEV_HALF
 #define GXR_CACHE_VERSION 4u
+#define TEVT "half"
+#else
+#define GXR_CACHE_VERSION 5u
+#define TEVT "float"
+#endif
 #define GXR_CACHE_DIR "ux0:data/melee/shadercache"
 #define GXR_PROGRAM_BUCKETS 256u
 #define GXR_MAX_INDEX 63000u
@@ -323,7 +329,7 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         }
     }
 
-    emit(s, "half4 main(\n");
+    emit(s, TEVT "4 main(\n");
     emit(s, "    float4 vColor0 : COLOR0,\n    float4 vColor1 : COLOR1");
     for (u32 i = 0; i < GXR_MAX_TEXCOORDS; ++i)
         if (uses_coord[i]) emit(s, ",\n    float2 vTex%u : TEXCOORD%u", i, i);
@@ -331,9 +337,9 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         if (uses_map[i]) emit(s, ",\n    uniform sampler2D uMap%u : TEXUNIT%u", i, i);
     emit(s, ",\n    uniform float4 uPrev, uniform float4 uReg0, uniform float4 uReg1, uniform float4 uReg2");
     emit(s, ",\n    uniform float4 uK0, uniform float4 uK1, uniform float4 uK2, uniform float4 uK3) : COLOR\n{\n");
-    emit(s, "    half4 prev = uPrev;\n    half4 r0 = uReg0;\n    half4 r1 = uReg1;\n    half4 r2 = uReg2;\n");
-    emit(s, "    half4 k0 = uK0;\n    half4 k1 = uK1;\n    half4 k2 = uK2;\n    half4 k3 = uK3;\n");
-    emit(s, "    half4 ras0 = vColor0;\n    half4 ras1 = vColor1;\n");
+    emit(s, "    " TEVT "4 prev = uPrev;\n    " TEVT "4 r0 = uReg0;\n    " TEVT "4 r1 = uReg1;\n    " TEVT "4 r2 = uReg2;\n");
+    emit(s, "    " TEVT "4 k0 = uK0;\n    " TEVT "4 k1 = uK1;\n    " TEVT "4 k2 = uK2;\n    " TEVT "4 k3 = uK3;\n");
+    emit(s, "    " TEVT "4 ras0 = vColor0;\n    " TEVT "4 ras1 = vColor1;\n");
 
     static const char* reg_names[] = { "prev", "r0", "r1", "r2" };
     for (u32 i = 0; i < key->stage_count; ++i) {
@@ -346,17 +352,17 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
                     emit(s, "    uv%u.x = 1.0 - abs(frac(uv%u.x * 0.5) * 2.0 - 1.0);\n", i, i);
                 if (st->mirror & 2u)
                     emit(s, "    uv%u.y = 1.0 - abs(frac(uv%u.y * 0.5) * 2.0 - 1.0);\n", i, i);
-                emit(s, "    half4 s%u = tex2D(uMap%u, uv%u);\n", i, st->tex_map, i);
+                emit(s, "    " TEVT "4 s%u = tex2D(uMap%u, uv%u);\n", i, st->tex_map, i);
             } else if (st->tex_coord < GXR_MAX_TEXCOORDS)
-                emit(s, "    half4 s%u = tex2D(uMap%u, vTex%u);\n", i, st->tex_map, st->tex_coord);
+                emit(s, "    " TEVT "4 s%u = tex2D(uMap%u, vTex%u);\n", i, st->tex_map, st->tex_coord);
             else
-                emit(s, "    half4 s%u = tex2D(uMap%u, float2(0.0,0.0));\n", i, st->tex_map);
+                emit(s, "    " TEVT "4 s%u = tex2D(uMap%u, float2(0.0,0.0));\n", i, st->tex_map);
         }
         color_arg(a, sizeof(a), key, st, i, st->color_in[0]);
         color_arg(b, sizeof(b), key, st, i, st->color_in[1]);
         color_arg(c, sizeof(c), key, st, i, st->color_in[2]);
         color_arg(d, sizeof(d), key, st, i, st->color_in[3]);
-        emit(s, "    half3 c%u = clamp(", i);
+        emit(s, "    " TEVT "3 c%u = clamp(", i);
         op_expr(s, st->color_op, st->color_bias, st->color_scale, true, a, b, c, d);
         emit(s, st->color_clamp ? ", 0.0, 1.0);\n" : ", -4.0, 4.0);\n");
 
@@ -364,7 +370,7 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         alpha_arg(b, sizeof(b), key, st, i, st->alpha_in[1]);
         alpha_arg(c, sizeof(c), key, st, i, st->alpha_in[2]);
         alpha_arg(d, sizeof(d), key, st, i, st->alpha_in[3]);
-        emit(s, "    half a%u = clamp(", i);
+        emit(s, "    " TEVT " a%u = clamp(", i);
         op_expr(s, st->alpha_op, st->alpha_bias, st->alpha_scale, false, a, b, c, d);
         emit(s, st->alpha_clamp ? ", 0.0, 1.0);\n" : ", -4.0, 4.0);\n");
         emit(s, "    %s.rgb = c%u;\n    %s.a = a%u;\n",
@@ -803,6 +809,17 @@ static void resolve_textures(const GxrDraw* draw, RqDraw* d)
         if (!used) continue;
         vita2d_texture* texture = draw->texture_valid[map]
             ? melee_vita_gxm_texture(&draw->textures[map]) : NULL;
+        if (texture == NULL) {
+            static u32 logged;
+            if (logged < 40u) {
+                const MeleeVitaTextureSource* t = &draw->textures[map];
+                ++logged;
+                melee_vita_log_info("[TEXMISS] map=%u valid=%u data=%p %ux%u fmt=%u pal=%p palfmt=%u n=%u",
+                                    map, draw->texture_valid[map], t->data, t->width, t->height,
+                                    (unsigned) t->format, t->palette, (unsigned) t->palette_format,
+                                    (unsigned) t->palette_entries);
+            }
+        }
         d->textures[map] = texture != NULL ? texture : s_white;
         d->texture_mask |= (u8) (1u << map);
     }

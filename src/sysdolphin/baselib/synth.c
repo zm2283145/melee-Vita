@@ -1522,6 +1522,10 @@ int HSD_Synth_8038B5AC(int entrynum, u8 vol, u8 vol2, int channel)
     PAD_STACK(8);
 
     do {
+#ifdef TARGET_VITA
+        /* Cleared by DevCom stream callbacks, delivered from the poll. */
+        melee_vita_platform_poll();
+#endif
     } while (HSD_Synth_804D7778 != 0);
 
     HSD_Synth_804D7778 = 1;

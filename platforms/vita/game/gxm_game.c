@@ -30,6 +30,12 @@ typedef struct VitaTextureCacheEntry {
 static VitaTextureCacheEntry* s_textures;
 /* Direct-mapped lookup in front of the entry list: a match draws hundreds of
  * textured primitives per frame and a list walk per draw was measurable. */
+/* GXCopyTex destinations: the copied picture lives in a GPU texture keyed by
+ * the destination buffer address (as aurora does), so sampling that buffer
+ * binds the copy directly instead of decoding CPU memory. */
+#define VITA_COPY_TEXTURES 8u
+static struct { const void* key; vita2d_texture* texture; u32 width, height; } s_copy_textures[VITA_COPY_TEXTURES];
+
 #define VITA_TEXTURE_HASH_SIZE 1024u
 static VitaTextureCacheEntry* s_texture_hash[VITA_TEXTURE_HASH_SIZE];
 static inline u32 texture_hash_slot(const MeleeVitaTextureSource* source)
@@ -228,6 +234,9 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     u32 sample;
     if (source == NULL || source->data == NULL || source->width == 0 ||
         source->height == 0) return NULL;
+    for (u32 c = 0; c < VITA_COPY_TEXTURES; ++c)
+        if (s_copy_textures[c].key == source->data && s_copy_textures[c].texture != NULL)
+            return s_copy_textures[c].texture;
     /* Only formats the decoder understands are hashed/uploaded; copy
      * textures and other special formats (e.g. 0x11) point at buffers that
      * may not be readable for width*height/2 bytes. */
@@ -360,6 +369,64 @@ static void begin_frame(void)
 }
 
 void melee_vita_gxm_begin_frame(void) { begin_frame(); }
+
+/* Ends the current scene, waits for the GPU, and returns the back buffer
+ * (960x544, RGBA8888, 960 pixel stride).  The caller must then call
+ * melee_vita_gxm_resume_frame before issuing further draws. */
+const u8* melee_vita_gxm_flush_and_read(void)
+{
+    if (!s_initialized) return NULL;
+    if (!s_frame_open) begin_frame();
+    vita2d_end_drawing();
+    vita2d_wait_rendering_done();
+    s_frame_open = 0;
+    return vita2d_get_current_fb();
+}
+
+vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 height)
+{
+    u32 c, free_slot = VITA_COPY_TEXTURES;
+    for (c = 0; c < VITA_COPY_TEXTURES; ++c) {
+        if (s_copy_textures[c].key == key) {
+            if (s_copy_textures[c].width == width && s_copy_textures[c].height == height)
+                return s_copy_textures[c].texture;
+            vita2d_free_texture(s_copy_textures[c].texture);
+            s_copy_textures[c].texture = NULL;
+            free_slot = c;
+            break;
+        }
+        if (s_copy_textures[c].key == NULL && free_slot == VITA_COPY_TEXTURES) free_slot = c;
+    }
+    if (free_slot == VITA_COPY_TEXTURES) {
+        free_slot = 0;
+        vita2d_free_texture(s_copy_textures[0].texture);
+    }
+    s_copy_textures[free_slot].key = key;
+    s_copy_textures[free_slot].width = width;
+    s_copy_textures[free_slot].height = height;
+    s_copy_textures[free_slot].texture = vita2d_create_empty_texture(width, height);
+    if (s_copy_textures[free_slot].texture != NULL)
+        vita2d_texture_set_filters(s_copy_textures[free_slot].texture, SCE_GXM_TEXTURE_FILTER_LINEAR,
+                                   SCE_GXM_TEXTURE_FILTER_LINEAR);
+    else
+        s_copy_textures[free_slot].key = NULL;
+    return s_copy_textures[free_slot].texture;
+}
+
+void melee_vita_gxm_resume_frame(int clear)
+{
+    SceGxmContext* context;
+    if (!s_initialized || s_frame_open) return;
+    vita2d_start_drawing();
+    ++g_melee_vita_gxm_state_epoch;
+    context = vita2d_get_context();
+    sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
+    sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
+    if (clear) vita2d_clear_screen();
+    s_frame_open = 1;
+}
 
 vita2d_texture* melee_vita_gxm_texture(const MeleeVitaTextureSource* source)
 {

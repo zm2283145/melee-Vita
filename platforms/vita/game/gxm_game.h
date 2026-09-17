@@ -55,6 +55,9 @@ void melee_vita_gxm_draw_points(const MeleeVitaScreenVertex* vertices,
                                 u32 count,
                                 const MeleeVitaRenderState* state);
 void melee_vita_gxm_present(u32 clear_color);
+const u8* melee_vita_gxm_flush_and_read(void);
+void melee_vita_gxm_resume_frame(int clear);
+struct vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 height);
 void melee_vita_gxm_invalidate_textures(void);
 void melee_vita_gxm_mark_texture_data_dirty(void);
 

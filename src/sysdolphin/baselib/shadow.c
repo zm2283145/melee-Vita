@@ -184,6 +184,15 @@ void HSD_ShadowStartRender(HSD_Shadow* shadow)
     list = shadow->objects;
     cobj = shadow->camera;
     idesc = shadow->texture->imagedesc;
+#ifdef TARGET_VITA
+    /* The shadow pass renders into the framebuffer and relies on GXCopyTex,
+     * which the Vita GX layer does not emulate yet; drawing it would paint
+     * silhouettes on screen. GXCopyTex fills the shadow map as fully lit. */
+    (void) list;
+    (void) cobj;
+    (void) idesc;
+    return;
+#endif
 
     if (list != NULL) {
         HSD_CObjSetCurrent(cobj);

@@ -616,6 +616,23 @@ static GxrProgram* find_program(const GxrShaderKey* key)
         }
         return p;
     }
+    {
+        char line[512];
+        size_t n = 0;
+        n += snprintf(line + n, sizeof(line) - n, "[GXRKEY] frag %016llx stages=%u ac=%u/%u,%u/%u op%u:",
+                      (unsigned long long) hash, key->stage_count, key->alpha_comp[0], key->alpha_ref[0],
+                      key->alpha_comp[1], key->alpha_ref[1], key->alpha_op);
+        for (u32 i = 0; i < key->stage_count && n < sizeof(line) - 80u; ++i) {
+            const GxrStage* st = &key->stages[i];
+            n += snprintf(line + n, sizeof(line) - n, " [c%x%x%x%x o%u b%u s%u>%u a%x%x%x%x o%u>%u m%d t%d ch%u k%x/%x]",
+                          st->color_in[0], st->color_in[1], st->color_in[2], st->color_in[3], st->color_op,
+                          st->color_bias, st->color_scale, st->color_out, st->alpha_in[0], st->alpha_in[1],
+                          st->alpha_in[2], st->alpha_in[3], st->alpha_op, st->alpha_out,
+                          st->tex_map == 0xff ? -1 : st->tex_map, st->tex_coord == 0xff ? -1 : st->tex_coord,
+                          st->channel, st->kcsel, st->kasel);
+        }
+        melee_vita_log_info("%s", line);
+    }
     static const char* reg_names[] = { "uPrev", "uReg0", "uReg1", "uReg2" };
     static const char* k_names[] = { "uK0", "uK1", "uK2", "uK3" };
     for (u32 i = 0; i < 4u; ++i) {
@@ -891,6 +908,7 @@ typedef struct GxrVtxProgram {
     SceGxmVertexProgram* vertex;
     const SceGxmProgramParameter* u_pos, *u_nrm, *u_proj, *u_tex, *u_post,
         *u_light, *u_mat, *u_amb;
+    u32 logged;
     struct GxrVtxProgram* next;
 } GxrVtxProgram;
 
@@ -1099,6 +1117,21 @@ static GxrVtxProgram* find_vertex_program(const GxrVtxKey* key)
         melee_vita_log_info("[GXR] vertex program patch failed hash=%016llx", (unsigned long long) hash);
         return p;
     }
+    {
+        char line[512];
+        size_t n = snprintf(line, sizeof(line), "[GXRKEY] vtx %016llx mtx=%u persp=%u chans=%u tg=%u",
+                            (unsigned long long) hash, key->has_mtxidx, key->perspective,
+                            key->channel_count, key->texgen_count);
+        for (u32 i = 0; i < 4u; ++i) {
+            const GxrVtxChan* c = &key->chan[i];
+            n += snprintf(line + n, sizeof(line) - n, " ch%u[en%u amb%u mat%u l%02x df%u at%u]",
+                          i, c->enabled, c->amb_src, c->mat_src, c->lights, c->diffuse, c->atten);
+        }
+        for (u32 i = 0; i < key->texgen_count && n < sizeof(line) - 40u; ++i)
+            n += snprintf(line + n, sizeof(line) - n, " tg%u[t%u s%u m%u p%u n%u]", i, key->tg[i].type,
+                          key->tg[i].source, key->tg[i].has_matrix, key->tg[i].has_post, key->tg[i].normalize);
+        melee_vita_log_info("%s", line);
+    }
     p->u_pos = sceGxmProgramFindParameterByName(p->program, "uPos");
     p->u_nrm = sceGxmProgramFindParameterByName(p->program, "uNrm");
     p->u_proj = sceGxmProgramFindParameterByName(p->program, "uProj");
@@ -1280,6 +1313,25 @@ bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
     if (vbuf != NULL) {
         const u32 lights_used = (u32) (vkey->chan[0].lights | vkey->chan[1].lights |
                                        vkey->chan[2].lights | vkey->chan[3].lights);
+        if (vp->logged < 2u && lights_used) {
+            ++vp->logged;
+            melee_vita_log_info("[GXRUNI] vtx %016llx mat0=%.2f,%.2f,%.2f,%.2f amb0=%.2f,%.2f,%.2f,%.2f mat1=%.2f,%.2f,%.2f,%.2f amb1=%.2f,%.2f,%.2f,%.2f",
+                (unsigned long long) vp->hash, u->mat[0][0], u->mat[0][1], u->mat[0][2], u->mat[0][3],
+                u->amb[0][0], u->amb[0][1], u->amb[0][2], u->amb[0][3], u->mat[1][0], u->mat[1][1], u->mat[1][2], u->mat[1][3],
+                u->amb[1][0], u->amb[1][1], u->amb[1][2], u->amb[1][3]);
+            for (u32 l = 0; l < 8u; ++l) {
+                if ((lights_used & (1u << l)) == 0u) continue;
+                const f32 (*L)[4] = u->light + l * 5u;
+                melee_vita_log_info("[GXRUNI]  light%u col=%.2f,%.2f,%.2f,%.2f pos=%.1f,%.1f,%.1f dir=%.2f,%.2f,%.2f a=%.3f,%.3f,%.3f k=%.3f,%.3f,%.3f",
+                    l, L[0][0], L[0][1], L[0][2], L[0][3], L[1][0], L[1][1], L[1][2], L[2][0], L[2][1], L[2][2],
+                    L[3][0], L[3][1], L[3][2], L[4][0], L[4][1], L[4][2]);
+            }
+            melee_vita_log_info("[GXRUNI]  reg0=%.2f,%.2f,%.2f,%.2f reg1=%.2f,%.2f,%.2f,%.2f k0=%.2f,%.2f,%.2f,%.2f k1=%.2f,%.2f,%.2f,%.2f",
+                draw->registers[1][0], draw->registers[1][1], draw->registers[1][2], draw->registers[1][3],
+                draw->registers[2][0], draw->registers[2][1], draw->registers[2][2], draw->registers[2][3],
+                draw->konst[0][0], draw->konst[0][1], draw->konst[0][2], draw->konst[0][3],
+                draw->konst[1][0], draw->konst[1][1], draw->konst[1][2], draw->konst[1][3]);
+        }
         if (vp->u_pos) set_uniform(vbuf, vp->u_pos, 120, (const f32*) u->pos, "u_pos");
         if (vp->u_nrm) set_uniform(vbuf, vp->u_nrm, 120, (const f32*) u->nrm, "u_nrm");
         if (vp->u_proj) set_uniform(vbuf, vp->u_proj, 16, (const f32*) u->proj, "u_proj");

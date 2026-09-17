@@ -279,7 +279,12 @@ static inline u64 maybe_gm_801A48A4(u8 i)
 }
 
 #ifdef TARGET_VITA
-/* Frame phase timing, reported with [FRAMETIME] by the Vita GX layer. */ g_melee_vita_update_us; g_melee_vita_render_us; g_melee_vita_update_ticks; u64 g_melee_vita_update_start_us; u64 g_melee_vita_render_start_us;
+/* Frame phase timing, reported with [FRAMEPHASE] by the Vita GX layer. */
+u64 g_melee_vita_update_us;
+u64 g_melee_vita_render_us;
+u32 g_melee_vita_update_ticks;
+static u64 g_melee_vita_update_start_us;
+static u64 g_melee_vita_render_start_us;
 #endif
 
 void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)

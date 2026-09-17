@@ -16,6 +16,7 @@
 #include "vita_platform.h"
 #include <psp2/kernel/processmgr.h>
 #include "gxm_game.h"
+#include <vita2d.h>
 #include "gx_render.h"
 #include "../vita_log.h"
 
@@ -479,6 +480,13 @@ static const MeleeVitaTextureSource* current_texture_source(
         (unsigned) texture->format <= (unsigned) GX_TF_C14X2 &&
         texture->tlut < 20u && s_gx.tluts[texture->tlut] != NULL)
         palette = (const VitaTlutObj*) s_gx.tluts[texture->tlut];
+    {
+        extern void* g_melee_vita_last_copy_dst;
+        static u32 logged;
+        if (texture->data == g_melee_vita_last_copy_dst && logged++ < 6u)
+            melee_vita_log_info("[GXCOPY] sampled as %ux%u fmt=%u tlut=%u", texture->width, texture->height,
+                                (unsigned) texture->format, texture->tlut);
+    }
     memset(source, 0, sizeof(*source));
     source->key = texture->data;
     source->data = texture->data;
@@ -2476,7 +2484,7 @@ void GXCopyDisp(void* destination, GXBool clear)
             extern u32 g_melee_vita_vi_calls;
             extern u64 g_melee_vita_update_us, g_melee_vita_render_us;
             extern u32 g_melee_vita_update_ticks;
-            melee_vita_log_info("[FRAMEPHASE] update=%.1fms render=%.1fms ticks/frame=%.2f", g_melee_vita_update_us / 120.0 / 1000.0, g_melee_vita_render_us / 120.0 / 1000.0, g_melee_vita_update_ticks / 120.0);
+            melee_vita_log_info("[PERF] display_fps=%.1f game_fps=%.1f (60 = full speed) update=%.1fms render=%.1fms ticks/frame=%.2f", sum_us > 0 ? 120.0 * 1000000.0 / sum_us : 0.0, sum_us > 0 ? g_melee_vita_update_ticks * 1000000.0 / sum_us : 0.0, g_melee_vita_update_us / 120.0 / 1000.0, g_melee_vita_render_us / 120.0 / 1000.0, g_melee_vita_update_ticks / 120.0);
             g_melee_vita_update_us = g_melee_vita_render_us = 0;
             g_melee_vita_update_ticks = 0;
             melee_vita_log_info("[DLCACHE] hits/frame=%u builds=%u rebuilds=%u fallbacks=%u entries=%u hash=%.1fms",
@@ -2515,11 +2523,75 @@ void GXSetCopyClamp(GXFBClamp clamp) { (void) clamp; }
 void GXSetCopyFilter(GXBool aa, u8 pattern[12][2], GXBool vertical, u8 filter[7])
 { (void) aa; (void) pattern; (void) vertical; (void) filter; }
 void GXSetPixelFmt(GXPixelFmt color, GXZFmt16 depth) { (void) color; (void) depth; }
+static u16 s_tex_copy_src[4] = { 0, 0, 640, 480 };
+void* g_melee_vita_last_copy_dst;
 void GXSetTexCopySrc(u16 left, u16 top, u16 width, u16 height)
-{ (void) left; (void) top; (void) width; (void) height; }
+{ s_tex_copy_src[0] = left; s_tex_copy_src[1] = top; s_tex_copy_src[2] = width; s_tex_copy_src[3] = height; }
+static struct { u16 width, height; u32 format; GXBool mipmap; } s_tex_copy_dst;
+
 void GXSetTexCopyDst(u16 width, u16 height, GXTexFmt format, GXBool mipmap)
-{ (void) width; (void) height; (void) format; (void) mipmap; }
-void GXCopyTex(void* destination, GXBool clear) { (void) destination; (void) clear; }
+{
+    s_tex_copy_dst.width = width;
+    s_tex_copy_dst.height = height;
+    s_tex_copy_dst.format = (u32) format;
+    s_tex_copy_dst.mipmap = mipmap;
+}
+
+/* GXCopyTex: like aurora, the copy becomes a GPU texture keyed by the
+ * destination pointer.  The scene is flushed, the requested EFB rectangle is
+ * sampled from the Vita back buffer into that texture, and the scene resumes.
+ * HSD shadow maps (GX_CTF_R4) stay fully lit because the shadow pass itself is
+ * skipped on Vita. */
+void GXCopyTex(void* destination, GXBool clear)
+{
+    u32 dst_w, dst_h;
+    const u8* fb;
+    struct vita2d_texture* target;
+    if (destination == NULL || s_tex_copy_dst.width == 0 || s_tex_copy_dst.height == 0) return;
+    dst_w = s_tex_copy_dst.width;
+    dst_h = s_tex_copy_dst.height;
+    g_melee_vita_last_copy_dst = destination;
+    {
+        static u32 logged;
+        if (s_tex_copy_dst.format != 0x20u && logged++ < 8u)
+            melee_vita_log_info("[GXCOPY] dst=%p %ux%u fmt=0x%x mip=%u src=%u,%u %ux%u clear=%u",
+                                destination, dst_w, dst_h, (unsigned) s_tex_copy_dst.format,
+                                (unsigned) s_tex_copy_dst.mipmap, s_tex_copy_src[0], s_tex_copy_src[1],
+                                s_tex_copy_src[2], s_tex_copy_src[3], (unsigned) clear);
+    }
+    if (s_tex_copy_dst.format == 0x20u /* GX_CTF_R4 */) {
+        u32 size = GXGetTexBufferSize(dst_w, dst_h, GX_TF_I4, GX_FALSE, 0);
+        if (size != 0 && size <= 4u * 1024u * 1024u) memset(destination, 0xff, size);
+        return;
+    }
+    if (dst_w > 1024u || dst_h > 1024u) return;
+    target = melee_vita_gxm_copy_texture(destination, dst_w, dst_h);
+    if (target == NULL) return;
+    fb = melee_vita_gxm_flush_and_read();
+    if (fb != NULL) {
+        const u8* out_base = vita2d_texture_get_datap(target);
+        const u32 stride = vita2d_texture_get_stride(target);
+        const f32 scale = 544.0f / 480.0f;
+        const f32 offset = (960.0f - 640.0f * scale) * 0.5f;
+        const f32 sx = s_tex_copy_src[2] * scale / (f32) dst_w;
+        const f32 sy = s_tex_copy_src[3] * scale / (f32) dst_h;
+        const f32 x0 = offset + s_tex_copy_src[0] * scale;
+        const f32 y0 = s_tex_copy_src[1] * scale;
+        for (u32 y = 0; y < dst_h; ++y) {
+            s32 fy = (s32) (y0 + (y + 0.5f) * sy);
+            u8* out = (u8*) out_base + (size_t) y * stride; /* stride is bytes per row */
+            if (fy < 0) fy = 0; else if (fy > 543) fy = 543;
+            for (u32 x = 0; x < dst_w; ++x) {
+                s32 fx = (s32) (x0 + (x + 0.5f) * sx);
+                if (fx < 0) fx = 0; else if (fx > 959) fx = 959;
+                memcpy(out + x * 4u, fb + ((u32) fy * 960u + (u32) fx) * 4u, 3);
+                out[x * 4u + 3u] = 0xff;
+            }
+        }
+    }
+    melee_vita_gxm_resume_frame(clear ? 1 : 0);
+}
+
 u16 GXGetNumXfbLines(u16 height, f32 scale) { return (u16) (height * scale); }
 f32 GXGetYScaleFactor(u16 efb_height, u16 xfb_height)
 { return efb_height != 0 ? (f32) xfb_height / (f32) efb_height : 1.0f; }

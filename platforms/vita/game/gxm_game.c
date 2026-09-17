@@ -583,6 +583,45 @@ static void collect_graveyard(void)
         }
 }
 
+/* A plain vita2d texture with a GXM render target over its own memory, so a
+ * texture copy can be drawn into it on the GPU.  vita2d_free_texture destroys
+ * gxm_rtgt, so the texture can be retired like any other. */
+static vita2d_texture* create_copy_target(u32 width, u32 height)
+{
+    SceGxmRenderTargetParams params;
+    vita2d_texture* texture = vita2d_create_empty_texture(width, height);
+    int err;
+    if (texture == NULL) {
+        melee_vita_log_info("[GXCOPY] texture alloc failed %ux%u", width, height);
+        return NULL;
+    }
+    memset(&params, 0, sizeof(params));
+    params.flags = 0;
+    params.width = (u16) width;
+    params.height = (u16) height;
+    params.scenesPerFrame = 1;
+    params.multisampleMode = SCE_GXM_MULTISAMPLE_NONE;
+    params.multisampleLocations = 0;
+    params.driverMemBlock = -1;
+    err = sceGxmCreateRenderTarget(&params, &texture->gxm_rtgt);
+    if (err < 0) {
+        melee_vita_log_info("[GXCOPY] render target %ux%u failed 0x%08x", width, height, (unsigned) err);
+        texture->gxm_rtgt = NULL;
+        return texture;
+    }
+    err = sceGxmColorSurfaceInit(&texture->gxm_sfc, SCE_GXM_COLOR_FORMAT_A8B8G8R8,
+                                 SCE_GXM_COLOR_SURFACE_LINEAR, SCE_GXM_COLOR_SURFACE_SCALE_NONE,
+                                 SCE_GXM_OUTPUT_REGISTER_SIZE_32BIT, width, height,
+                                 vita2d_texture_get_stride(texture) / 4u,
+                                 vita2d_texture_get_datap(texture));
+    if (err < 0) {
+        melee_vita_log_info("[GXCOPY] color surface %ux%u failed 0x%08x", width, height, (unsigned) err);
+        sceGxmDestroyRenderTarget(texture->gxm_rtgt);
+        texture->gxm_rtgt = NULL;
+    }
+    return texture;
+}
+
 vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 height)
 {
     u32 c, free_slot = VITA_COPY_TEXTURES;
@@ -608,8 +647,7 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 heig
     s_copy_textures[free_slot].width = width;
     s_copy_textures[free_slot].height = height;
     s_copy_textures[free_slot].frame = s_frame_counter;
-    s_copy_textures[free_slot].texture =
-        vita2d_create_empty_texture_rendertarget(width, height, SCE_GXM_TEXTURE_FORMAT_A8B8G8R8);
+    s_copy_textures[free_slot].texture = create_copy_target(width, height);
     if (s_copy_textures[free_slot].texture != NULL)
         vita2d_texture_set_filters(s_copy_textures[free_slot].texture, SCE_GXM_TEXTURE_FILTER_LINEAR,
                                    SCE_GXM_TEXTURE_FILTER_LINEAR);
@@ -666,6 +704,12 @@ static void exec_copy(const void* payload)
     SceGxmContext* context = vita2d_get_context();
     const void* fb = render_fb();
     vita2d_end_drawing();
+    {
+        static u32 logged;
+        if (logged++ < 4u)
+            melee_vita_log_info("[GXCOPY] exec fb=%p target=%p rt=%p %ux%u hist=%u", fb, (void*) c->target,
+                                c->target ? (void*) c->target->gxm_rtgt : NULL, c->width, c->height, s_fb_history_count);
+    }
     if (fb != NULL && c->target != NULL && c->target->gxm_rtgt != NULL) {
         /* GPU copy: sample the partially rendered back buffer (alpha forced to
          * one) into the render-target texture.  GXM runs scenes in submission
@@ -676,7 +720,13 @@ static void exec_copy(const void* payload)
         sceGxmTextureInitLinear(&source.gxm_tex, fb, SCE_GXM_TEXTURE_FORMAT_X8U8U8U8_1BGR, 960, 544, 0);
         sceGxmTextureSetMinFilter(&source.gxm_tex, SCE_GXM_TEXTURE_FILTER_LINEAR);
         sceGxmTextureSetMagFilter(&source.gxm_tex, SCE_GXM_TEXTURE_FILTER_LINEAR);
-        vita2d_start_drawing_advanced(c->target, 0);
+        {
+            const int err = sceGxmBeginScene(context, 0, c->target->gxm_rtgt, NULL, NULL, NULL,
+                                             &c->target->gxm_sfc, NULL);
+            static u32 logged;
+            if (err < 0 && logged++ < 8u)
+                melee_vita_log_info("[GXCOPY] begin scene failed 0x%08x", (unsigned) err);
+        }
         sceGxmSetViewport(context, (f32) c->width * 0.5f, (f32) c->width * 0.5f,
                           (f32) c->height * 0.5f, -(f32) c->height * 0.5f, 0.0f, 1.0f);
         sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
@@ -685,7 +735,7 @@ static void exec_copy(const void* payload)
         if (tex_w > 0.0f && tex_h > 0.0f)
             vita2d_draw_texture_part_scale(&source, 0.0f, 0.0f, c->x0, c->y0, tex_w, tex_h,
                                            960.0f / tex_w, 544.0f / tex_h);
-        vita2d_end_drawing();
+        sceGxmEndScene(context, NULL, NULL);
         sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
     }
     /* Continue the frame without clearing what was drawn so far unless the

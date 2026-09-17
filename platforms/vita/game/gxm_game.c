@@ -34,7 +34,11 @@ static VitaTextureCacheEntry* s_textures;
  * the destination buffer address (as aurora does), so sampling that buffer
  * binds the copy directly instead of decoding CPU memory. */
 #define VITA_COPY_TEXTURES 8u
-static struct { const void* key; vita2d_texture* texture; u32 width, height; } s_copy_textures[VITA_COPY_TEXTURES];
+static struct { const void* key; vita2d_texture* texture; u32 width, height, frame; } s_copy_textures[VITA_COPY_TEXTURES];
+/* A copy destination that has not been copied to recently is stale: HSD may
+ * have freed that buffer and reused the address for an ordinary texture. */
+#define VITA_COPY_STALE_FRAMES 120u
+static void retire_texture(struct vita2d_texture* texture);
 
 #define VITA_TEXTURE_HASH_SIZE 1024u
 static VitaTextureCacheEntry* s_texture_hash[VITA_TEXTURE_HASH_SIZE];
@@ -249,8 +253,13 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     if (source == NULL || source->data == NULL || source->width == 0 ||
         source->height == 0) return NULL;
     for (u32 c = 0; c < VITA_COPY_TEXTURES; ++c)
-        if (s_copy_textures[c].key == source->data && s_copy_textures[c].texture != NULL)
-            return s_copy_textures[c].texture;
+        if (s_copy_textures[c].key == source->data && s_copy_textures[c].texture != NULL) {
+            if (s_frame_counter - s_copy_textures[c].frame <= VITA_COPY_STALE_FRAMES)
+                return s_copy_textures[c].texture;
+            retire_texture(s_copy_textures[c].texture);
+            s_copy_textures[c].texture = NULL;
+            s_copy_textures[c].key = NULL;
+        }
     /* Only formats the decoder understands are hashed/uploaded; copy
      * textures and other special formats (e.g. 0x11) point at buffers that
      * may not be readable for width*height/2 bytes. */
@@ -579,8 +588,11 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 heig
     u32 c, free_slot = VITA_COPY_TEXTURES;
     for (c = 0; c < VITA_COPY_TEXTURES; ++c) {
         if (s_copy_textures[c].key == key) {
-            if (s_copy_textures[c].width == width && s_copy_textures[c].height == height)
+            if (s_copy_textures[c].width == width && s_copy_textures[c].height == height &&
+                s_copy_textures[c].texture != NULL) {
+                s_copy_textures[c].frame = s_frame_counter;
                 return s_copy_textures[c].texture;
+            }
             retire_texture(s_copy_textures[c].texture);
             s_copy_textures[c].texture = NULL;
             free_slot = c;
@@ -595,6 +607,7 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 heig
     s_copy_textures[free_slot].key = key;
     s_copy_textures[free_slot].width = width;
     s_copy_textures[free_slot].height = height;
+    s_copy_textures[free_slot].frame = s_frame_counter;
     s_copy_textures[free_slot].texture = vita2d_create_empty_texture(width, height);
     if (s_copy_textures[free_slot].texture != NULL)
         vita2d_texture_set_filters(s_copy_textures[free_slot].texture, SCE_GXM_TEXTURE_FILTER_LINEAR,

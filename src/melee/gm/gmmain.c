@@ -210,10 +210,9 @@ int main(void)
 #endif
     lbArq_80014D2C();
     OSReport("[BOOT] 21 ARQ service initialized\n");
-    lb_8001C5BC();
-    OSReport("[BOOT] 22 card service initialized\n");
-    lb_8001D21C();
-    OSReport("[BOOT] 23 language/time services initialized\n");
+    lbCardNew_Init();
+    lbCardGame_Init();
+    OSReport("[BOOT] 22 card services initialized\n");
     lbSnap_8001E290();
     OSReport("[BOOT] 24 snapshot service initialized\n");
     gmMainLib_8015FCC0();

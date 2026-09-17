@@ -564,22 +564,7 @@ static u32 approximate_tev_tint(u32 base, u32 texture_stage)
  * generation.  The recorded TEV/blend/depth state travels in a GxrDraw.
  * ------------------------------------------------------------------------ */
 
-static GxrVertex* s_gxr_vertices;
-static u32 s_gxr_capacity;
 static GxrDraw s_gxr_draw;
-
-static bool reserve_gxr(u32 count)
-{
-    GxrVertex* replacement;
-    u32 capacity = s_gxr_capacity != 0 ? s_gxr_capacity : 1024;
-    if (count <= s_gxr_capacity) return true;
-    while (capacity < count && capacity <= UINT32_MAX / 2u) capacity *= 2u;
-    replacement = realloc(s_gxr_vertices, (size_t) capacity * sizeof(*replacement));
-    if (replacement == NULL) return false;
-    s_gxr_vertices = replacement;
-    s_gxr_capacity = capacity;
-    return true;
-}
 
 static bool texture_source_for_map(u32 map, MeleeVitaTextureSource* source)
 {
@@ -963,12 +948,16 @@ static void fill_gxr_draw(GxrDraw* draw)
 static u64 s_prof_vertex_us, s_prof_draw_us;
 static u32 s_prof_vertices;
 
+static u64 s_prof_decode_us, s_prof_fill_us;
+static u32 s_prof_draws;
+
 static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices, u32 count)
 {
     const u64 prof_start = sceKernelGetProcessTimeWide();
     u32 output = 0, i;
     u32 needed;
     GxrVertex* out;
+    u16* idx;
     GxrDraw* draw = &s_gxr_draw;
     if (!gxr_available() || is_movie_yuv_draw()) return false;
 
@@ -981,19 +970,19 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
     else if (primitive == GX_POINTS) needed = count;
     else return false;
     if (needed == 0) return true;
-    if (!reserve_gxr(count)) return false;
-    out = gxr_alloc_vertices(needed);
-    if (out == NULL) return false;
+    if (count > 0xffffu) return false;
+    out = gxr_alloc_vertices(count);
+    idx = gxr_alloc_indices(needed);
+    if (out == NULL || idx == NULL) return false;
 
-    /* Transform each source vertex once, then expand primitives by copying
-     * straight into GPU-visible pool memory. */
+    /* Transform each source vertex once straight into GPU-visible pool
+     * memory and describe the primitives with a u16 index list. */
     {
         GxrXform xform;
-        GxrVertex* transformed = s_gxr_vertices;
         prepare_xform(&xform);
-        for (i = 0; i < count; ++i) build_gxr_vertex(&xform, &vertices[i], &transformed[i]);
-#define EMIT(index) out[output++] = transformed[(index)]
-        if (primitive == GX_TRIANGLES) {
+        for (i = 0; i < count; ++i) build_gxr_vertex(&xform, &vertices[i], &out[i]);
+#define EMIT(index) idx[output++] = (u16) (index)
+        if (primitive == GX_TRIANGLES || primitive == GX_LINES) {
             for (i = 0; i < needed; ++i) EMIT(i);
         } else if (primitive == GX_QUADS) {
             for (i = 0; i + 3u < count; i += 4u) { EMIT(i); EMIT(i + 1u); EMIT(i + 2u); EMIT(i); EMIT(i + 2u); EMIT(i + 3u); }
@@ -1004,8 +993,6 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
             }
         } else if (primitive == GX_TRIANGLEFAN) {
             for (i = 2; i < count; ++i) { EMIT(0); EMIT(i - 1u); EMIT(i); }
-        } else if (primitive == GX_LINES) {
-            for (i = 0; i < needed; ++i) EMIT(i);
         } else if (primitive == GX_LINESTRIP) {
             for (i = 1; i < count; ++i) { EMIT(i - 1u); EMIT(i); }
         } else {
@@ -1017,32 +1004,40 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
     if (primitive <= GX_TRIANGLEFAN && primitive >= GX_QUADS &&
         primitive != GX_LINES && s_gx.cull_mode != GX_CULL_NONE) {
         u32 kept = 0;
-        for (i = 0; i + 2u < output; i += 3u) {
-            const GxrVertex* a = &out[i];
-            const GxrVertex* b = a + 1;
-            const GxrVertex* c = a + 2;
-            bool culled = s_gx.cull_mode == GX_CULL_ALL;
-            if (!culled && a->position[3] > 0.0f && b->position[3] > 0.0f && c->position[3] > 0.0f) {
-                const f32 ax = a->position[0] / a->position[3], ay = a->position[1] / a->position[3];
-                const f32 bx = b->position[0] / b->position[3], by = b->position[1] / b->position[3];
-                const f32 cx = c->position[0] / c->position[3], cy = c->position[1] / c->position[3];
-                /* Legacy path measured area with y pointing down. */
-                const f32 area = -((bx - ax) * (cy - ay) - (by - ay) * (cx - ax));
-                culled = (s_gx.cull_mode == GX_CULL_FRONT && area >= 0.0f) ||
-                         (s_gx.cull_mode == GX_CULL_BACK && area < 0.0f);
+        if (s_gx.cull_mode == GX_CULL_ALL) {
+            output = 0;
+        } else {
+            for (i = 0; i + 2u < output; i += 3u) {
+                const GxrVertex* a = &out[idx[i]];
+                const GxrVertex* b = &out[idx[i + 1u]];
+                const GxrVertex* c = &out[idx[i + 2u]];
+                bool culled = false;
+                if (a->position[3] > 0.0f && b->position[3] > 0.0f && c->position[3] > 0.0f) {
+                    const f32 ax = a->position[0] / a->position[3], ay = a->position[1] / a->position[3];
+                    const f32 bx = b->position[0] / b->position[3], by = b->position[1] / b->position[3];
+                    const f32 cx = c->position[0] / c->position[3], cy = c->position[1] / c->position[3];
+                    /* Legacy path measured area with y pointing down. */
+                    const f32 area = -((bx - ax) * (cy - ay) - (by - ay) * (cx - ax));
+                    culled = (s_gx.cull_mode == GX_CULL_FRONT && area >= 0.0f) ||
+                             (s_gx.cull_mode == GX_CULL_BACK && area < 0.0f);
+                }
+                if (!culled) {
+                    if (kept != i) { idx[kept] = idx[i]; idx[kept + 1u] = idx[i + 1u]; idx[kept + 2u] = idx[i + 2u]; }
+                    kept += 3u;
+                }
             }
-            if (!culled) {
-                if (kept != i) memmove(&out[kept], a, 3u * sizeof(*a));
-                kept += 3u;
-            }
+            output = kept;
         }
-        output = kept;
     }
-    if (output == 0) return true;
-
     s_prof_vertex_us += sceKernelGetProcessTimeWide() - prof_start;
     s_prof_vertices += count;
-    fill_gxr_draw(draw);
+    if (output == 0) return true;
+
+    {
+        const u64 fill_start = sceKernelGetProcessTimeWide();
+        fill_gxr_draw(draw);
+        s_prof_fill_us += sceKernelGetProcessTimeWide() - fill_start;
+    }
     if (primitive == GX_LINES || primitive == GX_LINESTRIP) {
         draw->primitive = GXR_PRIM_LINES;
         draw->line_width = (s_gx.line_width / 6.0f) * (544.0f / 480.0f);
@@ -1055,8 +1050,9 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
     }
     {
         const u64 draw_start = sceKernelGetProcessTimeWide();
-        const bool ok = gxr_draw(draw, out, output);
+        const bool ok = gxr_draw(draw, out, idx, output);
         s_prof_draw_us += sceKernelGetProcessTimeWide() - draw_start;
+        ++s_prof_draws;
         return ok;
     }
 }
@@ -1622,6 +1618,16 @@ void GXEnd(void)
     s_gx.immediate.active = GX_FALSE;
 }
 
+typedef struct VitaAttrPlan {
+    GXAttr attr;
+    GXAttrType descriptor;
+    const VitaVtxFormat* format;
+    const VitaArrayState* array;
+    u32 direct_bytes;   /* bytes consumed in the stream for GX_DIRECT */
+    u32 index_skip;     /* bytes consumed in the stream for indexed attrs */
+    u32 source_bytes;   /* bytes read from the array for indexed attrs */
+} VitaAttrPlan;
+
 void GXCallDisplayList(const void* list, u32 bytes)
 {
     const u8* stream = list;
@@ -1632,59 +1638,74 @@ void GXCallDisplayList(const void* list, u32 bytes)
         const GXPrimitive primitive = (GXPrimitive) (command & 0xf8u);
         const GXVtxFmt format = (GXVtxFmt) (command & 7u);
         const u32 count = (u32) stream[cursor + 1u] << 8 | stream[cursor + 2u];
+        const u64 decode_start = sceKernelGetProcessTimeWide();
+        VitaAttrPlan plan[GX_VA_MAX_ATTR];
+        u32 plan_count = 0;
         u32 vertex_index;
+        u32 default_color;
         if (command == 0 || primitive < GX_QUADS || primitive > GX_POINTS ||
             !valid_format(format)) break;
         cursor += 3u;
         if (!reserve_vertices(count)) return;
-        for (vertex_index = 0; vertex_index < count; ++vertex_index) {
-            VitaDecodedVertex* vertex = &s_decode_vertices[vertex_index];
-            u32 attr_index;
-            memset(vertex, 0, sizeof(*vertex));
-            vertex->normal[2] = 1.0f;
-            vertex->color = packed_color(s_gx.material_colors[0]);
-            for (attr_index = 0; attr_index < GX_VA_MAX_ATTR; ++attr_index) {
-                const GXAttr attr = (GXAttr) attr_index;
-                const GXAttrType descriptor = s_gx.descriptors[attr_index];
-                const VitaVtxFormat* attr_format = &s_gx.formats[format][attr_index];
-                const u8* source;
-                bool little_endian = false;
-                u32 required;
-                if (descriptor == GX_NONE) continue;
-                if (descriptor == GX_DIRECT) {
-                    required = direct_bytes(attr, attr_format);
-                    if (required > bytes - cursor) return;
-                    source = stream + cursor;
-                    cursor += required;
-                } else {
-                    const u32 index_bytes = descriptor == GX_INDEX8 ? 1u : 2u;
-                    const u32 index_count =
-                        (attr == GX_VA_NRM || attr == GX_VA_NBT) &&
-                        attr_format->count == GX_NRM_NBT3 ? 3u : 1u;
-                    u32 array_index;
-                    u32 source_bytes;
-                    const VitaArrayState* array = &s_gx.arrays[attr_index];
-                    if (index_count * index_bytes > bytes - cursor ||
-                        array->data == NULL || array->stride == 0) return;
-                    array_index = descriptor == GX_INDEX8
-                        ? stream[cursor] : read_u16(stream + cursor, false);
-                    cursor += index_count * index_bytes;
-                    source_bytes = attr == GX_VA_CLR0 || attr == GX_VA_CLR1
-                        ? color_bytes(attr_format->type)
-                        : ((attr == GX_VA_NRM || attr == GX_VA_NBT) &&
-                           attr_format->count == GX_NRM_NBT3
-                               ? 3u * component_bytes(attr_format->type)
-                               : direct_bytes(attr, attr_format));
-                    if (array_index > UINT32_MAX / array->stride) return;
-                    required = array_index * array->stride;
-                    if (array->size != 0 &&
-                        (required > array->size || source_bytes > array->size - required)) return;
-                    source = (const u8*) array->data + required;
-                    little_endian = array->little_endian;
-                }
-                decode_attribute(vertex, attr, attr_format, source, little_endian);
+
+        /* The vertex layout is fixed for the whole primitive, so work out the
+         * active attributes and their sizes once instead of per vertex. */
+        for (u32 attr_index = 0; attr_index < GX_VA_MAX_ATTR; ++attr_index) {
+            const GXAttrType descriptor = s_gx.descriptors[attr_index];
+            VitaAttrPlan* entry;
+            if (descriptor == GX_NONE) continue;
+            entry = &plan[plan_count++];
+            entry->attr = (GXAttr) attr_index;
+            entry->descriptor = descriptor;
+            entry->format = &s_gx.formats[format][attr_index];
+            entry->array = &s_gx.arrays[attr_index];
+            entry->direct_bytes = direct_bytes(entry->attr, entry->format);
+            if (descriptor != GX_DIRECT) {
+                const u32 index_bytes = descriptor == GX_INDEX8 ? 1u : 2u;
+                const bool nbt3 = (entry->attr == GX_VA_NRM || entry->attr == GX_VA_NBT) &&
+                                  entry->format->count == GX_NRM_NBT3;
+                entry->index_skip = (nbt3 ? 3u : 1u) * index_bytes;
+                entry->source_bytes = entry->attr == GX_VA_CLR0 || entry->attr == GX_VA_CLR1
+                    ? color_bytes(entry->format->type)
+                    : nbt3 ? 3u * component_bytes(entry->format->type)
+                           : entry->direct_bytes;
+                if (entry->array->data == NULL || entry->array->stride == 0) return;
             }
         }
+        default_color = packed_color(s_gx.material_colors[0]);
+
+        for (vertex_index = 0; vertex_index < count; ++vertex_index) {
+            VitaDecodedVertex* vertex = &s_decode_vertices[vertex_index];
+            u32 p_index;
+            memset(vertex, 0, sizeof(*vertex));
+            vertex->normal[2] = 1.0f;
+            vertex->color = default_color;
+            for (p_index = 0; p_index < plan_count; ++p_index) {
+                const VitaAttrPlan* entry = &plan[p_index];
+                const u8* source;
+                bool little_endian = false;
+                if (entry->descriptor == GX_DIRECT) {
+                    if (entry->direct_bytes > bytes - cursor) return;
+                    source = stream + cursor;
+                    cursor += entry->direct_bytes;
+                } else {
+                    const VitaArrayState* array = entry->array;
+                    u32 array_index, offset;
+                    if (entry->index_skip > bytes - cursor) return;
+                    array_index = entry->descriptor == GX_INDEX8
+                        ? stream[cursor]
+                        : (u32) stream[cursor] << 8 | stream[cursor + 1u];
+                    cursor += entry->index_skip;
+                    offset = array_index * array->stride;
+                    if (array->size != 0 &&
+                        (offset > array->size || entry->source_bytes > array->size - offset)) return;
+                    source = (const u8*) array->data + offset;
+                    little_endian = array->little_endian;
+                }
+                decode_attribute(vertex, entry->attr, entry->format, source, little_endian);
+            }
+        }
+        s_prof_decode_us += sceKernelGetProcessTimeWide() - decode_start;
         submit_decoded(primitive, s_decode_vertices, count);
     }
 }
@@ -1909,6 +1930,16 @@ void GXCopyDisp(void* destination, GXBool clear)
         if ((s_gx.copied_frames % 120u) == 0u) {
             extern u64 g_melee_vita_vi_wait_us;
             extern u32 g_melee_vita_vi_calls;
+            extern u64 g_melee_vita_update_us, g_melee_vita_render_us;
+            extern u32 g_melee_vita_update_ticks;
+            melee_vita_log_info("[FRAMEPHASE] update=%.1fms render=%.1fms ticks/frame=%.2f", g_melee_vita_update_us / 120.0 / 1000.0, g_melee_vita_render_us / 120.0 / 1000.0, g_melee_vita_update_ticks / 120.0);
+            g_melee_vita_update_us = g_melee_vita_render_us = 0;
+            g_melee_vita_update_ticks = 0;
+            melee_vita_log_info("[GXPROF] decode=%.1fms fill=%.1fms draws/frame=%u",
+                                s_prof_decode_us / 120.0 / 1000.0,
+                                s_prof_fill_us / 120.0 / 1000.0, s_prof_draws / 120u);
+            s_prof_decode_us = s_prof_fill_us = 0;
+            s_prof_draws = 0;
             melee_vita_log_info("[FRAMETIME] avg=%.1fms max=%.1fms gx_vertex=%.1fms gx_draw=%.1fms vi_wait=%.1fms vi_calls/frame=%.2f verts/frame=%u",
                                 sum_us / 120.0 / 1000.0, max_us / 1000.0,
                                 s_prof_vertex_us / 120.0 / 1000.0,

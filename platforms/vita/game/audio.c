@@ -71,8 +71,8 @@ static int s_audio_port = -1;
  * SceAudioOut.  The game thread still runs the AX callback and mixing (all
  * AX state stays single-threaded) and keeps a ring buffer ~100 ms ahead. */
 #define VITA_RING_FRAMES 16384u
-#define VITA_RING_TARGET 3200u
-#define VITA_RING_MAX_RENDER 64u
+#define VITA_RING_TARGET 8000u
+#define VITA_RING_MAX_RENDER 256u
 static s16 s_ring[VITA_RING_FRAMES * 2u];
 static volatile u32 s_ring_read;
 static volatile u32 s_ring_write;

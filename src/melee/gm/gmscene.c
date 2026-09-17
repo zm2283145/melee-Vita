@@ -278,6 +278,10 @@ static inline u64 maybe_gm_801A48A4(u8 i)
     }
 }
 
+#ifdef TARGET_VITA
+/* Frame phase timing, reported with [FRAMETIME] by the Vita GX layer. */ g_melee_vita_update_us; g_melee_vita_render_us; g_melee_vita_update_ticks; u64 g_melee_vita_update_start_us; u64 g_melee_vita_render_start_us;
+#endif
+
 void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
 {
     int pad_queue_count;
@@ -320,6 +324,12 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
             break;
         }
 
+#ifdef TARGET_VITA
+        {
+            extern u64 sceKernelGetProcessTimeWide(void);
+            g_melee_vita_update_start_us = sceKernelGetProcessTimeWide();
+        }
+#endif
         for (i = 0; i < pad_queue_count; i++) {
             HSD_PerfSetStartTime();
             lb_800198E0();
@@ -394,6 +404,15 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
         if (!traced_render) {
             OSReport("[FRAME] first render begin\n");
         }
+#ifdef TARGET_VITA
+        {
+            extern u64 sceKernelGetProcessTimeWide(void);
+            const u64 now_us = sceKernelGetProcessTimeWide();
+            g_melee_vita_update_us += now_us - g_melee_vita_update_start_us;
+            g_melee_vita_update_ticks += (u32) pad_queue_count;
+            g_melee_vita_render_start_us = now_us;
+        }
+#endif
         lb_800195D0();
         GXInvalidateVtxCache();
         GXInvalidateTexAll();
@@ -402,6 +421,12 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
         HSD_Init_803755A8();
         HSD_PerfSetDrawTime();
         HSD_VICopyXFBAsync(HSD_RP_SCREEN);
+#ifdef TARGET_VITA
+        {
+            extern u64 sceKernelGetProcessTimeWide(void);
+            g_melee_vita_render_us += sceKernelGetProcessTimeWide() - g_melee_vita_render_start_us;
+        }
+#endif
         if (!traced_render) {
             OSReport("[FRAME] first render submitted\n");
             traced_render = 1;

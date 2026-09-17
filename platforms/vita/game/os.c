@@ -48,8 +48,47 @@ static uintptr_t align_down(uintptr_t value, u32 alignment)
     return alignment > 1 ? value & ~(uintptr_t) (alignment - 1u) : value;
 }
 
+#ifdef MELEE_VITA_HANG_WATCHDOG
+#include <psp2/kernel/threadmgr.h>
+extern u32 g_melee_vita_vi_calls;
+
+/* Debug aid: if the game stops presenting frames for a long time, fault on
+ * purpose so the Vita writes a core dump holding the main thread's stack. */
+static int hang_watchdog_thread(SceSize args, void* argp)
+{
+    u32 last = 0;
+    int stalled_seconds = 0;
+    (void) args;
+    (void) argp;
+    for (;;) {
+        sceKernelDelayThread(1000 * 1000);
+        if (g_melee_vita_vi_calls != last) {
+            last = g_melee_vita_vi_calls;
+            stalled_seconds = 0;
+            continue;
+        }
+        if (last == 0) continue;
+        if (++stalled_seconds == MELEE_VITA_HANG_WATCHDOG) {
+            melee_vita_log_info("[WATCHDOG] no frame for %d s (vi_calls=%u); forcing core dump",
+                                stalled_seconds, (unsigned) last);
+            sceKernelDelayThread(500 * 1000);
+            {
+                static volatile uintptr_t bad_address = 0x10u;
+                *(u32*) bad_address = 0xDEADu;
+            }
+        }
+    }
+    return 0;
+}
+#endif
+
 int melee_vita_platform_init(void)
 {
+#ifdef MELEE_VITA_HANG_WATCHDOG
+    SceUID watchdog = sceKernelCreateThread("melee_watchdog", hang_watchdog_thread,
+                                            0x40, 0x4000, 0, 0, NULL);
+    if (watchdog >= 0) sceKernelStartThread(watchdog, 0, NULL);
+#endif
     return melee_vita_gxm_init();
 }
 
@@ -309,12 +348,23 @@ void melee_vita_os_run_alarms(void)
         if (alarm->handler != NULL && alarm->fire <= now) {
             OSAlarmHandler handler = alarm->handler;
             if (alarm->period > 0) {
-                alarm->fire += alarm->period;
-                if (alarm->fire <= now) alarm->fire = now + alarm->period;
+                /* Deliver every elapsed period (like the GameCube timer
+                 * interrupt would have) so periodic work such as the 60 Hz pad
+                 * sampler queues several samples when a frame runs long and the
+                 * game logic catches up instead of running in slow motion.
+                 * Cap the burst so a long stall does not replay forever. */
+                int burst = 0;
+                do {
+                    alarm->fire += alarm->period;
+                    handler(alarm, NULL);
+                } while (alarm->handler == handler && alarm->fire <= now &&
+                         ++burst < 8);
+                if (alarm->handler == handler && alarm->fire <= now)
+                    alarm->fire = now + alarm->period;
             } else {
                 OSCancelAlarm(alarm);
+                handler(alarm, NULL);
             }
-            handler(alarm, NULL);
         }
         alarm = next;
     }

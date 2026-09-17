@@ -720,10 +720,49 @@ GxrVertex* gxr_alloc_vertices(u32 count)
     return vita2d_pool_memalign(count * sizeof(GxrVertex), sizeof(void*));
 }
 
-bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, u32 count)
+u16* gxr_alloc_indices(u32 count)
 {
+    if (!s_ready || count == 0) return NULL;
+    melee_vita_gxm_begin_frame();
+    return vita2d_pool_memalign(count * sizeof(u16), sizeof(u16));
+}
+
+/* GXM context state survives between draws, so only changes are sent.  Any
+ * other vita2d drawing (frame start, legacy paths) bumps the epoch, which
+ * forgets the cache. */
+extern u32 g_melee_vita_gxm_state_epoch;
+static struct {
+    u32 epoch;
+    bool valid;
+    const GxrProgram* program;
+    SceGxmFragmentProgram* fragment;
+    SceGxmDepthFunc depth_function;
+    SceGxmDepthWriteMode depth_write;
+    u32 line_width;
+    GxrShaderKey key;
+} s_state;
+
+bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
+              u32 count)
+{
+    GxrProgram* program;
     if (!s_ready || draw == NULL || vertices == NULL || count == 0) return false;
-    GxrProgram* program = find_program(&draw->key);
+    melee_vita_gxm_begin_frame();
+    if (s_state.epoch != g_melee_vita_gxm_state_epoch) {
+        s_state.valid = false;
+        s_state.program = NULL;
+        s_state.epoch = g_melee_vita_gxm_state_epoch;
+    }
+    if (s_state.program != NULL &&
+        memcmp(&s_state.key, &draw->key, sizeof(draw->key)) == 0) {
+        program = (GxrProgram*) s_state.program;
+    } else {
+        program = find_program(&draw->key);
+        if (program != NULL && !program->failed) {
+            s_state.key = draw->key;
+            s_state.program = program;
+        }
+    }
     if (program == NULL || program->failed) {
         ++s_stats.fallback;
         return false;
@@ -734,32 +773,45 @@ bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, u32 count)
         return false;
     }
 
-    melee_vita_gxm_begin_frame();
     SceGxmContext* context = vita2d_get_context();
-
-    GxrVertex* gpu = vertices;
-
-    sceGxmSetVertexProgram(context, s_vertex_program);
-    sceGxmSetFragmentProgram(context, fragment);
-    sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
-    sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
     const SceGxmDepthFunc function =
         draw->depth_compare ? depth_func(draw->depth_function)
                             : SCE_GXM_DEPTH_FUNC_ALWAYS;
     const SceGxmDepthWriteMode write = draw->depth_write
         ? SCE_GXM_DEPTH_WRITE_ENABLED : SCE_GXM_DEPTH_WRITE_DISABLED;
-    sceGxmSetFrontDepthFunc(context, function);
-    sceGxmSetBackDepthFunc(context, function);
-    sceGxmSetFrontDepthWriteEnable(context, write);
-    sceGxmSetBackDepthWriteEnable(context, write);
     u32 width = draw->line_width < 1.0f ? 1u : (u32) (draw->line_width + 0.5f);
-    sceGxmSetFrontPointLineWidth(context, width);
-    sceGxmSetBackPointLineWidth(context, width);
+
+    if (!s_state.valid) {
+        sceGxmSetVertexProgram(context, s_vertex_program);
+        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
+        sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
+        s_state.fragment = NULL;
+    }
+    if (!s_state.valid || s_state.fragment != fragment) {
+        sceGxmSetFragmentProgram(context, fragment);
+        s_state.fragment = fragment;
+    }
+    if (!s_state.valid || s_state.depth_function != function) {
+        sceGxmSetFrontDepthFunc(context, function);
+        sceGxmSetBackDepthFunc(context, function);
+        s_state.depth_function = function;
+    }
+    if (!s_state.valid || s_state.depth_write != write) {
+        sceGxmSetFrontDepthWriteEnable(context, write);
+        sceGxmSetBackDepthWriteEnable(context, write);
+        s_state.depth_write = write;
+    }
+    if (!s_state.valid || s_state.line_width != width) {
+        sceGxmSetFrontPointLineWidth(context, width);
+        sceGxmSetBackPointLineWidth(context, width);
+        s_state.line_width = width;
+    }
+    s_state.valid = true;
 
     for (u32 map = 0; map < GXR_MAX_TEXMAPS; ++map) {
         bool used = false;
         for (u32 i = 0; i < draw->key.stage_count; ++i)
-            if (draw->key.stages[i].tex_map == map) used = true;
+            if (draw->key.stages[i].tex_map == map) { used = true; break; }
         if (!used) continue;
         vita2d_texture* texture = draw->texture_valid[map]
             ? melee_vita_gxm_texture(&draw->textures[map]) : NULL;
@@ -768,35 +820,45 @@ bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, u32 count)
             sceGxmSetFragmentTexture(context, map, &texture->gxm_tex);
     }
 
-    void* vertex_uniforms = NULL;
-    sceGxmReserveVertexDefaultUniformBuffer(context, &vertex_uniforms);
-    if (s_point_size_param != NULL && vertex_uniforms != NULL) {
-        const f32 size = draw->line_width < 1.0f ? 1.0f : draw->line_width;
-        sceGxmSetUniformDataF(vertex_uniforms, s_point_size_param, 0, 1, &size);
+    if (s_point_size_param != NULL) {
+        void* vertex_uniforms = NULL;
+        sceGxmReserveVertexDefaultUniformBuffer(context, &vertex_uniforms);
+        if (vertex_uniforms != NULL) {
+            const f32 size = draw->line_width < 1.0f ? 1.0f : draw->line_width;
+            sceGxmSetUniformDataF(vertex_uniforms, s_point_size_param, 0, 1, &size);
+        }
     }
-    void* fragment_uniforms = NULL;
-    sceGxmReserveFragmentDefaultUniformBuffer(context, &fragment_uniforms);
-    if (fragment_uniforms != NULL) {
-        for (u32 i = 0; i < 4u; ++i) {
-            if (program->registers[i] != NULL)
-                sceGxmSetUniformDataF(fragment_uniforms, program->registers[i], 0, 4, draw->registers[i]);
-            if (program->konst[i] != NULL)
-                sceGxmSetUniformDataF(fragment_uniforms, program->konst[i], 0, 4, draw->konst[i]);
+    {
+        bool any = false;
+        for (u32 i = 0; i < 4u; ++i)
+            if (program->registers[i] != NULL || program->konst[i] != NULL) any = true;
+        if (any) {
+            void* fragment_uniforms = NULL;
+            sceGxmReserveFragmentDefaultUniformBuffer(context, &fragment_uniforms);
+            if (fragment_uniforms != NULL) {
+                for (u32 i = 0; i < 4u; ++i) {
+                    if (program->registers[i] != NULL)
+                        sceGxmSetUniformDataF(fragment_uniforms, program->registers[i], 0, 4, draw->registers[i]);
+                    if (program->konst[i] != NULL)
+                        sceGxmSetUniformDataF(fragment_uniforms, program->konst[i], 0, 4, draw->konst[i]);
+                }
+            }
         }
     }
 
-    sceGxmSetVertexStream(context, 0, gpu);
+    sceGxmSetVertexStream(context, 0, vertices);
     const SceGxmPrimitiveType primitive =
         draw->primitive == GXR_PRIM_LINES ? SCE_GXM_PRIMITIVE_LINES
         : draw->primitive == GXR_PRIM_POINTS ? SCE_GXM_PRIMITIVE_POINTS
         : SCE_GXM_PRIMITIVE_TRIANGLES;
-    const u32 chunk = draw->primitive == GXR_PRIM_TRIANGLES ? GXR_MAX_INDEX
-                    : draw->primitive == GXR_PRIM_LINES ? GXR_MAX_INDEX
-                    : GXR_MAX_INDEX;
-    for (u32 first = 0; first < count; first += chunk) {
-        const u32 n = count - first < chunk ? count - first : chunk;
-        if (first != 0) sceGxmSetVertexStream(context, 0, gpu + first);
-        sceGxmDraw(context, primitive, SCE_GXM_INDEX_FORMAT_U16, s_indices, n);
+    if (indices != NULL) {
+        sceGxmDraw(context, primitive, SCE_GXM_INDEX_FORMAT_U16, indices, count);
+    } else {
+        for (u32 first = 0; first < count; first += GXR_MAX_INDEX) {
+            const u32 n = count - first < GXR_MAX_INDEX ? count - first : GXR_MAX_INDEX;
+            if (first != 0) sceGxmSetVertexStream(context, 0, vertices + first);
+            sceGxmDraw(context, primitive, SCE_GXM_INDEX_FORMAT_U16, s_indices, n);
+        }
     }
     ++s_stats.draws;
     return true;

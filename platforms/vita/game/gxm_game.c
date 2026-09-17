@@ -28,6 +28,15 @@ typedef struct VitaTextureCacheEntry {
 } VitaTextureCacheEntry;
 
 static VitaTextureCacheEntry* s_textures;
+/* Direct-mapped lookup in front of the entry list: a match draws hundreds of
+ * textured primitives per frame and a list walk per draw was measurable. */
+#define VITA_TEXTURE_HASH_SIZE 1024u
+static VitaTextureCacheEntry* s_texture_hash[VITA_TEXTURE_HASH_SIZE];
+static inline u32 texture_hash_slot(const MeleeVitaTextureSource* source)
+{
+    const uintptr_t key = (uintptr_t) source->data;
+    return (u32) ((key >> 5) ^ (key >> 15) ^ source->format) & (VITA_TEXTURE_HASH_SIZE - 1u);
+}
 static u32 s_frame_counter;
 static u32 s_texture_uploads;
 static u32 s_texture_failures;
@@ -71,6 +80,7 @@ static void free_textures(void)
         entry = next;
     }
     s_textures = NULL;
+    memset(s_texture_hash, 0, sizeof(s_texture_hash));
 }
 
 void melee_vita_gxm_invalidate_textures(void)
@@ -228,8 +238,14 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     default:
         return NULL;
     }
-    for (entry = s_textures; entry != NULL; entry = entry->next) {
-        if (same_texture(&entry->source, source)) {
+    entry = s_texture_hash[texture_hash_slot(source)];
+    if (entry == NULL || !same_texture(&entry->source, source)) {
+        for (entry = s_textures; entry != NULL; entry = entry->next)
+            if (same_texture(&entry->source, source)) break;
+        if (entry != NULL) s_texture_hash[texture_hash_slot(source)] = entry;
+    }
+    if (entry != NULL) {
+        {
             entry->last_used_frame = s_frame_counter;
             /* Content sampling once per frame per texture is enough to see
              * mutable textures change between frames. */
@@ -290,6 +306,7 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     }
     entry->next = s_textures;
     s_textures = entry;
+    s_texture_hash[texture_hash_slot(source)] = entry;
     return entry->texture;
 }
 
@@ -322,11 +339,15 @@ void melee_vita_gxm_shutdown(void)
     s_initialized = 0;
 }
 
+/* Bumped whenever something other than gx_render changes GXM context state. */
+u32 g_melee_vita_gxm_state_epoch;
+
 static void begin_frame(void)
 {
     SceGxmContext* context;
     if (!s_initialized || s_frame_open) return;
     vita2d_start_drawing();
+    ++g_melee_vita_gxm_state_epoch;
     /* vita2d's clear quad must not leave its own depth in the buffer: GX
      * scenes clear depth to the far plane and test against it. */
     context = vita2d_get_context();
@@ -393,6 +414,7 @@ static void draw_colored(const MeleeVitaScreenVertex* vertices, u32 count,
     u32 i;
     if (!s_initialized || vertices == NULL || count == 0) return;
     begin_frame();
+    ++g_melee_vita_gxm_state_epoch;
     apply_render_state(state);
     output = vita2d_pool_memalign(count * sizeof(*output), 16);
     if (output == NULL) return;
@@ -418,6 +440,7 @@ void melee_vita_gxm_draw_triangles(const MeleeVitaScreenVertex* vertices,
     if (!s_initialized || vertices == NULL || count < 3) return;
     texture = get_texture(source);
     begin_frame();
+    ++g_melee_vita_gxm_state_epoch;
     apply_render_state(state);
     if (texture != NULL) {
         textured_output = vita2d_pool_memalign(count * sizeof(*textured_output), 16);
@@ -475,6 +498,7 @@ void melee_vita_gxm_present(u32 clear_color)
             if (s_frame_counter - entry->last_used_frame > 180u) {
                 if (!waited) { vita2d_wait_rendering_done(); waited = true; }
                 *link = entry->next;
+                memset(s_texture_hash, 0, sizeof(s_texture_hash));
                 if (entry->texture != NULL) vita2d_free_texture(entry->texture);
                 free(entry);
                 continue;

@@ -24,11 +24,18 @@
  * the per-particle render path. */
 static bool pc_ps_texmiss(void)
 {
+#ifdef TARGET_VITA
+    /* The Vita has no environment; report the first misses unconditionally,
+     * since a dropped particle is invisible and leaves no other trace. */
+    static u32 reported;
+    return reported++ < 40u;
+#else
     static int cached = -1;
     if (cached < 0) {
         cached = getenv("MELEE_PS_TEXMISS") != NULL;
     }
     return cached != 0;
+#endif
 }
 
 typedef struct {

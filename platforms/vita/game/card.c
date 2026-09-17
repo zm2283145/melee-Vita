@@ -263,16 +263,20 @@ static void import_gci(const char* directory, const char* name)
         melee_vita_log_info("[CARD] %s has an impossible size", name);
         return;
     }
-    if (find_name(file_name) >= 0) {
-        fclose(in);
-        melee_vita_log_info("[CARD] %s already on the card, left alone", file_name);
-        return;
-    }
-    file_no = find_free();
-    if (file_no < 0 || length > (u32) ((s32) VITA_CARD_BYTES - used_bytes())) {
-        fclose(in);
-        melee_vita_log_info("[CARD] no room to import %s", file_name);
-        return;
+    /* A .gci placed in the import folder is an instruction to use that save,
+     * so it replaces one of the same name -- but the card copy is written out
+     * first, so the save being replaced is never simply lost. */
+    file_no = find_name(file_name);
+    if (file_no >= 0) {
+        export_gci(file_no);
+        melee_vita_log_info("[CARD] replacing %s (old copy exported)", file_name);
+    } else {
+        file_no = find_free();
+        if (file_no < 0 || length > (u32) ((s32) VITA_CARD_BYTES - used_bytes())) {
+            fclose(in);
+            melee_vita_log_info("[CARD] no room to import %s", file_name);
+            return;
+        }
     }
     data_path(target, sizeof(target), file_no);
     out = fopen(target, "wb");

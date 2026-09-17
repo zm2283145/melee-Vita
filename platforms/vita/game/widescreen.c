@@ -1,15 +1,24 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/* Fixed-aspect Vita implementation of the PC widescreen contract. */
+/* Vita implementation of the PC widescreen contract.
+ *
+ * Mirrors src/pc/widescreen.c: scenes that support widescreen (gameplay) map
+ * the logical 640x480 framebuffer onto the whole 960x544 screen and the game
+ * widens its SCREEN-pass projections by pc_widescreen_scale(); every other
+ * scene is shown at Melee's original 73:60 display aspect, pillarboxed. */
 #include <pc/widescreen.h>
+#include <pc/pc.h>
 
 #include <math.h>
 #include <sysdolphin/baselib/cobj.h>
+#include <sysdolphin/baselib/initialize.h>
 #include <sysdolphin/baselib/tobj.h>
 
-#define VITA_WIDESCREEN_SCALE (320.0f / 219.0f)
+/* GameCube NTSC pixels are 73:80, so Melee's 640x480 picture is 73:60. */
+#define ORIGINAL_ASPECT (73.0f / 60.0f)
+#define VITA_ASPECT (960.0f / 544.0f)
 
 static int s_mode = 1;
-static bool s_scene_supports_widescreen;
+static bool s_supported;
 
 void pc_widescreen_set_mode(int mode)
 {
@@ -18,17 +27,22 @@ void pc_widescreen_set_mode(int mode)
 
 void pc_widescreen_set_scene(bool supported)
 {
-    s_scene_supports_widescreen = supported;
+    s_supported = supported;
 }
 
-void pc_widescreen_update(void)
+void pc_widescreen_update(void) {}
+
+/* Whether the logical framebuffer currently spans the full Vita screen. */
+int melee_vita_widescreen_active(void)
 {
+    return s_mode != 0 && s_supported;
 }
 
 float pc_widescreen_scale(void)
 {
-    return s_mode != 0 && s_scene_supports_widescreen ? VITA_WIDESCREEN_SCALE
-                                                      : 1.0f;
+    if (!melee_vita_widescreen_active()) return 1.0f;
+    if (HSD_GetCurrentRenderPass() != HSD_RP_SCREEN) return 1.0f;
+    return VITA_ASPECT / ORIGINAL_ASPECT;
 }
 
 float pc_widescreen_cobj_scale(struct HSD_CObj* cobj)
@@ -37,12 +51,36 @@ float pc_widescreen_cobj_scale(struct HSD_CObj* cobj)
     return pc_widescreen_scale();
 }
 
+float pc_widescreen_hud_offset(void)
+{
+    float scale;
+    if (pc_get_hud_mode() != 1) return 0.0f;
+    scale = pc_widescreen_scale();
+    return scale <= 1.0f ? 0.0f : (scale - 1.0f) * 320.0f;
+}
+
+#define PC_HUD_WORLD_SCALE 0.09125f
+
+float pc_widescreen_hud_timer_x(float original_x)
+{
+    const float offset = pc_widescreen_hud_offset();
+    return offset <= 0.0f ? original_x : original_x + offset * PC_HUD_WORLD_SCALE;
+}
+
+float pc_widescreen_hud_player_x(int player_idx, int total_players, float original_x)
+{
+    const float offset = pc_widescreen_hud_offset();
+    float t;
+    if (offset <= 0.0f || total_players <= 1 || player_idx < 0 || player_idx >= total_players)
+        return original_x;
+    t = -1.0f + 2.0f * (float) player_idx / (float) (total_players - 1);
+    return original_x + t * (offset * PC_HUD_WORLD_SCALE);
+}
+
 void pc_widescreen_copy_efb(struct HSD_ImageDesc* image, int origin_x,
                             int origin_y, float center_x, int clear)
 {
-    float scale;
-    float left;
-    float right;
+    float scale, left, right;
     u16 width;
     if (image == NULL) return;
     scale = pc_widescreen_scale();
@@ -55,7 +93,6 @@ void pc_widescreen_copy_efb(struct HSD_ImageDesc* image, int origin_x,
     pc_widescreen_widen(1.0f / scale, center_x, &left, &right);
     width = image->width;
     image->width = (u16) lroundf(right - left);
-    HSD_ImageDescCopyFromEFB(image, (u16) lroundf(left), (u16) origin_y,
-                             clear, true);
+    HSD_ImageDescCopyFromEFB(image, (u16) lroundf(left), (u16) origin_y, clear, true);
     image->width = width;
 }

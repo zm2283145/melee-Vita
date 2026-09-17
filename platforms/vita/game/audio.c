@@ -10,6 +10,7 @@
 #include <dolphin/axfx.h>
 
 #include <psp2/audioout.h>
+#include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 
 #include <stdlib.h>
@@ -494,6 +495,7 @@ void melee_vita_audio_poll(void)
          * AX's clock advances exactly once per 160 rendered samples, so music
          * tempo stays correct regardless of the game's frame rate. */
         u32 rendered = 0;
+        const u64 mix_start = sceKernelGetProcessTimeWide();
         static u32 last_underruns;
         while (ring_fill() + VITA_AX_FRAME <= VITA_RING_TARGET &&
                rendered < VITA_RING_MAX_RENDER) {
@@ -507,6 +509,10 @@ void melee_vita_audio_poll(void)
             }
             __atomic_add_fetch(&s_ring_write, VITA_AX_FRAME, __ATOMIC_RELEASE);
             ++rendered;
+        }
+        {
+            extern void melee_vita_prof_add(int zone, u64 us);
+            melee_vita_prof_add(10 /* audio_mix */, sceKernelGetProcessTimeWide() - mix_start);
         }
         if (s_audio_underruns != last_underruns && (s_audio_underruns % 50u) == 1u) {
             melee_vita_log_info("[AUDIO] underruns=%u", s_audio_underruns);

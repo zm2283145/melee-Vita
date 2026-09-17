@@ -213,12 +213,12 @@ static struct { u32 draws, tris_in, tris_culled, textured, tex_fail, lines; f32 
 /* ---- lightweight zone profiler (reported as [PROF] every 120 frames) ---- */
 enum {
     VPZ_GOBJ_RENDER, VPZ_PRESENT, VPZ_SWAP, VPZ_COPYTEX, VPZ_TEXUPLOAD,
-    VPZ_DL_HASH, VPZ_DL_BUILD, VPZ_DRAW_SETUP, VPZ_GPU_SUBMIT, VPZ_IMMEDIATE,
+    VPZ_DL_HASH, VPZ_DL_BUILD, VPZ_DRAW_SETUP, VPZ_GPU_SUBMIT, VPZ_IMMEDIATE, VPZ_AUDIO_MIX,
     VPZ_COUNT
 };
 static const char* const k_vpz_names[VPZ_COUNT] = {
     "gobj_render", "present", "swap", "copytex", "tex_upload",
-    "dl_hash", "dl_build", "draw_setup", "gpu_submit", "immediate",
+    "dl_hash", "dl_build", "draw_setup", "gpu_submit", "immediate", "audio_mix",
 };
 static u64 s_vpz_us[VPZ_COUNT];
 static u32 s_vpz_calls[VPZ_COUNT];
@@ -308,7 +308,12 @@ static u32 decode_color(const u8* bytes, GXCompType type, bool little_endian)
         u16 c = read_u16(bytes, little_endian);
         r = ((c >> 12) & 15u) * 17u; g = ((c >> 8) & 15u) * 17u;
         b = ((c >> 4) & 15u) * 17u; a = (c & 15u) * 17u;
-    } else if (type == GX_RGB8 || type == GX_RGBA6) {
+    } else if (type == GX_RGBA6) {
+        /* 24 bits: RRRRRRGG GGGGBBBB BBAAAAAA */
+        const u32 c = (u32) bytes[0] << 16 | (u32) bytes[1] << 8 | bytes[2];
+        r = ((c >> 18) & 63u) * 255u / 63u; g = ((c >> 12) & 63u) * 255u / 63u;
+        b = ((c >> 6) & 63u) * 255u / 63u; a = (c & 63u) * 255u / 63u;
+    } else if (type == GX_RGB8) {
         r = bytes[0]; g = bytes[1]; b = bytes[2];
     } else {
         r = bytes[0]; g = bytes[1]; b = bytes[2];
@@ -416,6 +421,22 @@ static u32 active_texture_stage(void)
     return GX_MAX_TEVSTAGE;
 }
 
+/* Logical 640x480 -> Vita screen mapping.  Widescreen scenes span all 960
+ * columns; the rest are pillarboxed at Melee's 73:60 display aspect. */
+extern int melee_vita_widescreen_active(void);
+static void screen_mapping(f32* sx, f32* ox, f32* sy)
+{
+    *sy = 544.0f / 480.0f;
+    if (melee_vita_widescreen_active()) {
+        *sx = 960.0f / 640.0f;
+        *ox = 0.0f;
+    } else {
+        const f32 width = 544.0f * (73.0f / 60.0f);
+        *sx = width / 640.0f;
+        *ox = (960.0f - width) * 0.5f;
+    }
+}
+
 static void project_vertex(const VitaDecodedVertex* input,
                            MeleeVitaScreenVertex* output)
 {
@@ -423,11 +444,12 @@ static void project_vertex(const VitaDecodedVertex* input,
         ? input->position_matrix : s_gx.current_matrix;
     const f32 (*matrix)[4] = s_gx.position_matrices[matrix_slot(matrix_id)];
     f32 x, y, z;
-    const f32 vita_scale = 544.0f / 480.0f;
+    f32 map_sx, map_ox, map_sy;
     GXProject(input->position[0], input->position[1], input->position[2],
               matrix, s_gx.projection, s_gx.viewport, &x, &y, &z);
-    output->x = (960.0f - 640.0f * vita_scale) * 0.5f + x * vita_scale;
-    output->y = y * vita_scale;
+    screen_mapping(&map_sx, &map_ox, &map_sy);
+    output->x = map_ox + x * map_sx;
+    output->y = y * map_sy;
     output->z = z < 0.0f ? 0.0f : z > 1.0f ? 1.0f : z;
     f32 tex[3] = { input->texture[0], input->texture[1], 1.0f };
     const u32 texture_stage = active_texture_stage();
@@ -740,15 +762,15 @@ typedef struct GxrXform {
 static void prepare_xform(GxrXform* x)
 {
     const f32* v = s_gx.viewport;
-    const f32 scale = 544.0f / 480.0f;
-    const f32 offset = (960.0f - 640.0f * scale) * 0.5f;
+    f32 scale, offset, yscale;
     u32 i;
     x->perspective = s_gx.projection[0] == (f32) GX_PERSPECTIVE;
     memcpy(x->p, s_gx.projection, sizeof(x->p));
+    screen_mapping(&scale, &offset, &yscale);
     x->ax = (offset + scale * (v[0] + v[2] * 0.5f)) / 480.0f - 1.0f;
     x->bx = scale * v[2] * 0.5f / 480.0f;
-    x->ay = 1.0f - scale * (v[1] + v[3] * 0.5f) / 272.0f;
-    x->by = scale * v[3] * 0.5f / 272.0f;
+    x->ay = 1.0f - yscale * (v[1] + v[3] * 0.5f) / 272.0f;
+    x->by = yscale * v[3] * 0.5f / 272.0f;
     x->z_far = v[5];
     x->z_range = v[5] - v[4];
     x->channel_count = s_gx.channel_count > 2 ? 2u : s_gx.channel_count;
@@ -2047,8 +2069,7 @@ static void copy_rows(f32 (*dst)[4], const f32 (*src)[4], u32 rows)
 static void fill_vertex_key_uniforms(GxrVtxKey* key, GxrVtxUniforms* u, bool has_mtxidx)
 {
     const f32* v = s_gx.viewport;
-    const f32 scale = 544.0f / 480.0f;
-    const f32 offset = (960.0f - 640.0f * scale) * 0.5f;
+    f32 scale, offset, yscale;
     memset(key, 0, sizeof(*key));
     key->has_mtxidx = has_mtxidx ? 1u : 0u;
     key->perspective = s_gx.projection[0] == (f32) GX_PERSPECTIVE ? 1u : 0u;
@@ -2082,10 +2103,11 @@ static void fill_vertex_key_uniforms(GxrVtxKey* key, GxrVtxUniforms* u, bool has
     u->proj[0][0] = s_gx.projection[1]; u->proj[0][1] = s_gx.projection[2];
     u->proj[0][2] = s_gx.projection[3]; u->proj[0][3] = s_gx.projection[4];
     u->proj[1][0] = s_gx.projection[5]; u->proj[1][1] = s_gx.projection[6];
+    screen_mapping(&scale, &offset, &yscale);
     u->proj[1][2] = (offset + scale * (v[0] + v[2] * 0.5f)) / 480.0f - 1.0f;
     u->proj[1][3] = scale * v[2] * 0.5f / 480.0f;
-    u->proj[2][0] = 1.0f - scale * (v[1] + v[3] * 0.5f) / 272.0f;
-    u->proj[2][1] = scale * v[3] * 0.5f / 272.0f;
+    u->proj[2][0] = 1.0f - yscale * (v[1] + v[3] * 0.5f) / 272.0f;
+    u->proj[2][1] = yscale * v[3] * 0.5f / 272.0f;
     u->proj[2][2] = v[5];
     u->proj[2][3] = v[5] - v[4];
     u->proj[3][0] = u->proj[3][1] = u->proj[3][2] = 0.0f;
@@ -2539,7 +2561,7 @@ void GXCopyDisp(void* destination, GXBool clear)
                 u64 gx_total = 0;
                 for (u32 z = 0; z < VPZ_COUNT; ++z) {
                     n += snprintf(line + n, sizeof(line) - n, " %s=%.1f", k_vpz_names[z], s_vpz_us[z] / 120.0 / 1000.0);
-                    if (z >= VPZ_COPYTEX) gx_total += s_vpz_us[z];
+                    if (z >= VPZ_COPYTEX && z != VPZ_AUDIO_MIX) gx_total += s_vpz_us[z];
                 }
                 n += snprintf(line + n, sizeof(line) - n, " | hsd_other=%.1f copies=%u uploads=%u",
                               ((double) s_vpz_us[VPZ_GOBJ_RENDER] - (double) gx_total) / 120.0 / 1000.0,
@@ -2659,12 +2681,12 @@ static void copy_tex_impl(void* destination, GXBool clear)
     if (fb != NULL) {
         const u8* out_base = vita2d_texture_get_datap(target);
         const u32 stride = vita2d_texture_get_stride(target);
-        const f32 scale = 544.0f / 480.0f;
-        const f32 offset = (960.0f - 640.0f * scale) * 0.5f;
+        f32 scale, offset, yscale;
+        screen_mapping(&scale, &offset, &yscale);
         const f32 sx = s_tex_copy_src[2] * scale / (f32) dst_w;
-        const f32 sy = s_tex_copy_src[3] * scale / (f32) dst_h;
+        const f32 sy = s_tex_copy_src[3] * yscale / (f32) dst_h;
         const f32 x0 = offset + s_tex_copy_src[0] * scale;
-        const f32 y0 = s_tex_copy_src[1] * scale;
+        const f32 y0 = s_tex_copy_src[1] * yscale;
         for (u32 y = 0; y < dst_h; ++y) {
             s32 fy = (s32) (y0 + (y + 0.5f) * sy);
             u8* out = (u8*) out_base + (size_t) y * stride; /* stride is bytes per row */

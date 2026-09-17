@@ -568,19 +568,21 @@ void melee_vita_gxm_present(u32 clear_color)
 {
     if (!s_initialized) return;
     if (!s_frame_open) begin_frame();
-#ifndef MELEE_VITA_WIDESCREEN
     {
         /* The game renders a 4:3 picture; mask the extra 16:9 area like
          * Dolphin's 4:3 output so overlays that only cover 640x480 do not
          * leave bright or stray content at the edges. */
-        const f32 bar = (960.0f - 640.0f * (544.0f / 480.0f)) * 0.5f;
+        extern int melee_vita_widescreen_active(void);
+        const f32 bar = melee_vita_widescreen_active() ? 0.0f
+                      : (960.0f - 544.0f * (73.0f / 60.0f)) * 0.5f;
         ++g_melee_vita_gxm_state_epoch;
         sceGxmSetFrontDepthFunc(vita2d_get_context(), SCE_GXM_DEPTH_FUNC_ALWAYS);
         sceGxmSetBackDepthFunc(vita2d_get_context(), SCE_GXM_DEPTH_FUNC_ALWAYS);
-        vita2d_draw_rectangle(0.0f, 0.0f, bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
-        vita2d_draw_rectangle(960.0f - bar - 1.0f, 0.0f, bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
+        if (bar > 0.0f) {
+            vita2d_draw_rectangle(0.0f, 0.0f, bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
+            vita2d_draw_rectangle(960.0f - bar - 1.0f, 0.0f, bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
+        }
     }
-#endif
     {
         const u64 t0 = sceKernelGetProcessTimeWide();
         vita2d_end_drawing();

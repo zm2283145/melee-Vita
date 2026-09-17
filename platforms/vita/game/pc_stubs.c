@@ -11,15 +11,6 @@ bool pc_is_unlock_all_enabled(void) { return false; }
 bool pc_is_frozen_stadium_enabled(void) { return false; }
 int pc_get_hud_mode(void) { return 0; }
 
-float pc_widescreen_hud_player_x(int player_idx, int total_players,
-                                 float original_x)
-{
-    (void) player_idx;
-    (void) total_players;
-    return original_x;
-}
-float pc_widescreen_hud_timer_x(float original_x) { return original_x; }
-
 bool pc_music_stream_open(const char* track_stem)
 {
     (void) track_stem;

@@ -48,6 +48,7 @@ $platformSources = @(
     'platforms/vita/game/main.c',
     'platforms/vita/game/os.c',
     'platforms/vita/game/pad.c',
+    'platforms/vita/game/pc_stubs.c',
     'platforms/vita/game/thp.c',
     'platforms/vita/game/vi.c',
     'platforms/vita/game/widescreen.c'

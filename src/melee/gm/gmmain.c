@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <melee/lb/lbarchive.h>
 #include <Runtime/platform.h>
+#ifdef TARGET_PC
+#include "pc/file_cache.h"
+#endif
 
 #include <sysdolphin/baselib/forward.h>
 
@@ -202,6 +205,9 @@ int main(void)
     OSReport("[BOOT] 19 game heaps initialized\n");
     lbDvd_80018F68();
     OSReport("[BOOT] 20 game DVD service initialized\n");
+#ifdef TARGET_PC
+    pc_file_cache_start_prewarm();
+#endif
     lbArq_80014D2C();
     OSReport("[BOOT] 21 ARQ service initialized\n");
     lb_8001C5BC();

@@ -42,12 +42,17 @@ $common = @(
     '-include', $compat, '-c'
 )
 
+$sjisTool = Join-Path $PSScriptRoot 'sjis_literals.py'
+$sjisDir = Join-Path $build 'sjis'
+New-Item -ItemType Directory -Force -Path $sjisDir | Out-Null
+
 $compileItems = foreach ($source in $sources) {
     $relative = [System.IO.Path]::GetRelativePath($root, $source)
     $objectName = ($relative -replace '[:\\/]', '__') -replace '\.c$', '.o'
     [pscustomobject]@{
         Source = $source
         Object = Join-Path $objects $objectName
+        Sjis = [bool] (Select-String -LiteralPath $source -Pattern '"[^"\n]*[^\x00-\x7F]' -Quiet)
     }
 }
 
@@ -64,7 +69,18 @@ $pending | ForEach-Object -Parallel {
     # do not let PowerShell convert those records into terminating errors.
     $ErrorActionPreference = 'Continue'
     $PSNativeCommandUseErrorActionPreference = $false
-    & $using:compiler @using:common $item.Source '-o' $item.Object 2>&1 |
+    $sourceToCompile = $item.Source
+    $extra = @()
+    if ($item.Sjis) {
+        # Shift-JIS runtime strings: rewrite UTF-8 literals as CP932 escapes
+        # (VitaSDK GCC cannot use -fexec-charset=CP932).
+        $generated = Join-Path $using:sjisDir ([System.IO.Path]::GetFileName($item.Object) -replace '\.o$', '.c')
+        & py -3 $using:sjisTool $item.Source $generated
+        if ($LASTEXITCODE -ne 0) { throw "Shift-JIS conversion failed: $($item.Source)" }
+        $sourceToCompile = $generated
+        $extra = @('-iquote', [System.IO.Path]::GetDirectoryName($item.Source))
+    }
+    & $using:compiler @using:common @extra $sourceToCompile '-o' $item.Object 2>&1 |
         ForEach-Object { Write-Output $_ }
     if ($LASTEXITCODE -ne 0) {
         throw "Vita compile failed: $($item.Source)"

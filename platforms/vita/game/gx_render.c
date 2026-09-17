@@ -55,6 +55,7 @@ static GxrProgram* s_programs[GXR_PROGRAM_BUCKETS];
 static u16* s_indices;
 static SceUID s_index_block = -1;
 static vita2d_texture* s_white;
+static bool arena_init(void);
 
 static struct {
     u32 draws, compiled, cache_loaded, compile_failed, fallback;
@@ -559,6 +560,8 @@ int gxr_init(void)
     if (s_indices == NULL) return -1;
     for (u32 i = 0; i < GXR_MAX_INDEX; ++i) s_indices[i] = (u16) i;
 
+    if (!arena_init()) melee_vita_log_info("[GXR] geometry arena unavailable");
+
     s_white = vita2d_create_empty_texture(1, 1);
     if (s_white != NULL)
         *(u32*) vita2d_texture_get_datap(s_white) = 0xffffffffu;
@@ -739,6 +742,8 @@ static struct {
     SceGxmDepthFunc depth_function;
     SceGxmDepthWriteMode depth_write;
     u32 line_width;
+    SceGxmVertexProgram* vertex;
+    u8 cull;
     GxrShaderKey key;
 } s_state;
 
@@ -782,10 +787,18 @@ bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
     u32 width = draw->line_width < 1.0f ? 1u : (u32) (draw->line_width + 0.5f);
 
     if (!s_state.valid) {
-        sceGxmSetVertexProgram(context, s_vertex_program);
         sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
-        sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
         s_state.fragment = NULL;
+        s_state.vertex = NULL;
+        s_state.cull = 0xff;
+    }
+    if (s_state.vertex != s_vertex_program) {
+        sceGxmSetVertexProgram(context, s_vertex_program);
+        s_state.vertex = s_vertex_program;
+    }
+    if (s_state.cull != (u8) SCE_GXM_CULL_NONE + 1u) {
+        sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
+        s_state.cull = (u8) SCE_GXM_CULL_NONE + 1u;
     }
     if (!s_state.valid || s_state.fragment != fragment) {
         sceGxmSetFragmentProgram(context, fragment);
@@ -859,6 +872,455 @@ bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
             if (first != 0) sceGxmSetVertexStream(context, 0, vertices + first);
             sceGxmDraw(context, primitive, SCE_GXM_INDEX_FORMAT_U16, s_indices, n);
         }
+    }
+    ++s_stats.draws;
+    return true;
+}
+
+/* ===================================================== GPU vertex pipeline */
+
+#define GXR_VTX_VERSION 1u
+#define GXR_ARENA_SIZE (48u * 1024u * 1024u)
+
+typedef struct GxrVtxProgram {
+    u64 hash;
+    GxrVtxKey key;
+    bool failed;
+    SceGxmShaderPatcherId id;
+    const SceGxmProgram* program;
+    SceGxmVertexProgram* vertex;
+    const SceGxmProgramParameter* u_pos, *u_nrm, *u_proj, *u_tex, *u_post,
+        *u_light, *u_mat, *u_amb;
+    struct GxrVtxProgram* next;
+} GxrVtxProgram;
+
+static GxrVtxProgram* s_vtx_programs[GXR_PROGRAM_BUCKETS];
+
+static const char* tex_attr_name(u8 source)
+{
+    static const char* names[] = { "aT0", "aT1", "aT2", "aT3" };
+    const u32 k = (u32) source - (u32) GX_TG_TEX0;
+    return names[k < GXR_GPU_TEX ? k : 0u];
+}
+
+static void emit_light_channel(Source* s, const GxrVtxKey* key, u32 index,
+                               bool alpha, const char* vc)
+{
+    const GxrVtxChan* cc = &key->chan[alpha ? 2u + index : index];
+    const char* sw = alpha ? ".a" : ".rgb";
+    char mat[32], amb[32];
+    if (cc->mat_src == GX_SRC_VTX) snprintf(mat, sizeof(mat), "%s", vc);
+    else snprintf(mat, sizeof(mat), "uMat[%u]", index);
+    if (cc->amb_src == GX_SRC_VTX) snprintf(amb, sizeof(amb), "%s", vc);
+    else snprintf(amb, sizeof(amb), "uAmb[%u]", index);
+
+    if (!cc->enabled) {
+        emit(s, "    vColor%u%s = %s%s;\n", index, sw, mat, sw);
+        return;
+    }
+    emit(s, "    {\n        float4 lit = %s;\n", amb);
+    for (u32 l = 0; l < 8u; ++l) {
+        if ((cc->lights & (1u << l)) == 0u) continue;
+        const u32 b = l * 5u;
+        emit(s, "        {\n");
+        emit(s, "            float3 ldir = uLight[%u].xyz - eye;\n", b + 1u);
+        emit(s, "            float dist2 = dot(ldir, ldir);\n");
+        emit(s, "            float dist = sqrt(dist2);\n");
+        emit(s, "            ldir = ldir / max(dist, 1e-8);\n");
+        if (cc->atten == GX_AF_SPOT) {
+            emit(s, "            float cosine = max(0.0, dot(ldir, uLight[%u].xyz));\n", b + 2u);
+            emit(s, "            float cos_attn = dot(uLight[%u].xyz, float3(1.0, cosine, cosine * cosine));\n", b + 3u);
+            emit(s, "            float dist_attn = dot(uLight[%u].xyz, float3(1.0, dist, dist2));\n", b + 4u);
+            emit(s, "            float attn = max(0.0, cos_attn / dist_attn);\n");
+        } else if (cc->atten == GX_AF_SPEC) {
+            emit(s, "            float attn = (dot(nrm, ldir) >= 0.0) ? max(0.0, dot(nrm, uLight[%u].xyz)) : 0.0;\n", b + 2u);
+            emit(s, "            float cos_attn = dot(uLight[%u].xyz, float3(1.0, attn, attn * attn));\n", b + 3u);
+            if (cc->diffuse != GX_DF_NONE)
+                emit(s, "            float dist_attn = max(0.0, dot(normalize(uLight[%u].xyz), float3(1.0, attn, attn * attn)));\n", b + 4u);
+            else
+                emit(s, "            float dist_attn = max(0.0, dot(uLight[%u].xyz, float3(1.0, attn, attn * attn)));\n", b + 4u);
+            emit(s, "            attn = max(0.0, cos_attn / dist_attn);\n");
+        } else {
+            emit(s, "            float attn = 1.0;\n");
+        }
+        if (cc->diffuse == GX_DF_SIGN)
+            emit(s, "            float diff = dot(ldir, nrm);\n");
+        else if (cc->diffuse == GX_DF_CLAMP)
+            emit(s, "            float diff = max(0.0, dot(ldir, nrm));\n");
+        else
+            emit(s, "            float diff = 1.0;\n");
+        emit(s, "            lit = lit + attn * diff * uLight[%u];\n", b);
+        emit(s, "        }\n");
+    }
+    emit(s, "        vColor%u%s = (%s * clamp(lit, 0.0, 1.0))%s;\n    }\n", index, sw, mat, sw);
+}
+
+static bool build_vertex_source(const GxrVtxKey* key, Source* s)
+{
+    emit(s, "void main(float3 aPos, float aMtx, float3 aNrm, float4 aC0, float4 aC1,\n");
+    emit(s, "    float2 aT0, float2 aT1, float2 aT2, float2 aT3,\n");
+    emit(s, "    uniform float4 uPos[30], uniform float4 uNrm[30], uniform float4 uProj[4],\n");
+    emit(s, "    uniform float4 uTex[24], uniform float4 uPost[24], uniform float4 uLight[40],\n");
+    emit(s, "    uniform float4 uMat[2], uniform float4 uAmb[2],\n");
+    emit(s, "    out float4 vPosition : POSITION,\n");
+    emit(s, "    out float4 vColor0 : COLOR0, out float4 vColor1 : COLOR1,\n");
+    emit(s, "    out float2 vTex0 : TEXCOORD0, out float2 vTex1 : TEXCOORD1,\n");
+    emit(s, "    out float2 vTex2 : TEXCOORD2, out float2 vTex3 : TEXCOORD3,\n");
+    emit(s, "    out float2 vTex4 : TEXCOORD4, out float2 vTex5 : TEXCOORD5,\n");
+    emit(s, "    out float2 vTex6 : TEXCOORD6, out float2 vTex7 : TEXCOORD7)\n{\n");
+    if (key->has_mtxidx)
+        emit(s, "    int m = int(floor(aMtx / 3.0 + 0.01)) * 3;\n");
+    else
+        emit(s, "    int m = int(uProj[3].w + 0.5) * 3;\n");
+    emit(s, "    float4 p = float4(aPos, 1.0);\n");
+    emit(s, "    float3 eye = float3(dot(uPos[m], p), dot(uPos[m + 1], p), dot(uPos[m + 2], p));\n");
+    emit(s, "    float3 nrm = float3(dot(uNrm[m].xyz, aNrm), dot(uNrm[m + 1].xyz, aNrm), dot(uNrm[m + 2].xyz, aNrm));\n");
+    emit(s, "    float nl2 = dot(nrm, nrm);\n");
+    emit(s, "    nrm = (nl2 > 1e-16) ? nrm * (1.0 / sqrt(nl2)) : nrm;\n");
+    if (key->perspective) {
+        emit(s, "    float xc = eye.x * uProj[0].x + eye.z * uProj[0].y;\n");
+        emit(s, "    float yc = eye.y * uProj[0].z + eye.z * uProj[0].w;\n");
+        emit(s, "    float zc = uProj[1].y + eye.z * uProj[1].x;\n");
+        emit(s, "    float wc = -eye.z;\n");
+    } else {
+        emit(s, "    float xc = uProj[0].y + eye.x * uProj[0].x;\n");
+        emit(s, "    float yc = uProj[0].w + eye.y * uProj[0].z;\n");
+        emit(s, "    float zc = uProj[1].y + eye.z * uProj[1].x;\n");
+        emit(s, "    float wc = 1.0;\n");
+    }
+    emit(s, "    vPosition = float4(uProj[1].z * wc + uProj[1].w * xc, uProj[2].x * wc + uProj[2].y * yc,\n");
+    emit(s, "                       uProj[2].z * wc + zc * uProj[2].w, wc);\n");
+    emit(s, "    vColor0 = float4(0.0, 0.0, 0.0, 0.0);\n    vColor1 = float4(0.0, 0.0, 0.0, 0.0);\n");
+    for (u32 i = 0; i < key->channel_count && i < 2u; ++i) {
+        const char* vc = i == 0 ? "aC0" : "aC1";
+        emit_light_channel(s, key, i, false, vc);
+        emit_light_channel(s, key, i, true, vc);
+    }
+    for (u32 i = 0; i < GXR_MAX_TEXCOORDS; ++i) {
+        if (i >= key->texgen_count) { emit(s, "    vTex%u = float2(0.0, 0.0);\n", i); continue; }
+        const GxrVtxTexGen* tg = &key->tg[i];
+        const u32 r = i * 3u;
+        emit(s, "    {\n        float3 t = float3(0.0, 0.0, 1.0);\n");
+        if (tg->source >= GX_TG_TEX0 && tg->source <= GX_TG_TEX7)
+            emit(s, "        t.xy = %s;\n", tex_attr_name(tg->source));
+        else if (tg->source == GX_TG_POS) emit(s, "        t = aPos;\n");
+        else if (tg->source == GX_TG_NRM) emit(s, "        t = aNrm;\n");
+        else if (tg->source == GX_TG_COLOR0) emit(s, "        t.xy = vColor0.xy;\n");
+        else if (tg->source == GX_TG_COLOR1) emit(s, "        t.xy = vColor1.xy;\n");
+        if (tg->has_matrix) {
+            const bool pn = tg->source == GX_TG_POS || tg->source == GX_TG_NRM;
+            const char* w = tg->source == GX_TG_NRM ? "0.0" : "1.0";
+            emit(s, "        float3 src = float3(t.xy, %s);\n", pn ? "t.z" : "1.0");
+            if (tg->type == GX_TG_MTX2x4)
+                emit(s, "        t = float3(dot(uTex[%u].xyz, src) + uTex[%u].w * %s, dot(uTex[%u].xyz, src) + uTex[%u].w * %s, 1.0);\n",
+                     r, r, w, r + 1u, r + 1u, w);
+            else
+                emit(s, "        t = float3(dot(uTex[%u].xyz, src) + uTex[%u].w * %s, dot(uTex[%u].xyz, src) + uTex[%u].w * %s, dot(uTex[%u].xyz, src) + uTex[%u].w * %s);\n",
+                     r, r, w, r + 1u, r + 1u, w, r + 2u, r + 2u, w);
+        }
+        if (tg->type == GX_TG_MTX3x4 && !tg->has_post)
+            emit(s, "        t.xy = (t.z != 0.0) ? t.xy / t.z : t.xy;\n");
+        if (tg->has_post) {
+            if (tg->normalize)
+                emit(s, "        { float tl = sqrt(dot(t, t)); t = (tl > 1e-8) ? t / tl : t; }\n");
+            emit(s, "        float3 pr = float3(dot(uPost[%u].xyz, t) + uPost[%u].w, dot(uPost[%u].xyz, t) + uPost[%u].w, dot(uPost[%u].xyz, t) + uPost[%u].w);\n",
+                 r, r, r + 1u, r + 1u, r + 2u, r + 2u);
+            emit(s, "        t = pr;\n        t.xy = (pr.z != 0.0) ? pr.xy / pr.z : pr.xy;\n");
+        }
+        emit(s, "        vTex%u = t.xy;\n    }\n", i);
+    }
+    emit(s, "}\n");
+    return !s->overflow;
+}
+
+static GxrVtxProgram* find_vertex_program(const GxrVtxKey* key)
+{
+    const u64 hash = fnv1a(key, sizeof(*key),
+                           UINT64_C(0x9e3779b97f4a7c15) ^ GXR_VTX_VERSION);
+    GxrVtxProgram** bucket = &s_vtx_programs[hash % GXR_PROGRAM_BUCKETS];
+    for (GxrVtxProgram* p = *bucket; p != NULL; p = p->next)
+        if (p->hash == hash && memcmp(&p->key, key, sizeof(*key)) == 0)
+            return p;
+    GxrVtxProgram* p = calloc(1, sizeof(*p));
+    if (p == NULL) return NULL;
+    p->hash = hash;
+    p->key = *key;
+    p->next = *bucket;
+    *bucket = p;
+    p->failed = true;
+
+    static char buffer[GXR_SOURCE_CAPACITY];
+    Source source = { buffer, 0, sizeof(buffer), false };
+    buffer[0] = '\0';
+    if (!build_vertex_source(key, &source)) {
+        melee_vita_log_info("[GXR] vertex source overflow");
+        return p;
+    }
+    p->program = obtain_program(buffer, true, hash);
+    SceGxmShaderPatcher* patcher = vita2d_get_shader_patcher();
+    if (p->program == NULL ||
+        sceGxmShaderPatcherRegisterProgram(patcher, p->program, &p->id) < 0) {
+        melee_vita_log_info("[GXR] vertex compile failed hash=%016llx", (unsigned long long) hash);
+        for (size_t off = 0; off < source.length; off += 600) {
+            char chunk[601];
+            size_t n = source.length - off < 600 ? source.length - off : 600;
+            memcpy(chunk, buffer + off, n);
+            chunk[n] = '\0';
+            melee_vita_log_info("[GXR] vsrc: %s", chunk);
+        }
+        return p;
+    }
+    static const struct { const char* name; u16 offset; u8 format; u8 count; } attrs[] = {
+        { "aPos", 0, SCE_GXM_ATTRIBUTE_FORMAT_F32, 3 },
+        { "aMtx", 12, SCE_GXM_ATTRIBUTE_FORMAT_F32, 1 },
+        { "aNrm", 16, SCE_GXM_ATTRIBUTE_FORMAT_F32, 3 },
+        { "aC0", 28, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4 },
+        { "aC1", 32, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4 },
+        { "aT0", 36, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+        { "aT1", 44, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+        { "aT2", 52, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+        { "aT3", 60, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+    };
+    SceGxmVertexAttribute attributes[9];
+    u32 count = 0;
+    for (u32 i = 0; i < 9u; ++i) {
+        const SceGxmProgramParameter* param = sceGxmProgramFindParameterByName(p->program, attrs[i].name);
+        if (param == NULL) continue;
+        attributes[count].streamIndex = 0;
+        attributes[count].offset = attrs[i].offset;
+        attributes[count].format = attrs[i].format;
+        attributes[count].componentCount = attrs[i].count;
+        attributes[count].regIndex = (u16) sceGxmProgramParameterGetResourceIndex(param);
+        ++count;
+    }
+    SceGxmVertexStream stream = { sizeof(GxrGpuVertex), SCE_GXM_INDEX_SOURCE_INDEX_16BIT };
+    if (sceGxmShaderPatcherCreateVertexProgram(patcher, p->id, attributes, count,
+                                               &stream, 1, &p->vertex) < 0) {
+        melee_vita_log_info("[GXR] vertex program patch failed hash=%016llx", (unsigned long long) hash);
+        return p;
+    }
+    p->u_pos = sceGxmProgramFindParameterByName(p->program, "uPos");
+    p->u_nrm = sceGxmProgramFindParameterByName(p->program, "uNrm");
+    p->u_proj = sceGxmProgramFindParameterByName(p->program, "uProj");
+    p->u_tex = sceGxmProgramFindParameterByName(p->program, "uTex");
+    p->u_post = sceGxmProgramFindParameterByName(p->program, "uPost");
+    p->u_light = sceGxmProgramFindParameterByName(p->program, "uLight");
+    p->u_mat = sceGxmProgramFindParameterByName(p->program, "uMat");
+    p->u_amb = sceGxmProgramFindParameterByName(p->program, "uAmb");
+    p->failed = false;
+    return p;
+}
+
+/* ---- persistent GPU arena (first fit, coalescing free list) ---- */
+
+typedef struct ArenaBlock {
+    u32 offset, size;
+    bool used;
+    struct ArenaBlock* next;
+} ArenaBlock;
+
+static void* s_arena;
+static SceUID s_arena_uid = -1;
+static ArenaBlock* s_arena_blocks;
+
+static bool arena_init(void)
+{
+    s_arena = gpu_alloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE, GXR_ARENA_SIZE, &s_arena_uid);
+    if (s_arena == NULL) return false;
+    s_arena_blocks = calloc(1, sizeof(ArenaBlock));
+    if (s_arena_blocks == NULL) return false;
+    s_arena_blocks->size = GXR_ARENA_SIZE;
+    return true;
+}
+
+void* gxr_arena_alloc(u32 size)
+{
+    size = (size + 15u) & ~15u;
+    for (ArenaBlock* b = s_arena_blocks; b != NULL; b = b->next) {
+        if (b->used || b->size < size) continue;
+        if (b->size > size + 64u) {
+            ArenaBlock* rest = malloc(sizeof(*rest));
+            if (rest == NULL) return NULL;
+            rest->offset = b->offset + size;
+            rest->size = b->size - size;
+            rest->used = false;
+            rest->next = b->next;
+            b->next = rest;
+            b->size = size;
+        }
+        b->used = true;
+        return (u8*) s_arena + b->offset;
+    }
+    return NULL;
+}
+
+void gxr_arena_free(void* block)
+{
+    if (block == NULL) return;
+    const u32 offset = (u32) ((u8*) block - (u8*) s_arena);
+    ArenaBlock* prev = NULL;
+    for (ArenaBlock* b = s_arena_blocks; b != NULL; prev = b, b = b->next) {
+        if (b->offset != offset) continue;
+        b->used = false;
+        if (b->next != NULL && !b->next->used) {
+            ArenaBlock* n = b->next;
+            b->size += n->size;
+            b->next = n->next;
+            free(n);
+        }
+        if (prev != NULL && !prev->used) {
+            prev->size += b->size;
+            prev->next = b->next;
+            free(b);
+        }
+        return;
+    }
+}
+
+static SceGxmCullMode cull_mode_for(u8 cull)
+{
+    /* Verified on hardware: GX back faces map to GXM's CCW cull with this
+     * viewport (the title's PRESS START ring showed mirrored the other way). */
+    return cull == GXR_CULL_BACK ? SCE_GXM_CULL_CCW
+         : cull == GXR_CULL_FRONT ? SCE_GXM_CULL_CW : SCE_GXM_CULL_NONE;
+}
+
+static void set_uniform(void* buffer, const SceGxmProgramParameter* param, u32 count, const f32* data, const char* name)
+{
+    const int r = sceGxmSetUniformDataF(buffer, param, 0, count, data);
+    static u32 logged;
+    if (r < 0 && logged++ < 16u)
+        melee_vita_log_info("[GXRDBG] set %s count=%u failed %08x (array=%u comps=%u)", name, count, (unsigned) r,
+                            (unsigned) sceGxmProgramParameterGetArraySize(param),
+                            (unsigned) sceGxmProgramParameterGetComponentCount(param));
+}
+
+bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
+                  const GxrVtxUniforms* u, const GxrGpuVertex* vertices,
+                  const u16* indices, u32 count, u8 cull)
+{
+    if (!s_ready || draw == NULL || vertices == NULL || indices == NULL || count == 0)
+        return false;
+    if (cull == GXR_CULL_ALL) return true;
+    GxrVtxProgram* vp = find_vertex_program(vkey);
+    if (vp == NULL || vp->failed) { ++s_stats.fallback; return false; }
+    GxrProgram* program;
+    melee_vita_gxm_begin_frame();
+    if (s_state.epoch != g_melee_vita_gxm_state_epoch) {
+        s_state.valid = false;
+        s_state.program = NULL;
+        s_state.epoch = g_melee_vita_gxm_state_epoch;
+    }
+    if (s_state.program != NULL && memcmp(&s_state.key, &draw->key, sizeof(draw->key)) == 0) {
+        program = (GxrProgram*) s_state.program;
+    } else {
+        program = find_program(&draw->key);
+        if (program != NULL && !program->failed) { s_state.key = draw->key; s_state.program = program; }
+    }
+    if (program == NULL || program->failed) { ++s_stats.fallback; return false; }
+    SceGxmFragmentProgram* fragment = find_fragment(program, draw);
+    if (fragment == NULL) { ++s_stats.fallback; return false; }
+
+    SceGxmContext* context = vita2d_get_context();
+    const SceGxmDepthFunc function = draw->depth_compare ? depth_func(draw->depth_function)
+                                                         : SCE_GXM_DEPTH_FUNC_ALWAYS;
+    const SceGxmDepthWriteMode write = draw->depth_write ? SCE_GXM_DEPTH_WRITE_ENABLED
+                                                         : SCE_GXM_DEPTH_WRITE_DISABLED;
+    const SceGxmCullMode cull_mode = cull_mode_for(cull);
+    u32 width = draw->line_width < 1.0f ? 1u : (u32) (draw->line_width + 0.5f);
+
+    if (!s_state.valid) {
+        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
+        s_state.fragment = NULL;
+        s_state.vertex = NULL;
+        s_state.cull = 0xff;
+    }
+    if (s_state.vertex != vp->vertex) {
+        sceGxmSetVertexProgram(context, vp->vertex);
+        s_state.vertex = vp->vertex;
+    }
+    if (s_state.fragment != fragment) {
+        sceGxmSetFragmentProgram(context, fragment);
+        s_state.fragment = fragment;
+    }
+    if (s_state.cull != (u8) cull_mode + 1u) {
+        sceGxmSetCullMode(context, cull_mode);
+        s_state.cull = (u8) cull_mode + 1u;
+    }
+    if (!s_state.valid || s_state.depth_function != function) {
+        sceGxmSetFrontDepthFunc(context, function);
+        sceGxmSetBackDepthFunc(context, function);
+        s_state.depth_function = function;
+    }
+    if (!s_state.valid || s_state.depth_write != write) {
+        sceGxmSetFrontDepthWriteEnable(context, write);
+        sceGxmSetBackDepthWriteEnable(context, write);
+        s_state.depth_write = write;
+    }
+    if (!s_state.valid || s_state.line_width != width) {
+        sceGxmSetFrontPointLineWidth(context, width);
+        sceGxmSetBackPointLineWidth(context, width);
+        s_state.line_width = width;
+    }
+    s_state.valid = true;
+
+    for (u32 map = 0; map < GXR_MAX_TEXMAPS; ++map) {
+        bool used = false;
+        for (u32 i = 0; i < draw->key.stage_count; ++i)
+            if (draw->key.stages[i].tex_map == map) { used = true; break; }
+        if (!used) continue;
+        vita2d_texture* texture = draw->texture_valid[map]
+            ? melee_vita_gxm_texture(&draw->textures[map]) : NULL;
+        if (texture == NULL) texture = s_white;
+        if (texture != NULL) sceGxmSetFragmentTexture(context, map, &texture->gxm_tex);
+    }
+
+    void* vbuf = NULL;
+    sceGxmReserveVertexDefaultUniformBuffer(context, &vbuf);
+    if (vbuf != NULL) {
+        const u32 lights_used = (u32) (vkey->chan[0].lights | vkey->chan[1].lights |
+                                       vkey->chan[2].lights | vkey->chan[3].lights);
+        if (vp->u_pos) set_uniform(vbuf, vp->u_pos, 120, (const f32*) u->pos, "u_pos");
+        if (vp->u_nrm) set_uniform(vbuf, vp->u_nrm, 120, (const f32*) u->nrm, "u_nrm");
+        if (vp->u_proj) set_uniform(vbuf, vp->u_proj, 16, (const f32*) u->proj, "u_proj");
+        if (vp->u_tex && vkey->texgen_count)
+            set_uniform(vbuf, vp->u_tex, vkey->texgen_count * 12u, (const f32*) u->tex, "tex");
+        if (vp->u_post && vkey->texgen_count)
+            set_uniform(vbuf, vp->u_post, vkey->texgen_count * 12u, (const f32*) u->post, "post");
+        if (vp->u_light && lights_used) {
+            u32 top = 8u;
+            while (top > 0u && (lights_used & (1u << (top - 1u))) == 0u) --top;
+            set_uniform(vbuf, vp->u_light, top * 20u, (const f32*) u->light, "light");
+        }
+        if (vp->u_mat) set_uniform(vbuf, vp->u_mat, 8, (const f32*) u->mat, "u_mat");
+        if (vp->u_amb) set_uniform(vbuf, vp->u_amb, 8, (const f32*) u->amb, "u_amb");
+    }
+    {
+        bool any = false;
+        for (u32 i = 0; i < 4u; ++i)
+            if (program->registers[i] != NULL || program->konst[i] != NULL) any = true;
+        if (any) {
+            void* fbuf = NULL;
+            sceGxmReserveFragmentDefaultUniformBuffer(context, &fbuf);
+            if (fbuf != NULL) {
+                for (u32 i = 0; i < 4u; ++i) {
+                    if (program->registers[i] != NULL)
+                        sceGxmSetUniformDataF(fbuf, program->registers[i], 0, 4, draw->registers[i]);
+                    if (program->konst[i] != NULL)
+                        sceGxmSetUniformDataF(fbuf, program->konst[i], 0, 4, draw->konst[i]);
+                }
+            }
+        }
+    }
+    sceGxmSetVertexStream(context, 0, vertices);
+    const SceGxmPrimitiveType primitive =
+        draw->primitive == GXR_PRIM_LINES ? SCE_GXM_PRIMITIVE_LINES
+        : draw->primitive == GXR_PRIM_POINTS ? SCE_GXM_PRIMITIVE_POINTS
+        : SCE_GXM_PRIMITIVE_TRIANGLES;
+    {
+        const int r = sceGxmDraw(context, primitive, SCE_GXM_INDEX_FORMAT_U16, indices, count);
+        static u32 logged;
+        if (r < 0 && logged++ < 8u) melee_vita_log_info("[GXRDBG] sceGxmDraw failed %08x", (unsigned) r);
     }
     ++s_stats.draws;
     return true;

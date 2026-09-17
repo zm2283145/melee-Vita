@@ -1483,11 +1483,15 @@ void GXProject(f32 x, f32 y, f32 z, const f32 m[3][4], const f32* p,
     *sz = v[5] + wc * zc * (v[5] - v[4]);
 }
 
-void GXClearVtxDesc(void) { memset(s_gx.descriptors, 0, sizeof(s_gx.descriptors)); }
+static u32 s_vtx_state_gen = 1;
+static u32 s_array_epoch = 1;
+static void forget_array_hash(const void* data);
+
+void GXClearVtxDesc(void) { memset(s_gx.descriptors, 0, sizeof(s_gx.descriptors)); ++s_vtx_state_gen; }
 
 void GXSetVtxDesc(GXAttr attr, GXAttrType type)
 {
-    if (valid_attr(attr)) s_gx.descriptors[attr] = type;
+    if (valid_attr(attr) && s_gx.descriptors[attr] != type) { s_gx.descriptors[attr] = type; ++s_vtx_state_gen; }
 }
 
 void GXSetVtxDescv(GXVtxDescList* list)
@@ -1521,6 +1525,7 @@ void GXSetVtxAttrFmt(GXVtxFmt format, GXAttr attr, GXCompCnt count,
 {
     if (valid_format(format) && valid_attr(attr)) {
         VitaVtxFormat* out = &s_gx.formats[format][attr];
+        if (out->count != count || out->type != type || out->fraction != fraction) ++s_vtx_state_gen;
         out->count = count;
         out->type = type;
         out->fraction = fraction;
@@ -1561,6 +1566,12 @@ void GXGetVtxAttrFmtv(GXVtxFmt format, GXVtxAttrFmtList* list)
 void GXSetArray(GXAttr attr, const void* data, u32 size, u8 stride, bool little_endian)
 {
     if (valid_attr(attr)) {
+        if (s_gx.arrays[attr].data != data || s_gx.arrays[attr].size != size ||
+            s_gx.arrays[attr].stride != stride) ++s_vtx_state_gen;
+        /* Buffers are often rewritten before being bound again (skinning,
+         * shape animation), so cached content hashes go stale here. */
+        ++s_array_epoch;
+        forget_array_hash(data);
         s_gx.arrays[attr].data = data;
         s_gx.arrays[attr].size = size;
         s_gx.arrays[attr].stride = stride;
@@ -1628,11 +1639,542 @@ typedef struct VitaAttrPlan {
     u32 source_bytes;   /* bytes read from the array for indexed attrs */
 } VitaAttrPlan;
 
+/* ------------------------------------------------------------------------
+ * GPU display-list cache.  A display list plus the vertex arrays it indexes
+ * is decoded once into GxrGpuVertex/u16 buffers in persistent GPU memory and
+ * redrawn from there; vertex shaders do transform, lighting and texgen.  The
+ * cached copy is validated every frame with a content hash of the list and of
+ * each array it reads (arrays are hashed once per frame, since HSD skinning
+ * and shape animation rewrite vertex buffers in place).
+ * ------------------------------------------------------------------------ */
+
+#define DL_CACHE_BUCKETS 2048u
+#define ARRAY_HASH_SLOTS 512u
+
+typedef struct DlCacheEntry {
+    const void* list;
+    u32 bytes;
+    u32 state_hash;
+    u32 content_hash;
+    u32 last_frame;
+    u32 validated_frame;
+    GxrGpuVertex* vertices;
+    u16* indices;          /* triangles, then lines, then points */
+    u32 tri_count, line_count, point_count;
+    u32 vertex_count;
+    u8 has_mtxidx;
+    u8 array_count;
+    struct { u8 attr; u32 end; } ranges[GX_VA_MAX_ATTR];
+    struct DlCacheEntry* next;
+} DlCacheEntry;
+
+static DlCacheEntry* s_dl_cache[DL_CACHE_BUCKETS];
+static u32 s_dl_state_hash, s_dl_state_gen;
+static struct { u32 hits, builds, rebuilds, fallbacks, entries; u64 hash_us; } s_dl_stats;
+static struct { const void* data; u32 length; u32 hash; u32 frame; } s_array_hash[ARRAY_HASH_SLOTS];
+
+static u32 hash_bytes(const u8* p, u32 n, u32 h)
+{
+    u32 i = 0;
+    for (; i + 4u <= n; i += 4u) {
+        u32 w;
+        memcpy(&w, p + i, 4);
+        h = (h ^ w) * 0x9e3779b1u;
+        h ^= h >> 15;
+    }
+    for (; i < n; ++i) { h = (h ^ p[i]) * 0x01000193u; }
+    return h;
+}
+
+static u32 current_state_hash(void)
+{
+    if (s_dl_state_gen != s_vtx_state_gen) {
+        u32 h = 0x811c9dc5u;
+        for (u32 attr = 0; attr < GX_VA_MAX_ATTR; ++attr) {
+            const u32 d = (u32) s_gx.descriptors[attr];
+            h = hash_bytes((const u8*) &d, sizeof(d), h);
+            if (d == GX_NONE) continue;
+            for (u32 f = 0; f < GX_MAX_VTXFMT; ++f)
+                h = hash_bytes((const u8*) &s_gx.formats[f][attr], sizeof(VitaVtxFormat), h);
+            if (d != GX_DIRECT)
+                h = hash_bytes((const u8*) &s_gx.arrays[attr], sizeof(VitaArrayState), h);
+        }
+        s_dl_state_hash = h;
+        s_dl_state_gen = s_vtx_state_gen;
+    }
+    return s_dl_state_hash;
+}
+
+static u32 array_slot(const void* data)
+{
+    return (u32) (((uintptr_t) data >> 4) ^ ((uintptr_t) data >> 13)) & (ARRAY_HASH_SLOTS - 1u);
+}
+
+static void forget_array_hash(const void* data)
+{
+    const u32 slot = array_slot(data);
+    if (s_array_hash[slot].data == data) s_array_hash[slot].data = NULL;
+}
+
+static u32 array_content_hash(const void* data, u32 length)
+{
+    const u32 slot = array_slot(data);
+    if (s_array_hash[slot].data == data && s_array_hash[slot].frame == s_array_epoch &&
+        s_array_hash[slot].length == length)
+        return s_array_hash[slot].hash;
+    {
+        const u32 h = hash_bytes(data, length, 0x2545f491u ^ length);
+        s_array_hash[slot].data = data;
+        s_array_hash[slot].length = length;
+        s_array_hash[slot].hash = h;
+        s_array_hash[slot].frame = s_array_epoch;
+        return h;
+    }
+}
+
+static u32 entry_content_hash(const DlCacheEntry* e)
+{
+    u32 h = hash_bytes(e->list, e->bytes, 0x1234567u);
+    for (u32 i = 0; i < e->array_count; ++i) {
+        const VitaArrayState* array = &s_gx.arrays[e->ranges[i].attr];
+        u32 length = array->size != 0 ? array->size : e->ranges[i].end;
+        h ^= array_content_hash(array->data, length) + 0x9e3779b9u + (h << 6) + (h >> 2);
+    }
+    return h;
+}
+
+/* GPU commands for the current and previous frames may still reference a
+ * buffer, so arena memory is released a few frames after it was dropped. */
+#define DEFERRED_FREE_MAX 8192u
+static struct { void* block; u32 frame; } s_deferred[DEFERRED_FREE_MAX];
+static u32 s_deferred_count;
+
+static void defer_free(void* block)
+{
+    if (block == NULL) return;
+    if (s_deferred_count == DEFERRED_FREE_MAX) {
+        /* Should not happen; leak rather than risk a use-after-free. */
+        return;
+    }
+    s_deferred[s_deferred_count].block = block;
+    s_deferred[s_deferred_count].frame = s_gx.copied_frames;
+    ++s_deferred_count;
+}
+
+static void process_deferred_frees(void)
+{
+    u32 kept = 0;
+    for (u32 i = 0; i < s_deferred_count; ++i) {
+        if (s_gx.copied_frames - s_deferred[i].frame >= 4u) gxr_arena_free(s_deferred[i].block);
+        else s_deferred[kept++] = s_deferred[i];
+    }
+    s_deferred_count = kept;
+}
+
+static void free_entry_buffers(DlCacheEntry* e)
+{
+    defer_free(e->vertices);
+    defer_free(e->indices);
+    e->vertices = NULL;
+    e->indices = NULL;
+}
+
+static void evict_dl_cache(u32 max_age)
+{
+    const u32 frame = s_gx.copied_frames;
+    for (u32 b = 0; b < DL_CACHE_BUCKETS; ++b) {
+        DlCacheEntry** link = &s_dl_cache[b];
+        while (*link != NULL) {
+            DlCacheEntry* e = *link;
+            if (frame - e->last_frame > max_age) {
+                *link = e->next;
+                free_entry_buffers(e);
+                free(e);
+                --s_dl_stats.entries;
+                continue;
+            }
+            link = &e->next;
+        }
+    }
+}
+
+typedef struct U16Vec { u16* data; u32 count, capacity; } U16Vec;
+static bool u16vec_push(U16Vec* v, u16 value)
+{
+    if (v->count == v->capacity) {
+        u32 cap = v->capacity ? v->capacity * 2u : 1024u;
+        u16* d = realloc(v->data, cap * sizeof(u16));
+        if (d == NULL) return false;
+        v->data = d; v->capacity = cap;
+    }
+    v->data[v->count++] = value;
+    return true;
+}
+
+static GxrGpuVertex* s_build_vertices;
+static u32 s_build_capacity;
+
+static void to_gpu_vertex(const VitaDecodedVertex* in, GxrGpuVertex* out)
+{
+    memcpy(out->pos, in->position, sizeof(out->pos));
+    out->mtx = (f32) in->position_matrix;
+    memcpy(out->nrm, in->normal, sizeof(out->nrm));
+    {
+        const u32 c0 = in->has_color[0] ? in->color : 0xffffffffu;
+        const u32 c1 = in->has_color[1] ? in->color1 : 0xffffffffu;
+        out->c0[0] = (u8) c0; out->c0[1] = (u8) (c0 >> 8); out->c0[2] = (u8) (c0 >> 16); out->c0[3] = (u8) (c0 >> 24);
+        out->c1[0] = (u8) c1; out->c1[1] = (u8) (c1 >> 8); out->c1[2] = (u8) (c1 >> 16); out->c1[3] = (u8) (c1 >> 24);
+    }
+    for (u32 t = 0; t < GXR_GPU_TEX; ++t) { out->tex[t][0] = in->tex[t][0]; out->tex[t][1] = in->tex[t][1]; }
+}
+
+/* Decodes one primitive's vertices into s_decode_vertices (count vertices).
+ * Tracks, per indexed attribute, the furthest array byte read. */
+static bool decode_primitive_vertices(const u8* stream, u32 bytes, u32* cursor_io,
+                                      GXVtxFmt format, u32 count, u32* max_end,
+                                      bool* has_mtxidx)
+{
+    typedef struct { GXAttr attr; GXAttrType descriptor; const VitaVtxFormat* format;
+                     const VitaArrayState* array; u32 direct_bytes, index_skip, source_bytes; } Plan;
+    Plan plan[GX_VA_MAX_ATTR];
+    u32 plan_count = 0, cursor = *cursor_io;
+    const u32 default_color = packed_color(s_gx.material_colors[0]);
+    for (u32 attr_index = 0; attr_index < GX_VA_MAX_ATTR; ++attr_index) {
+        const GXAttrType descriptor = s_gx.descriptors[attr_index];
+        Plan* e;
+        if (descriptor == GX_NONE) continue;
+        e = &plan[plan_count++];
+        e->attr = (GXAttr) attr_index;
+        e->descriptor = descriptor;
+        e->format = &s_gx.formats[format][attr_index];
+        e->array = &s_gx.arrays[attr_index];
+        e->direct_bytes = direct_bytes(e->attr, e->format);
+        e->index_skip = e->source_bytes = 0;
+        if (e->attr == GX_VA_PNMTXIDX) *has_mtxidx = true;
+        if (descriptor != GX_DIRECT) {
+            const u32 index_bytes = descriptor == GX_INDEX8 ? 1u : 2u;
+            const bool nbt3 = (e->attr == GX_VA_NRM || e->attr == GX_VA_NBT) &&
+                              e->format->count == GX_NRM_NBT3;
+            e->index_skip = (nbt3 ? 3u : 1u) * index_bytes;
+            e->source_bytes = e->attr == GX_VA_CLR0 || e->attr == GX_VA_CLR1
+                ? color_bytes(e->format->type)
+                : nbt3 ? 3u * component_bytes(e->format->type) : e->direct_bytes;
+            if (e->array->data == NULL || e->array->stride == 0) return false;
+        }
+    }
+    if (!reserve_vertices(count)) return false;
+    for (u32 v = 0; v < count; ++v) {
+        VitaDecodedVertex* vertex = &s_decode_vertices[v];
+        memset(vertex, 0, sizeof(*vertex));
+        vertex->normal[2] = 1.0f;
+        vertex->color = default_color;
+        for (u32 pi = 0; pi < plan_count; ++pi) {
+            const Plan* e = &plan[pi];
+            const u8* source;
+            bool little_endian = false;
+            if (e->descriptor == GX_DIRECT) {
+                if (e->direct_bytes > bytes - cursor) return false;
+                source = stream + cursor;
+                cursor += e->direct_bytes;
+            } else {
+                const VitaArrayState* array = e->array;
+                u32 array_index, offset;
+                if (e->index_skip > bytes - cursor) return false;
+                array_index = e->descriptor == GX_INDEX8 ? stream[cursor]
+                    : (u32) stream[cursor] << 8 | stream[cursor + 1u];
+                cursor += e->index_skip;
+                offset = array_index * array->stride;
+                if (array->size != 0 &&
+                    (offset > array->size || e->source_bytes > array->size - offset)) return false;
+                if (offset + e->source_bytes > max_end[e->attr]) max_end[e->attr] = offset + e->source_bytes;
+                source = (const u8*) array->data + offset;
+                little_endian = array->little_endian;
+            }
+            decode_attribute(vertex, e->attr, e->format, source, little_endian);
+        }
+    }
+    *cursor_io = cursor;
+    return true;
+}
+
+static DlCacheEntry* build_dl_entry(const void* list, u32 bytes, u32 state_hash)
+{
+    static U16Vec tris, lines, points;
+    const u8* stream = list;
+    u32 cursor = 0, total = 0;
+    u32 max_end[GX_VA_MAX_ATTR] = { 0 };
+    bool has_mtxidx = false;
+    DlCacheEntry* e;
+    tris.count = lines.count = points.count = 0;
+
+    while (cursor + 3u <= bytes) {
+        const u8 command = stream[cursor];
+        const GXPrimitive primitive = (GXPrimitive) (command & 0xf8u);
+        const GXVtxFmt format = (GXVtxFmt) (command & 7u);
+        const u32 count = (u32) stream[cursor + 1u] << 8 | stream[cursor + 2u];
+        u32 base, i;
+        if (command == 0 || primitive < GX_QUADS || primitive > GX_POINTS || !valid_format(format)) break;
+        cursor += 3u;
+        if (total + count > 0xffffu) return NULL;
+        if (!decode_primitive_vertices(stream, bytes, &cursor, format, count, max_end, &has_mtxidx))
+            return NULL;
+        if (total + count > s_build_capacity) {
+            u32 cap = s_build_capacity ? s_build_capacity : 4096u;
+            while (cap < total + count) cap *= 2u;
+            GxrGpuVertex* r = realloc(s_build_vertices, cap * sizeof(GxrGpuVertex));
+            if (r == NULL) return NULL;
+            s_build_vertices = r; s_build_capacity = cap;
+        }
+        base = total;
+        for (i = 0; i < count; ++i) to_gpu_vertex(&s_decode_vertices[i], &s_build_vertices[base + i]);
+        total += count;
+#define TRI(a, b, c) (u16vec_push(&tris, (u16) (base + (a))) && u16vec_push(&tris, (u16) (base + (b))) && u16vec_push(&tris, (u16) (base + (c))))
+        if (primitive == GX_TRIANGLES) {
+            for (i = 0; i + 2u < count; i += 3u) if (!TRI(i, i + 1u, i + 2u)) return NULL;
+        } else if (primitive == GX_QUADS) {
+            for (i = 0; i + 3u < count; i += 4u)
+                if (!TRI(i, i + 1u, i + 2u) || !TRI(i, i + 2u, i + 3u)) return NULL;
+        } else if (primitive == GX_TRIANGLESTRIP) {
+            for (i = 2; i < count; ++i) {
+                bool ok = (i & 1u) ? TRI(i - 1u, i - 2u, i) : TRI(i - 2u, i - 1u, i);
+                if (!ok) return NULL;
+            }
+        } else if (primitive == GX_TRIANGLEFAN) {
+            for (i = 2; i < count; ++i) if (!TRI(0u, i - 1u, i)) return NULL;
+        } else if (primitive == GX_LINES) {
+            for (i = 0; i + 1u < count; i += 2u)
+                if (!u16vec_push(&lines, (u16) (base + i)) || !u16vec_push(&lines, (u16) (base + i + 1u))) return NULL;
+        } else if (primitive == GX_LINESTRIP) {
+            for (i = 1; i < count; ++i)
+                if (!u16vec_push(&lines, (u16) (base + i - 1u)) || !u16vec_push(&lines, (u16) (base + i))) return NULL;
+        } else {
+            for (i = 0; i < count; ++i) if (!u16vec_push(&points, (u16) (base + i))) return NULL;
+        }
+#undef TRI
+    }
+    if (total == 0) return NULL;
+
+    e = calloc(1, sizeof(*e));
+    if (e == NULL) return NULL;
+    {
+        const u32 index_total = tris.count + lines.count + points.count;
+        e->vertices = gxr_arena_alloc(total * sizeof(GxrGpuVertex));
+        e->indices = index_total ? gxr_arena_alloc(index_total * sizeof(u16)) : NULL;
+        if (e->vertices == NULL || (index_total && e->indices == NULL)) {
+            free_entry_buffers(e);
+            evict_dl_cache(2);
+            e->vertices = gxr_arena_alloc(total * sizeof(GxrGpuVertex));
+            e->indices = index_total ? gxr_arena_alloc(index_total * sizeof(u16)) : NULL;
+            if (e->vertices == NULL || (index_total && e->indices == NULL)) {
+                free_entry_buffers(e);
+                free(e);
+                return NULL;
+            }
+        }
+        memcpy(e->vertices, s_build_vertices, total * sizeof(GxrGpuVertex));
+        if (tris.count) memcpy(e->indices, tris.data, tris.count * sizeof(u16));
+        if (lines.count) memcpy(e->indices + tris.count, lines.data, lines.count * sizeof(u16));
+        if (points.count) memcpy(e->indices + tris.count + lines.count, points.data, points.count * sizeof(u16));
+    }
+    e->list = list;
+    e->bytes = bytes;
+    e->state_hash = state_hash;
+    e->vertex_count = total;
+    e->tri_count = tris.count;
+    e->line_count = lines.count;
+    e->point_count = points.count;
+    e->has_mtxidx = has_mtxidx;
+    for (u32 attr = 0; attr < GX_VA_MAX_ATTR; ++attr) {
+        if (s_gx.descriptors[attr] == GX_INDEX8 || s_gx.descriptors[attr] == GX_INDEX16) {
+            e->ranges[e->array_count].attr = (u8) attr;
+            e->ranges[e->array_count].end = max_end[attr];
+            ++e->array_count;
+        }
+    }
+    e->content_hash = entry_content_hash(e);
+    ++s_dl_stats.entries;
+    return e;
+}
+
+static void copy_rows(f32 (*dst)[4], const f32 (*src)[4], u32 rows)
+{
+    for (u32 r = 0; r < rows; ++r) memcpy(dst[r], src[r], 4u * sizeof(f32));
+}
+
+static void fill_vertex_key_uniforms(GxrVtxKey* key, GxrVtxUniforms* u, bool has_mtxidx)
+{
+    const f32* v = s_gx.viewport;
+    const f32 scale = 544.0f / 480.0f;
+    const f32 offset = (960.0f - 640.0f * scale) * 0.5f;
+    memset(key, 0, sizeof(*key));
+    key->has_mtxidx = has_mtxidx ? 1u : 0u;
+    key->perspective = s_gx.projection[0] == (f32) GX_PERSPECTIVE ? 1u : 0u;
+    key->channel_count = s_gx.channel_count > 2 ? 2u : s_gx.channel_count;
+    key->texgen_count = s_gx.texture_generator_count > GXR_MAX_TEXCOORDS
+        ? GXR_MAX_TEXCOORDS : s_gx.texture_generator_count;
+    for (u32 i = 0; i < 4u; ++i) {
+        const VitaChanCtrl* c = &s_gx.channels[i];
+        GxrVtxChan* k = &key->chan[i];
+        if ((i % 2u) >= key->channel_count) continue;
+        k->mat_src = c->material_source;
+        k->enabled = c->enabled ? 1u : 0u;
+        if (k->enabled) {
+            k->amb_src = c->ambient_source;
+            k->lights = (u8) c->lights;
+            k->diffuse = c->lights ? c->diffuse : 0u;
+            k->atten = c->lights ? c->attenuation : 0u;
+        }
+    }
+    for (u32 m = 0; m < 10u; ++m) {
+        copy_rows(u->pos + m * 3u, (const f32 (*)[4]) s_gx.position_matrices[m], 3u);
+        copy_rows(u->nrm + m * 3u, (const f32 (*)[4]) s_gx.normal_matrices[m], 3u);
+    }
+    u->proj[0][0] = s_gx.projection[1]; u->proj[0][1] = s_gx.projection[2];
+    u->proj[0][2] = s_gx.projection[3]; u->proj[0][3] = s_gx.projection[4];
+    u->proj[1][0] = s_gx.projection[5]; u->proj[1][1] = s_gx.projection[6];
+    u->proj[1][2] = (offset + scale * (v[0] + v[2] * 0.5f)) / 480.0f - 1.0f;
+    u->proj[1][3] = scale * v[2] * 0.5f / 480.0f;
+    u->proj[2][0] = 1.0f - scale * (v[1] + v[3] * 0.5f) / 272.0f;
+    u->proj[2][1] = scale * v[3] * 0.5f / 272.0f;
+    u->proj[2][2] = v[5];
+    u->proj[2][3] = v[5] - v[4];
+    u->proj[3][0] = u->proj[3][1] = u->proj[3][2] = 0.0f;
+    u->proj[3][3] = (f32) matrix_slot(s_gx.current_matrix);
+    for (u32 i = 0; i < key->texgen_count; ++i) {
+        const VitaTexGenState* g = &s_gx.texture_generators[i];
+        GxrVtxTexGen* k = &key->tg[i];
+        const f32 (*m)[4] = NULL;
+        k->type = g->type == GX_TG_MTX2x4 ? GX_TG_MTX2x4 : GX_TG_MTX3x4;
+        k->source = (u8) g->source;
+        if (g->matrix != GX_IDENTITY) {
+            m = g->matrix < GX_TEXMTX0
+                ? (const f32 (*)[4]) s_gx.position_matrices[matrix_slot(g->matrix)]
+                : (g->matrix / 3u < 20u ? (const f32 (*)[4]) s_gx.texture_matrices[g->matrix / 3u] : NULL);
+        }
+        if (m != NULL) { k->has_matrix = 1u; copy_rows(u->tex + i * 3u, m, 3u); }
+        if (g->post_matrix != GX_PTIDENTITY && g->post_matrix >= GX_PTTEXMTX0 &&
+            (g->post_matrix - GX_PTTEXMTX0) / 3u < 20u) {
+            k->has_post = 1u;
+            k->normalize = g->normalize ? 1u : 0u;
+            copy_rows(u->post + i * 3u, (const f32 (*)[4]) s_gx.post_matrices[(g->post_matrix - GX_PTTEXMTX0) / 3u], 3u);
+        }
+    }
+    for (u32 l = 0; l < 8u; ++l) {
+        const VitaLightObj* o = &s_gx.lights[l];
+        f32 (*row)[4] = u->light + l * 5u;
+        gxcolor_to_float(o->color, row[0]);
+        row[1][0] = o->px; row[1][1] = o->py; row[1][2] = o->pz; row[1][3] = 1.0f;
+        row[2][0] = o->nx; row[2][1] = o->ny; row[2][2] = o->nz; row[2][3] = 0.0f;
+        row[3][0] = o->a0; row[3][1] = o->a1; row[3][2] = o->a2; row[3][3] = 0.0f;
+        row[4][0] = o->k0; row[4][1] = o->k1; row[4][2] = o->k2; row[4][3] = 0.0f;
+    }
+    for (u32 i = 0; i < 2u; ++i) {
+        gxcolor_to_float(s_gx.material_colors[i], u->mat[i]);
+        gxcolor_to_float(s_gx.ambient_colors[i], u->amb[i]);
+    }
+}
+
+static u8 current_cull(void)
+{
+    switch (s_gx.cull_mode) {
+    case GX_CULL_FRONT: return GXR_CULL_FRONT;
+    case GX_CULL_BACK: return GXR_CULL_BACK;
+    case GX_CULL_ALL: return GXR_CULL_ALL;
+    default: return GXR_CULL_NONE;
+    }
+}
+
+static bool draw_display_list_gpu(const void* list, u32 bytes)
+{
+    const u32 frame = s_gx.copied_frames;
+    u32 state_hash;
+    u32 bucket;
+    DlCacheEntry* e;
+    if (!gxr_available() || is_movie_yuv_draw() || bytes < 3u) return false;
+    state_hash = current_state_hash();
+    bucket = (u32) (((uintptr_t) list >> 3) ^ bytes ^ state_hash) & (DL_CACHE_BUCKETS - 1u);
+    for (e = s_dl_cache[bucket]; e != NULL; e = e->next)
+        if (e->list == list && e->bytes == bytes && e->state_hash == state_hash) break;
+    {
+        const u64 t0 = sceKernelGetProcessTimeWide();
+        if (e != NULL && e->validated_frame != s_array_epoch) {
+            const u32 h = entry_content_hash(e);
+            e->validated_frame = s_array_epoch;
+            if (h != e->content_hash) {
+                /* Contents changed (skinning/shape animation): rebuild. */
+                DlCacheEntry** link = &s_dl_cache[bucket];
+                while (*link != e) link = &(*link)->next;
+                *link = e->next;
+                free_entry_buffers(e);
+                free(e);
+                --s_dl_stats.entries;
+                e = NULL;
+                ++s_dl_stats.rebuilds;
+            }
+        }
+        s_dl_stats.hash_us += sceKernelGetProcessTimeWide() - t0;
+    }
+    if (e == NULL) {
+        const u64 t0 = sceKernelGetProcessTimeWide();
+        e = build_dl_entry(list, bytes, state_hash);
+        s_prof_decode_us += sceKernelGetProcessTimeWide() - t0;
+        if (e == NULL) { ++s_dl_stats.fallbacks; return false; }
+        e->validated_frame = s_array_epoch;
+        e->next = s_dl_cache[bucket];
+        s_dl_cache[bucket] = e;
+        ++s_dl_stats.builds;
+    } else {
+        ++s_dl_stats.hits;
+    }
+    e->last_frame = frame;
+
+    {
+        GxrVtxKey key;
+        static GxrVtxUniforms uniforms;
+        GxrDraw* draw = &s_gxr_draw;
+        const u64 fill_start = sceKernelGetProcessTimeWide();
+        const u8 cull = current_cull();
+        bool ok = true;
+        fill_vertex_key_uniforms(&key, &uniforms, e->has_mtxidx != 0);
+        fill_gxr_draw(draw);
+        s_prof_fill_us += sceKernelGetProcessTimeWide() - fill_start;
+        {
+            const u64 draw_start = sceKernelGetProcessTimeWide();
+            if (e->tri_count) {
+                draw->primitive = GXR_PRIM_TRIANGLES;
+                draw->line_width = 1.0f;
+                ok = gxr_draw_gpu(draw, &key, &uniforms, e->vertices, e->indices, e->tri_count, cull) && ok;
+                ++s_prof_draws;
+            }
+            if (e->line_count) {
+                draw->primitive = GXR_PRIM_LINES;
+                draw->line_width = (s_gx.line_width / 6.0f) * (544.0f / 480.0f);
+                ok = gxr_draw_gpu(draw, &key, &uniforms, e->vertices, e->indices + e->tri_count, e->line_count, GXR_CULL_NONE) && ok;
+                ++s_prof_draws;
+            }
+            if (e->point_count) {
+                draw->primitive = GXR_PRIM_POINTS;
+                draw->line_width = (s_gx.point_size / 6.0f) * (544.0f / 480.0f);
+                ok = gxr_draw_gpu(draw, &key, &uniforms, e->vertices, e->indices + e->tri_count + e->line_count, e->point_count, GXR_CULL_NONE) && ok;
+                ++s_prof_draws;
+            }
+            s_prof_draw_us += sceKernelGetProcessTimeWide() - draw_start;
+        }
+        s_prof_vertices += e->vertex_count;
+        /* A shader failure falls back to the CPU path for this draw only if
+         * nothing was drawn; partial success is accepted. */
+        return ok;
+    }
+}
+
 void GXCallDisplayList(const void* list, u32 bytes)
 {
     const u8* stream = list;
     u32 cursor = 0;
     if (stream == NULL) return;
+#ifndef MELEE_VITA_GX_CPU_VERTEX
+    if (draw_display_list_gpu(list, bytes)) return;
+#endif
     while (cursor + 3u <= bytes) {
         const u8 command = stream[cursor];
         const GXPrimitive primitive = (GXPrimitive) (command & 0xf8u);
@@ -1918,6 +2460,8 @@ void GXCopyDisp(void* destination, GXBool clear)
     (void) destination;
     (void) clear;
     ++s_gx.copied_frames;
+    ++s_array_epoch;
+    process_deferred_frees();
     {
         static u64 last_us, sum_us, max_us;
         const u64 now_us = sceKernelGetProcessTimeWide();
@@ -1935,6 +2479,12 @@ void GXCopyDisp(void* destination, GXBool clear)
             melee_vita_log_info("[FRAMEPHASE] update=%.1fms render=%.1fms ticks/frame=%.2f", g_melee_vita_update_us / 120.0 / 1000.0, g_melee_vita_render_us / 120.0 / 1000.0, g_melee_vita_update_ticks / 120.0);
             g_melee_vita_update_us = g_melee_vita_render_us = 0;
             g_melee_vita_update_ticks = 0;
+            melee_vita_log_info("[DLCACHE] hits/frame=%u builds=%u rebuilds=%u fallbacks=%u entries=%u hash=%.1fms",
+                                s_dl_stats.hits / 120u, s_dl_stats.builds, s_dl_stats.rebuilds,
+                                s_dl_stats.fallbacks, s_dl_stats.entries, s_dl_stats.hash_us / 120.0 / 1000.0);
+            s_dl_stats.hits = s_dl_stats.builds = s_dl_stats.rebuilds = s_dl_stats.fallbacks = 0;
+            s_dl_stats.hash_us = 0;
+            evict_dl_cache(600u);
             melee_vita_log_info("[GXPROF] decode=%.1fms fill=%.1fms draws/frame=%u",
                                 s_prof_decode_us / 120.0 / 1000.0,
                                 s_prof_fill_us / 120.0 / 1000.0, s_prof_draws / 120u);

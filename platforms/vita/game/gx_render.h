@@ -67,6 +67,58 @@ typedef struct GxrDraw {
     u8 texture_valid[GXR_MAX_TEXMAPS];
 } GxrDraw;
 
+/* ---- GPU vertex pipeline ------------------------------------------------
+ * Display lists are decoded once into GxrGpuVertex buffers that stay in GPU
+ * memory; transform, lighting and texgen run in generated vertex shaders. */
+#define GXR_GPU_TEX 4u
+
+typedef struct GxrGpuVertex {
+    f32 pos[3];
+    f32 mtx;          /* GX_VA_PNMTXIDX value (0..27) */
+    f32 nrm[3];
+    u8 c0[4];
+    u8 c1[4];
+    f32 tex[GXR_GPU_TEX][2];
+} GxrGpuVertex;       /* 68 bytes */
+
+typedef struct GxrVtxChan {
+    u8 enabled, amb_src, mat_src, lights, diffuse, atten;
+} GxrVtxChan;
+
+typedef struct GxrVtxTexGen {
+    u8 type, source, has_matrix, normalize, has_post, reserved;
+} GxrVtxTexGen;
+
+typedef struct GxrVtxKey {
+    u8 has_mtxidx;
+    u8 perspective;
+    u8 channel_count;
+    u8 texgen_count;
+    GxrVtxChan chan[4];
+    GxrVtxTexGen tg[GXR_MAX_TEXCOORDS];
+} GxrVtxKey;
+
+typedef struct GxrVtxUniforms {
+    f32 pos[30][4];    /* 10 position matrices, 3 rows each */
+    f32 nrm[30][4];
+    f32 proj[4][4];    /* p1..p6, ax bx ay by, z_far z_range, current slot */
+    f32 tex[24][4];    /* resolved texgen matrix per texgen (3 rows) */
+    f32 post[24][4];
+    f32 light[40][4];  /* per light: color, pos, dir, a0-a2, k0-k2 */
+    f32 mat[2][4];
+    f32 amb[2][4];
+} GxrVtxUniforms;
+
+enum { GXR_CULL_NONE = 0, GXR_CULL_FRONT, GXR_CULL_BACK, GXR_CULL_ALL };
+
+/* Persistent GPU memory for cached geometry. */
+void* gxr_arena_alloc(u32 size);
+void gxr_arena_free(void* block);
+
+bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
+                  const GxrVtxUniforms* uniforms, const GxrGpuVertex* vertices,
+                  const u16* indices, u32 count, u8 cull);
+
 int gxr_init(void);
 bool gxr_available(void);
 /* Vertex memory for gxr_draw must come from gxr_alloc_vertices (GPU-visible,

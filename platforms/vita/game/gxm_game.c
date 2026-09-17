@@ -14,7 +14,6 @@
 #include <stdlib.h>
 
 static int s_initialized;
-static int s_frame_open;
 static int s_texture_invalidation_pending;
 static u32 s_texture_content_generation = 1;
 
@@ -90,14 +89,16 @@ static void free_textures(void)
     memset(s_texture_hash, 0, sizeof(s_texture_hash));
 }
 
+static void rq_wait_idle(void);
 void melee_vita_gxm_invalidate_textures(void)
 {
     s_texture_invalidation_pending = 1;
-    if (!s_frame_open) {
-        if (s_initialized) vita2d_wait_rendering_done();
-        free_textures();
-        s_texture_invalidation_pending = 0;
+    if (s_initialized) {
+        rq_wait_idle();
+        vita2d_wait_rendering_done();
     }
+    free_textures();
+    s_texture_invalidation_pending = 0;
 }
 
 void melee_vita_gxm_mark_texture_data_dirty(void)
@@ -332,15 +333,199 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     return entry->texture;
 }
 
+/* ===================================================================
+ * Render thread
+ *
+ * The game thread records a frame as a list of commands (each an execute
+ * callback plus a payload) and places vertex/index data in a per-frame GPU
+ * arena.  At present time the frame is handed to a render thread on the second
+ * CPU core, which issues every vita2d/GXM call, while the game thread moves on
+ * to the next frame.  At most one frame is in flight: presenting waits for the
+ * render thread to finish the previous one.  All GXM context use happens on the
+ * render thread; the game thread only creates/uploads textures and compiles
+ * shader programs.
+ * =================================================================== */
+#include <psp2/kernel/threadmgr.h>
+#include <psp2/kernel/sysmem.h>
+
+#define RQ_GPU_ARENA_SIZE (16u * 1024u * 1024u)
+#define RQ_CPU_MASK_USER_0 0x10000
+#define RQ_CPU_MASK_USER_1 0x20000
+
+typedef struct RqCommand {
+    MeleeVitaRqExec exec;
+    u32 size; /* payload bytes, aligned to 8 */
+} RqCommand;
+
+typedef struct RqFrame {
+    u8* cmds;
+    u32 size, capacity;
+    u8* gpu;
+    u32 gpu_used;
+    SceUID gpu_uid;
+    u32 clear_color;
+} RqFrame;
+
+static RqFrame s_frames[2];
+static u32 s_record;
+static RqFrame* s_exec_frame;
+static SceUID s_rq_work = -1, s_rq_done = -1, s_rq_thread = -1;
+static volatile int s_rq_quit;
+static u32 s_next_clear_color = 0xff000000u;
+static u32 s_rq_gpu_overflow;
+
+u32 g_melee_vita_gxm_state_epoch;
+void melee_vita_prof_add(int zone, u64 us);
+#define VPZ_SWAP 2
+#define VPZ_TEXUPLOAD 4
+#define VPZ_RT_EXEC 11
+
+static SceGxmDepthFunc depth_function(u32 function) __attribute__((unused));
+static SceGxmDepthFunc depth_function(u32 function)
+{
+    static const SceGxmDepthFunc functions[8] = {
+        SCE_GXM_DEPTH_FUNC_NEVER, SCE_GXM_DEPTH_FUNC_LESS,
+        SCE_GXM_DEPTH_FUNC_EQUAL, SCE_GXM_DEPTH_FUNC_LESS_EQUAL,
+        SCE_GXM_DEPTH_FUNC_GREATER, SCE_GXM_DEPTH_FUNC_NOT_EQUAL,
+        SCE_GXM_DEPTH_FUNC_GREATER_EQUAL, SCE_GXM_DEPTH_FUNC_ALWAYS,
+    };
+    return functions[function < 8u ? function : 7u];
+}
+
+/* ---- render-thread helpers ---- */
+
+static void rt_default_depth(void)
+{
+    SceGxmContext* context = vita2d_get_context();
+    sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
+    sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
+}
+
+static void rt_begin_scene(u32 clear_color, int clear)
+{
+    vita2d_start_drawing();
+    ++g_melee_vita_gxm_state_epoch;
+    /* vita2d's clear quad must not leave its own depth in the buffer: GX
+     * scenes clear depth to the far plane and test against it. */
+    rt_default_depth();
+    if (clear) {
+        vita2d_set_clear_color(clear_color);
+        vita2d_clear_screen();
+    }
+}
+
+static int render_thread(SceSize args, void* argp)
+{
+    (void) args;
+    (void) argp;
+    for (;;) {
+        RqFrame* frame;
+        u32 offset = 0;
+        u64 t0;
+        sceKernelWaitSema(s_rq_work, 1, NULL);
+        if (s_rq_quit) break;
+        frame = s_exec_frame;
+        t0 = sceKernelGetProcessTimeWide();
+        rt_begin_scene(frame->clear_color, 1);
+        while (offset < frame->size) {
+            const RqCommand* command = (const RqCommand*) (frame->cmds + offset);
+            offset += sizeof(RqCommand);
+            command->exec(frame->cmds + offset);
+            offset += command->size;
+        }
+        melee_vita_prof_add(VPZ_RT_EXEC, sceKernelGetProcessTimeWide() - t0);
+        sceKernelSignalSema(s_rq_done, 1);
+    }
+    sceKernelSignalSema(s_rq_done, 1);
+    return 0;
+}
+
+/* Blocks until the render thread is idle (no frame in flight). */
+static void rq_wait_idle(void)
+{
+    if (s_rq_done < 0) return;
+    sceKernelWaitSema(s_rq_done, 1, NULL);
+    sceKernelSignalSema(s_rq_done, 1);
+}
+
+/* ---- game-thread recording API ---- */
+
+void* melee_vita_rq_push(MeleeVitaRqExec exec, u32 payload_size)
+{
+    RqFrame* frame = &s_frames[s_record];
+    const u32 aligned = (payload_size + 7u) & ~7u;
+    const u32 needed = frame->size + sizeof(RqCommand) + aligned;
+    RqCommand* command;
+    if (!s_initialized) return NULL;
+    if (needed > frame->capacity) {
+        u32 capacity = frame->capacity ? frame->capacity : 1u << 20;
+        u8* grown;
+        while (capacity < needed) capacity *= 2u;
+        grown = realloc(frame->cmds, capacity);
+        if (grown == NULL) return NULL;
+        frame->cmds = grown;
+        frame->capacity = capacity;
+    }
+    command = (RqCommand*) (frame->cmds + frame->size);
+    command->exec = exec;
+    command->size = aligned;
+    frame->size = needed;
+    return (u8*) command + sizeof(RqCommand);
+}
+
+void* melee_vita_rq_alloc_gpu(u32 size, u32 align)
+{
+    RqFrame* frame = &s_frames[s_record];
+    u32 offset;
+    if (!s_initialized || frame->gpu == NULL || size == 0) return NULL;
+    if (align < 4u) align = 4u;
+    offset = (frame->gpu_used + align - 1u) & ~(align - 1u);
+    if (offset + size > RQ_GPU_ARENA_SIZE) {
+        if (s_rq_gpu_overflow++ < 4u)
+            melee_vita_log_info("[RQ] per-frame GPU arena full (%u bytes requested)", size);
+        return NULL;
+    }
+    frame->gpu_used = offset + size;
+    return frame->gpu + offset;
+}
+
+void melee_vita_gxm_begin_frame(void) {}
+
 int melee_vita_gxm_init(void)
 {
     int result;
     if (s_initialized) return 0;
-    result = vita2d_init_advanced(32u * 1024u * 1024u);
+    result = vita2d_init_advanced(8u * 1024u * 1024u);
     if (result == 0) return -1;
     vita2d_set_vblank_wait(0);
     vita2d_set_clear_color(RGBA8(0, 0, 0, 255));
+    for (u32 i = 0; i < 2u; ++i) {
+        void* base = NULL;
+        s_frames[i].gpu_uid = sceKernelAllocMemBlock("melee_rq", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE,
+                                                    RQ_GPU_ARENA_SIZE, NULL);
+        if (s_frames[i].gpu_uid < 0 || sceKernelGetMemBlockBase(s_frames[i].gpu_uid, &base) < 0 ||
+            sceGxmMapMemory(base, RQ_GPU_ARENA_SIZE,
+                            SCE_GXM_MEMORY_ATTRIB_READ | SCE_GXM_MEMORY_ATTRIB_WRITE) < 0) {
+            melee_vita_log_info("[RQ] GPU arena allocation failed");
+            return -1;
+        }
+        s_frames[i].gpu = base;
+        s_frames[i].clear_color = 0xff000000u;
+    }
+    s_rq_work = sceKernelCreateSema("melee_rq_work", 0, 0, 1, NULL);
+    s_rq_done = sceKernelCreateSema("melee_rq_done", 0, 1, 1, NULL);
+    s_rq_thread = sceKernelCreateThread("melee_render", render_thread, 0x10000100,
+                                        256 * 1024, 0, RQ_CPU_MASK_USER_1, NULL);
+    if (s_rq_work < 0 || s_rq_done < 0 || s_rq_thread < 0 ||
+        sceKernelStartThread(s_rq_thread, 0, NULL) < 0) {
+        melee_vita_log_info("[RQ] render thread creation failed");
+        return -1;
+    }
+    sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), RQ_CPU_MASK_USER_0);
     s_initialized = 1;
+    melee_vita_log_info("[RQ] render thread started on core 1");
 #ifndef MELEE_VITA_GX_LEGACY_RENDERER
     if (gxr_init() != 0)
         melee_vita_log_info("[GXR] falling back to the legacy vita2d GX path");
@@ -351,52 +536,42 @@ int melee_vita_gxm_init(void)
 void melee_vita_gxm_shutdown(void)
 {
     if (!s_initialized) return;
-    if (s_frame_open) {
-        vita2d_end_drawing();
-        s_frame_open = 0;
-    }
+    rq_wait_idle();
+    s_rq_quit = 1;
+    sceKernelSignalSema(s_rq_work, 1);
+    sceKernelWaitThreadEnd(s_rq_thread, NULL, NULL);
     vita2d_wait_rendering_done();
     free_textures();
     vita2d_fini();
     s_initialized = 0;
 }
 
-/* Bumped whenever something other than gx_render changes GXM context state. */
-u32 g_melee_vita_gxm_state_epoch;
-void melee_vita_prof_add(int zone, u64 us);
-#define VPZ_SWAP 2
-#define VPZ_TEXUPLOAD 4
+/* ---- deferred texture frees (the render thread may still sample them) ---- */
 
-static void begin_frame(void)
+#define RQ_GRAVEYARD 32u
+static struct { vita2d_texture* texture; u32 frame; } s_graveyard[RQ_GRAVEYARD];
+
+static void retire_texture(vita2d_texture* texture)
 {
-    SceGxmContext* context;
-    if (!s_initialized || s_frame_open) return;
-    vita2d_start_drawing();
-    ++g_melee_vita_gxm_state_epoch;
-    /* vita2d's clear quad must not leave its own depth in the buffer: GX
-     * scenes clear depth to the far plane and test against it. */
-    context = vita2d_get_context();
-    sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
-    sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
-    sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
-    sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
-    vita2d_clear_screen();
-    s_frame_open = 1;
+    u32 i;
+    if (texture == NULL) return;
+    for (i = 0; i < RQ_GRAVEYARD; ++i)
+        if (s_graveyard[i].texture == NULL) {
+            s_graveyard[i].texture = texture;
+            s_graveyard[i].frame = s_frame_counter;
+            return;
+        }
+    rq_wait_idle();
+    vita2d_free_texture(texture);
 }
 
-void melee_vita_gxm_begin_frame(void) { begin_frame(); }
-
-/* Ends the current scene, waits for the GPU, and returns the back buffer
- * (960x544, RGBA8888, 960 pixel stride).  The caller must then call
- * melee_vita_gxm_resume_frame before issuing further draws. */
-const u8* melee_vita_gxm_flush_and_read(void)
+static void collect_graveyard(void)
 {
-    if (!s_initialized) return NULL;
-    if (!s_frame_open) begin_frame();
-    vita2d_end_drawing();
-    vita2d_wait_rendering_done();
-    s_frame_open = 0;
-    return vita2d_get_current_fb();
+    for (u32 i = 0; i < RQ_GRAVEYARD; ++i)
+        if (s_graveyard[i].texture != NULL && s_frame_counter - s_graveyard[i].frame >= 3u) {
+            vita2d_free_texture(s_graveyard[i].texture);
+            s_graveyard[i].texture = NULL;
+        }
 }
 
 vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 height)
@@ -406,7 +581,7 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 heig
         if (s_copy_textures[c].key == key) {
             if (s_copy_textures[c].width == width && s_copy_textures[c].height == height)
                 return s_copy_textures[c].texture;
-            vita2d_free_texture(s_copy_textures[c].texture);
+            retire_texture(s_copy_textures[c].texture);
             s_copy_textures[c].texture = NULL;
             free_slot = c;
             break;
@@ -415,7 +590,7 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 heig
     }
     if (free_slot == VITA_COPY_TEXTURES) {
         free_slot = 0;
-        vita2d_free_texture(s_copy_textures[0].texture);
+        retire_texture(s_copy_textures[0].texture);
     }
     s_copy_textures[free_slot].key = key;
     s_copy_textures[free_slot].width = width;
@@ -429,37 +604,70 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 heig
     return s_copy_textures[free_slot].texture;
 }
 
-void melee_vita_gxm_resume_frame(int clear)
-{
-    SceGxmContext* context;
-    if (!s_initialized || s_frame_open) return;
-    vita2d_start_drawing();
-    ++g_melee_vita_gxm_state_epoch;
-    context = vita2d_get_context();
-    sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
-    sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
-    sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
-    sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
-    if (clear) vita2d_clear_screen();
-    s_frame_open = 1;
-}
-
 vita2d_texture* melee_vita_gxm_texture(const MeleeVitaTextureSource* source)
 {
     return get_texture(source);
 }
 
-static SceGxmDepthFunc depth_function(u32 function) __attribute__((unused));
-static SceGxmDepthFunc depth_function(u32 function)
+/* ---- EFB copy ---- */
+
+typedef struct RqCopy {
+    vita2d_texture* target;
+    u32 width, height;
+    f32 x0, y0, sx, sy;
+    u32 clear;
+} RqCopy;
+
+static void exec_copy(const void* payload)
 {
-    static const SceGxmDepthFunc functions[8] = {
-        SCE_GXM_DEPTH_FUNC_NEVER, SCE_GXM_DEPTH_FUNC_LESS,
-        SCE_GXM_DEPTH_FUNC_EQUAL, SCE_GXM_DEPTH_FUNC_LESS_EQUAL,
-        SCE_GXM_DEPTH_FUNC_GREATER, SCE_GXM_DEPTH_FUNC_NOT_EQUAL,
-        SCE_GXM_DEPTH_FUNC_GREATER_EQUAL, SCE_GXM_DEPTH_FUNC_ALWAYS,
-    };
-    return functions[function < 8u ? function : 7u];
+    const RqCopy* c = payload;
+    const u8* fb;
+    vita2d_end_drawing();
+    vita2d_wait_rendering_done();
+    fb = vita2d_get_current_fb();
+    if (fb != NULL && c->target != NULL) {
+        const u8* out_base = vita2d_texture_get_datap(c->target);
+        const u32 stride = vita2d_texture_get_stride(c->target);
+        for (u32 y = 0; y < c->height; ++y) {
+            s32 fy = (s32) (c->y0 + (y + 0.5f) * c->sy);
+            u8* out = (u8*) out_base + (size_t) y * stride;
+            if (fy < 0) fy = 0; else if (fy > 543) fy = 543;
+            for (u32 x = 0; x < c->width; ++x) {
+                s32 fx = (s32) (c->x0 + (x + 0.5f) * c->sx);
+                if (fx < 0) fx = 0; else if (fx > 959) fx = 959;
+                memcpy(out + x * 4u, fb + ((u32) fy * 960u + (u32) fx) * 4u, 3);
+                out[x * 4u + 3u] = 0xff;
+            }
+        }
+    }
+    /* Continue the frame without clearing what was drawn so far unless the
+     * copy asked for it. */
+    rt_begin_scene(s_exec_frame->clear_color, c->clear ? 1 : 0);
 }
+
+void melee_vita_gxm_queue_copy(struct vita2d_texture* target, u32 width, u32 height,
+                               f32 x0, f32 y0, f32 sx, f32 sy, int clear)
+{
+    RqCopy* c = melee_vita_rq_push(exec_copy, sizeof(RqCopy));
+    if (c == NULL) return;
+    c->target = target;
+    c->width = width;
+    c->height = height;
+    c->x0 = x0; c->y0 = y0; c->sx = sx; c->sy = sy;
+    c->clear = clear ? 1u : 0u;
+}
+
+/* ---- legacy vita2d draws ---- */
+
+typedef struct RqLegacy {
+    MeleeVitaRenderState state;
+    u8 has_state;
+    SceGxmPrimitiveType primitive;
+    vita2d_texture* texture;
+    u32 tint;
+    const void* vertices;
+    u32 count;
+} RqLegacy;
 
 static void apply_render_state(const MeleeVitaRenderState* state)
 {
@@ -489,17 +697,38 @@ static void apply_render_state(const MeleeVitaRenderState* state)
     sceGxmSetBackPointLineWidth(context, line_width);
 }
 
+static void exec_legacy(const void* payload)
+{
+    const RqLegacy* d = payload;
+    ++g_melee_vita_gxm_state_epoch;
+    apply_render_state(d->has_state ? &d->state : NULL);
+    if (d->texture != NULL)
+        vita2d_draw_array_textured(d->texture, d->primitive, d->vertices, d->count, d->tint);
+    else
+        vita2d_draw_array(d->primitive, d->vertices, d->count);
+}
+
+static RqLegacy* push_legacy(SceGxmPrimitiveType primitive, u32 count,
+                             const MeleeVitaRenderState* state)
+{
+    RqLegacy* d = melee_vita_rq_push(exec_legacy, sizeof(RqLegacy));
+    if (d == NULL) return NULL;
+    memset(d, 0, sizeof(*d));
+    d->primitive = primitive;
+    d->count = count;
+    if (state != NULL) { d->state = *state; d->has_state = 1; }
+    return d;
+}
+
 static void draw_colored(const MeleeVitaScreenVertex* vertices, u32 count,
                          SceGxmPrimitiveType primitive,
                          const MeleeVitaRenderState* state)
 {
     vita2d_color_vertex* output;
+    RqLegacy* d;
     u32 i;
     if (!s_initialized || vertices == NULL || count == 0) return;
-    begin_frame();
-    ++g_melee_vita_gxm_state_epoch;
-    apply_render_state(state);
-    output = vita2d_pool_memalign(count * sizeof(*output), 16);
+    output = melee_vita_rq_alloc_gpu(count * sizeof(*output), 16);
     if (output == NULL) return;
     for (i = 0; i < count; ++i) {
         output[i].x = vertices[i].x;
@@ -507,7 +736,8 @@ static void draw_colored(const MeleeVitaScreenVertex* vertices, u32 count,
         output[i].z = vertices[i].z;
         output[i].color = vertices[i].color;
     }
-    vita2d_draw_array(primitive, output, count);
+    d = push_legacy(primitive, count, state);
+    if (d != NULL) d->vertices = output;
 }
 
 void melee_vita_gxm_draw_triangles(const MeleeVitaScreenVertex* vertices,
@@ -516,38 +746,26 @@ void melee_vita_gxm_draw_triangles(const MeleeVitaScreenVertex* vertices,
                                    u32 tint,
                                    const MeleeVitaRenderState* state)
 {
-    vita2d_color_vertex* output;
-    vita2d_texture_vertex* textured_output;
     vita2d_texture* texture;
     u32 i;
     if (!s_initialized || vertices == NULL || count < 3) return;
     texture = get_texture(source);
-    begin_frame();
-    ++g_melee_vita_gxm_state_epoch;
-    apply_render_state(state);
     if (texture != NULL) {
-        textured_output = vita2d_pool_memalign(count * sizeof(*textured_output), 16);
-        if (textured_output == NULL) return;
+        vita2d_texture_vertex* output = melee_vita_rq_alloc_gpu(count * sizeof(*output), 16);
+        RqLegacy* d;
+        if (output == NULL) return;
         for (i = 0; i < count; ++i) {
-            textured_output[i].x = vertices[i].x;
-            textured_output[i].y = vertices[i].y;
-            textured_output[i].z = vertices[i].z;
-            textured_output[i].u = vertices[i].u;
-            textured_output[i].v = vertices[i].v;
+            output[i].x = vertices[i].x;
+            output[i].y = vertices[i].y;
+            output[i].z = vertices[i].z;
+            output[i].u = vertices[i].u;
+            output[i].v = vertices[i].v;
         }
-        vita2d_draw_array_textured(texture, SCE_GXM_PRIMITIVE_TRIANGLES,
-                                   textured_output, count, tint);
+        d = push_legacy(SCE_GXM_PRIMITIVE_TRIANGLES, count, state);
+        if (d != NULL) { d->vertices = output; d->texture = texture; d->tint = tint; }
         return;
     }
-    output = vita2d_pool_memalign(count * sizeof(*output), 16);
-    if (output == NULL) return;
-    for (i = 0; i < count; ++i) {
-        output[i].x = vertices[i].x;
-        output[i].y = vertices[i].y;
-        output[i].z = vertices[i].z;
-        output[i].color = vertices[i].color;
-    }
-    vita2d_draw_array(SCE_GXM_PRIMITIVE_TRIANGLES, output, count);
+    draw_colored(vertices, count, SCE_GXM_PRIMITIVE_TRIANGLES, state);
 }
 
 void melee_vita_gxm_draw_lines(const MeleeVitaScreenVertex* vertices,
@@ -564,44 +782,61 @@ void melee_vita_gxm_draw_points(const MeleeVitaScreenVertex* vertices,
     draw_colored(vertices, count, SCE_GXM_PRIMITIVE_POINTS, state);
 }
 
+/* ---- present ---- */
+
+typedef struct RqPresent {
+    f32 bar;
+} RqPresent;
+
+static void exec_present(const void* payload)
+{
+    const RqPresent* p = payload;
+    if (p->bar > 0.0f) {
+        ++g_melee_vita_gxm_state_epoch;
+        rt_default_depth();
+        vita2d_set_blend_mode_add(0);
+        vita2d_draw_rectangle(0.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
+        vita2d_draw_rectangle(960.0f - p->bar - 1.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
+    }
+    vita2d_end_drawing();
+    vita2d_swap_buffers();
+}
+
 void melee_vita_gxm_present(u32 clear_color)
 {
+    extern int melee_vita_widescreen_active(void);
+    RqPresent* p;
     if (!s_initialized) return;
-    if (!s_frame_open) begin_frame();
+    p = melee_vita_rq_push(exec_present, sizeof(RqPresent));
+    if (p != NULL)
+        p->bar = melee_vita_widescreen_active() ? 0.0f : (960.0f - 544.0f * (73.0f / 60.0f)) * 0.5f;
     {
-        /* The game renders a 4:3 picture; mask the extra 16:9 area like
-         * Dolphin's 4:3 output so overlays that only cover 640x480 do not
-         * leave bright or stray content at the edges. */
-        extern int melee_vita_widescreen_active(void);
-        const f32 bar = melee_vita_widescreen_active() ? 0.0f
-                      : (960.0f - 544.0f * (73.0f / 60.0f)) * 0.5f;
-        ++g_melee_vita_gxm_state_epoch;
-        sceGxmSetFrontDepthFunc(vita2d_get_context(), SCE_GXM_DEPTH_FUNC_ALWAYS);
-        sceGxmSetBackDepthFunc(vita2d_get_context(), SCE_GXM_DEPTH_FUNC_ALWAYS);
-        if (bar > 0.0f) {
-            vita2d_draw_rectangle(0.0f, 0.0f, bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
-            vita2d_draw_rectangle(960.0f - bar - 1.0f, 0.0f, bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
-        }
-    }
-    {
+        /* Hand the recorded frame to the render thread once it has finished
+         * the previous one; this wait is the only game/render sync point. */
         const u64 t0 = sceKernelGetProcessTimeWide();
-        vita2d_end_drawing();
-        vita2d_swap_buffers();
+        sceKernelWaitSema(s_rq_done, 1, NULL);
         melee_vita_prof_add(VPZ_SWAP, sceKernelGetProcessTimeWide() - t0);
     }
+    s_exec_frame = &s_frames[s_record];
+    sceKernelSignalSema(s_rq_work, 1);
+    s_record ^= 1u;
+    s_frames[s_record].size = 0;
+    s_frames[s_record].gpu_used = 0;
+    s_frames[s_record].clear_color = s_next_clear_color;
+    s_next_clear_color = clear_color;
+
     ++s_frame_counter;
+    collect_graveyard();
     if ((s_frame_counter % 60u) == 0u) {
         /* Evict textures that have not been sampled for a few seconds. */
         VitaTextureCacheEntry** link = &s_textures;
-        bool waited = false;
         u32 count = 0;
         while (*link != NULL) {
             VitaTextureCacheEntry* entry = *link;
             if (s_frame_counter - entry->last_used_frame > 180u) {
-                if (!waited) { vita2d_wait_rendering_done(); waited = true; }
                 *link = entry->next;
                 memset(s_texture_hash, 0, sizeof(s_texture_hash));
-                if (entry->texture != NULL) vita2d_free_texture(entry->texture);
+                retire_texture(entry->texture);
                 free(entry);
                 continue;
             }
@@ -616,6 +851,4 @@ void melee_vita_gxm_present(u32 clear_color)
         }
     }
     s_texture_invalidation_pending = 0;
-    vita2d_set_clear_color(clear_color);
-    s_frame_open = 0;
 }

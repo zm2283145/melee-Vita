@@ -4,6 +4,8 @@
 
 #include <dolphin/types.h>
 
+struct vita2d_texture;
+
 typedef struct MeleeVitaScreenVertex {
     f32 x;
     f32 y;
@@ -55,8 +57,12 @@ void melee_vita_gxm_draw_points(const MeleeVitaScreenVertex* vertices,
                                 u32 count,
                                 const MeleeVitaRenderState* state);
 void melee_vita_gxm_present(u32 clear_color);
-const u8* melee_vita_gxm_flush_and_read(void);
-void melee_vita_gxm_resume_frame(int clear);
+/* Render thread command queue (see gxm_game.c). */
+typedef void (*MeleeVitaRqExec)(const void* payload);
+void* melee_vita_rq_push(MeleeVitaRqExec exec, u32 payload_size);
+void* melee_vita_rq_alloc_gpu(u32 size, u32 align);
+void melee_vita_gxm_queue_copy(struct vita2d_texture* target, u32 width, u32 height,
+                               f32 x0, f32 y0, f32 sx, f32 sy, int clear);
 struct vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 height);
 void melee_vita_gxm_invalidate_textures(void);
 void melee_vita_gxm_mark_texture_data_dirty(void);

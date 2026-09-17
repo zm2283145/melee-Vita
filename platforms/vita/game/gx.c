@@ -213,12 +213,12 @@ static struct { u32 draws, tris_in, tris_culled, textured, tex_fail, lines; f32 
 /* ---- lightweight zone profiler (reported as [PROF] every 120 frames) ---- */
 enum {
     VPZ_GOBJ_RENDER, VPZ_PRESENT, VPZ_SWAP, VPZ_COPYTEX, VPZ_TEXUPLOAD,
-    VPZ_DL_HASH, VPZ_DL_BUILD, VPZ_DRAW_SETUP, VPZ_GPU_SUBMIT, VPZ_IMMEDIATE, VPZ_AUDIO_MIX,
+    VPZ_DL_HASH, VPZ_DL_BUILD, VPZ_DRAW_SETUP, VPZ_GPU_SUBMIT, VPZ_IMMEDIATE, VPZ_AUDIO_MIX, VPZ_RT_EXEC,
     VPZ_COUNT
 };
 static const char* const k_vpz_names[VPZ_COUNT] = {
-    "gobj_render", "present", "swap", "copytex", "tex_upload",
-    "dl_hash", "dl_build", "draw_setup", "gpu_submit", "immediate", "audio_mix",
+    "gobj_render", "present", "rt_wait", "copytex", "tex_upload",
+    "dl_hash", "dl_build", "draw_setup", "gpu_submit", "immediate", "audio_mix", "rt_exec",
 };
 static u64 s_vpz_us[VPZ_COUNT];
 static u32 s_vpz_calls[VPZ_COUNT];
@@ -2156,6 +2156,7 @@ static u8 current_cull(void)
     }
 }
 
+static bool draw_display_list_gpu(const void* list, u32 bytes) __attribute__((unused));
 static bool draw_display_list_gpu(const void* list, u32 bytes)
 {
     const u32 frame = s_gx.copied_frames;
@@ -2561,7 +2562,7 @@ void GXCopyDisp(void* destination, GXBool clear)
                 u64 gx_total = 0;
                 for (u32 z = 0; z < VPZ_COUNT; ++z) {
                     n += snprintf(line + n, sizeof(line) - n, " %s=%.1f", k_vpz_names[z], s_vpz_us[z] / 120.0 / 1000.0);
-                    if (z >= VPZ_COPYTEX && z != VPZ_AUDIO_MIX) gx_total += s_vpz_us[z];
+                    if (z >= VPZ_COPYTEX && z < VPZ_AUDIO_MIX) gx_total += s_vpz_us[z];
                 }
                 n += snprintf(line + n, sizeof(line) - n, " | hsd_other=%.1f copies=%u uploads=%u",
                               ((double) s_vpz_us[VPZ_GOBJ_RENDER] - (double) gx_total) / 120.0 / 1000.0,
@@ -2639,7 +2640,6 @@ void GXCopyTex(void* destination, GXBool clear)
 static void copy_tex_impl(void* destination, GXBool clear)
 {
     u32 dst_w, dst_h;
-    const u8* fb;
     struct vita2d_texture* target;
     if (destination == NULL || s_tex_copy_dst.width == 0 || s_tex_copy_dst.height == 0) return;
     dst_w = s_tex_copy_dst.width;
@@ -2677,29 +2677,14 @@ static void copy_tex_impl(void* destination, GXBool clear)
         recent[slot].key = destination;
         recent[slot].frame = s_gx.copied_frames;
     }
-    fb = melee_vita_gxm_flush_and_read();
-    if (fb != NULL) {
-        const u8* out_base = vita2d_texture_get_datap(target);
-        const u32 stride = vita2d_texture_get_stride(target);
+    {
         f32 scale, offset, yscale;
         screen_mapping(&scale, &offset, &yscale);
-        const f32 sx = s_tex_copy_src[2] * scale / (f32) dst_w;
-        const f32 sy = s_tex_copy_src[3] * yscale / (f32) dst_h;
-        const f32 x0 = offset + s_tex_copy_src[0] * scale;
-        const f32 y0 = s_tex_copy_src[1] * yscale;
-        for (u32 y = 0; y < dst_h; ++y) {
-            s32 fy = (s32) (y0 + (y + 0.5f) * sy);
-            u8* out = (u8*) out_base + (size_t) y * stride; /* stride is bytes per row */
-            if (fy < 0) fy = 0; else if (fy > 543) fy = 543;
-            for (u32 x = 0; x < dst_w; ++x) {
-                s32 fx = (s32) (x0 + (x + 0.5f) * sx);
-                if (fx < 0) fx = 0; else if (fx > 959) fx = 959;
-                memcpy(out + x * 4u, fb + ((u32) fy * 960u + (u32) fx) * 4u, 3);
-                out[x * 4u + 3u] = 0xff;
-            }
-        }
+        melee_vita_gxm_queue_copy(target, dst_w, dst_h,
+                                  offset + s_tex_copy_src[0] * scale, s_tex_copy_src[1] * yscale,
+                                  s_tex_copy_src[2] * scale / (f32) dst_w,
+                                  s_tex_copy_src[3] * yscale / (f32) dst_h, clear);
     }
-    melee_vita_gxm_resume_frame(clear ? 1 : 0);
 }
 
 u16 GXGetNumXfbLines(u16 height, f32 scale) { return (u16) (height * scale); }

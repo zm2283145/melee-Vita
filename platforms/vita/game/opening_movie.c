@@ -108,7 +108,6 @@ struct melee_vita_opening_movie {
     uint32_t reader_waits;
 
     /* Decode thread state. */
-    tjhandle jpeg;
     struct melee_vita_opening_jpeg_hw* hw;
     volatile int use_hw;
     int hw_selftest_done;
@@ -407,25 +406,25 @@ static int reader_thread(SceSize argument_size, void* argument)
 /* ---- Decode thread. ---- */
 
 static int decode_software(struct melee_vita_opening_movie* movie,
-                           size_t jpeg_size, unsigned char* output,
-                           int pitch, uint32_t* width_out,
-                           uint32_t* height_out)
+                           tjhandle jpeg, size_t jpeg_size,
+                           unsigned char* output, int pitch,
+                           uint32_t* width_out, uint32_t* height_out)
 {
     const uint32_t width = movie->width / 2u;
     const uint32_t height = movie->height / 2u;
     const int result = tjDecompress2(
-        movie->jpeg, movie->standard_jpeg, (unsigned long) jpeg_size, output,
+        jpeg, movie->standard_jpeg, (unsigned long) jpeg_size, output,
         (int) width, pitch, (int) height, TJPF_RGBA,
         TJFLAG_FASTUPSAMPLE | TJFLAG_FASTDCT);
     if (result != 0) {
-        if (tjGetErrorCode(movie->jpeg) == TJERR_FATAL) {
+        if (tjGetErrorCode(jpeg) == TJERR_FATAL) {
             melee_vita_log_info("FRONTEND movie fatal JPEG error=%s",
-                                tjGetErrorStr2(movie->jpeg));
+                                tjGetErrorStr2(jpeg));
             return 0;
         }
         if (++movie->decode_warnings == 1u)
             melee_vita_log_info("FRONTEND movie first JPEG warning error=%s",
-                                tjGetErrorStr2(movie->jpeg));
+                                tjGetErrorStr2(jpeg));
     }
     *width_out = width;
     *height_out = height;
@@ -436,12 +435,13 @@ static int decode_software(struct melee_vita_opening_movie* movie,
  * decode of the same data.  This validates the codec ABI and colour
  * conversion on the real console without anyone looking at the screen. */
 static void hw_selftest(struct melee_vita_opening_movie* movie,
-                        struct movie_texture* target, size_t jpeg_size)
+                        struct movie_texture* target, tjhandle jpeg,
+                        size_t jpeg_size)
 {
     const uint32_t half_w = movie->width / 2u;
     const uint32_t half_h = movie->height / 2u;
     if (movie->selftest_rgba == NULL ||
-        tjDecompress2(movie->jpeg, movie->standard_jpeg,
+        tjDecompress2(jpeg, movie->standard_jpeg,
                       (unsigned long) jpeg_size, movie->selftest_rgba,
                       (int) half_w, (int) (half_w * 4u), (int) half_h,
                       TJPF_RGBA, TJFLAG_FASTUPSAMPLE) != 0)
@@ -494,6 +494,13 @@ static int decode_thread(SceSize argument_size, void* argument)
     (void) argument_size;
     struct melee_vita_opening_movie* movie =
         *(struct melee_vita_opening_movie**) argument;
+    tjhandle jpeg = tjInitDecompress();
+    if (jpeg == NULL) {
+        melee_vita_log_info("FRONTEND movie TurboJPEG init failed");
+        __atomic_store_n(&movie->fatal_error, 1, __ATOMIC_RELEASE);
+        __atomic_store_n(&movie->decoder_done, 1, __ATOMIC_RELEASE);
+        return 0;
+    }
 
     while (__atomic_load_n(&movie->running, __ATOMIC_ACQUIRE) != 0) {
         const uint32_t read = movie->packet_read;
@@ -554,7 +561,7 @@ static int decode_thread(SceSize argument_size, void* argument)
                 target->width = movie->width;
                 target->height = movie->height;
                 if (!movie->hw_selftest_done)
-                    hw_selftest(movie, target, jpeg_size);
+                    hw_selftest(movie, target, jpeg, jpeg_size);
             } else {
                 melee_vita_log_info(
                     "FRONTEND movie hw decode failed frame=%u stage=%d "
@@ -566,7 +573,8 @@ static int decode_thread(SceSize argument_size, void* argument)
         }
         if (!ok) {
             ok = decode_software(
-                movie, jpeg_size, vita2d_texture_get_datap(target->texture),
+                movie, jpeg, jpeg_size,
+                vita2d_texture_get_datap(target->texture),
                 (int) vita2d_texture_get_stride(target->texture),
                 &target->width, &target->height);
         }
@@ -581,6 +589,7 @@ static int decode_thread(SceSize argument_size, void* argument)
         __atomic_store_n(&target->state, TEXTURE_READY, __ATOMIC_RELEASE);
         __atomic_add_fetch(&movie->packet_read, 1u, __ATOMIC_RELEASE);
     }
+    tjDestroy(jpeg);
     return 0;
 }
 
@@ -799,7 +808,6 @@ struct melee_vita_opening_movie* melee_vita_opening_movie_load(void)
     movie->packet_memory = malloc((size_t) movie->packet_capacity * PACKET_SLOTS);
     movie->chunk = malloc(READ_CHUNK_SIZE);
     movie->selftest_rgba = malloc((movie->width / 2u) * (movie->height / 2u) * 4u);
-    movie->jpeg = tjInitDecompress();
     movie->disc_fd = sceIoOpen(MELEE_VITA_DISC_PATH, SCE_O_RDONLY, 0);
     bool textures_ok = true;
     for (int i = 0; i < TEXTURE_COUNT; ++i) {
@@ -814,7 +822,7 @@ struct melee_vita_opening_movie* melee_vita_opening_movie_load(void)
                                    SCE_GXM_TEXTURE_FILTER_LINEAR);
     }
     if (movie->standard_jpeg == NULL || movie->packet_memory == NULL ||
-        movie->chunk == NULL || movie->jpeg == NULL || movie->disc_fd < 0 ||
+        movie->chunk == NULL || movie->disc_fd < 0 ||
         !textures_ok) {
         melee_vita_log_info("FRONTEND movie allocation failed fd=%d",
                             movie->disc_fd);
@@ -984,7 +992,6 @@ void melee_vita_opening_movie_free(struct melee_vita_opening_movie* movie)
         sceKernelDeleteThread(movie->decode_thread);
     }
     melee_vita_opening_jpeg_hw_destroy(movie->hw);
-    if (movie->jpeg != NULL) tjDestroy(movie->jpeg);
     melee_vita_gxm_wait_idle();
     vita2d_wait_rendering_done();
     for (int i = 0; i < TEXTURE_COUNT; ++i) {

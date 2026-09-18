@@ -3098,7 +3098,14 @@ void GXSetDither(GXBool enabled) { (void) enabled; }
 void GXSetDstAlpha(GXBool enabled, u8 alpha) { (void) enabled; (void) alpha; }
 void GXSetFieldMode(GXBool field, GXBool half_aspect) { (void) field; (void) half_aspect; }
 void GXSetFog(GXFogType type, f32 start, f32 end, f32 near_z, f32 far_z, GXColor color)
-{ (void) type; (void) start; (void) end; (void) near_z; (void) far_z; (void) color; }
+{
+    static u32 logged, window;
+    if (window != s_gx.copied_frames / 600u) { window = s_gx.copied_frames / 600u; logged = 0; }
+    if (logged++ < 3u)
+        melee_vita_log_info("[FOG] type=%u start=%.1f end=%.1f near=%.1f far=%.1f color=%u,%u,%u,%u",
+                            (unsigned) type, start, end, near_z, far_z,
+                            (unsigned) color.r, (unsigned) color.g, (unsigned) color.b, (unsigned) color.a);
+}
 void GXSetFogRangeAdj(GXBool enabled, u16 center, GXFogAdjTable* table)
 { (void) enabled; (void) center; (void) table; }
 void GXInitFogAdjTable(GXFogAdjTable* table, u16 width, const f32 projection[4][4])

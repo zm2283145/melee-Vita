@@ -33,7 +33,7 @@ static VitaTextureCacheEntry* s_textures;
 /* GXCopyTex destinations: the copied picture lives in a GPU texture keyed by
  * the destination buffer address (as aurora does), so sampling that buffer
  * binds the copy directly instead of decoding CPU memory. */
-#define VITA_COPY_TEXTURES 8u
+#define VITA_COPY_TEXTURES 16u
 static struct { const void* key; vita2d_texture* texture; u32 width, height, frame; } s_copy_textures[VITA_COPY_TEXTURES];
 /* A copy destination that has not been copied to recently is stale: HSD may
  * have freed that buffer and reused the address for an ordinary texture. */
@@ -640,8 +640,13 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 heig
         if (s_copy_textures[c].key == NULL && free_slot == VITA_COPY_TEXTURES) free_slot = c;
     }
     if (free_slot == VITA_COPY_TEXTURES) {
+        /* Recycle the map that has gone longest without a copy, so a live one
+         * (the Pokemon Stadium monitor) is never the one dropped. */
         free_slot = 0;
-        retire_texture(s_copy_textures[0].texture);
+        for (c = 1; c < VITA_COPY_TEXTURES; ++c)
+            if (s_copy_textures[c].frame < s_copy_textures[free_slot].frame) free_slot = c;
+        retire_texture(s_copy_textures[free_slot].texture);
+        s_copy_textures[free_slot].texture = NULL;
     }
     s_copy_textures[free_slot].key = key;
     s_copy_textures[free_slot].width = width;
@@ -742,9 +747,26 @@ static void exec_copy(const void* payload)
         sceGxmEndScene(context, NULL, NULL);
         sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
     }
-    /* Continue the frame without clearing what was drawn so far unless the
-     * copy asked for it. */
-    rt_begin_scene(s_exec_frame->clear_color, c->clear ? 1 : 0);
+    /* GXCopyTex(clear) clears the rectangle it copied, not the whole frame:
+     * clearing everything would wipe a scene that was already drawn (the
+     * shadow map copy happens part-way through the frame). */
+    rt_begin_scene(s_exec_frame->clear_color, 0);
+    if (c->clear) {
+        const f32 w = (f32) c->width * c->sx;
+        const f32 h = (f32) c->height * c->sy;
+        ++g_melee_vita_gxm_state_epoch;
+        sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+        sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+        sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
+        sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
+        /* zScale 0 / zOffset 1 writes the far plane, as a GX clear does. */
+        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 1.0f, 0.0f);
+        vita2d_set_blend_mode_add(0);
+        vita2d_draw_rectangle(c->x0, c->y0, w > 0.0f ? w : 1.0f, h > 0.0f ? h : 1.0f,
+                              s_exec_frame->clear_color);
+        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
+        rt_default_depth();
+    }
 }
 void melee_vita_gxm_queue_copy(struct vita2d_texture* target, u32 width, u32 height,
                                f32 x0, f32 y0, f32 sx, f32 sy, int clear)
@@ -899,6 +921,21 @@ static void exec_present(const void* payload)
         vita2d_draw_rectangle(0.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
         vita2d_draw_rectangle(960.0f - p->bar - 1.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
     }
+#ifdef MELEE_VITA_DEBUG_COPIES
+    {
+        u32 c, shown = 0;
+        ++g_melee_vita_gxm_state_epoch;
+        rt_default_depth();
+        vita2d_set_blend_mode_add(0);
+        for (c = 0; c < VITA_COPY_TEXTURES && shown < 4u; ++c) {
+            if (s_copy_textures[c].texture == NULL || s_copy_textures[c].key == NULL) continue;
+            vita2d_draw_texture_scale(s_copy_textures[c].texture, 4.0f + shown * 104.0f, 4.0f,
+                                      100.0f / (f32) s_copy_textures[c].width,
+                                      100.0f / (f32) s_copy_textures[c].height);
+            ++shown;
+        }
+    }
+#endif
     vita2d_end_drawing();
     vita2d_swap_buffers();
     note_presented_fb();

@@ -38,8 +38,12 @@ download https://github.com/vitasdk/packages/releases/download/master/libvita2d.
 download https://github.com/vitasdk/packages/releases/download/master/taihen.tar.xz \
     afced213d9d308a665ef91809fd728614a92ec31b2fcf61cf1f6a3e98bec4014 \
     "$deps/taihen.tar.xz"
+download https://github.com/vitasdk/packages/releases/download/master/libjpeg-turbo.tar.xz \
+    87511c384b36f944655e298140f24215f3da8b59821deddca0f6a9c5e3438b78 \
+    "$deps/libjpeg-turbo.tar.xz"
 tar -xJf "$deps/libvita2d.tar.xz" -C "$VITASDK/arm-vita-eabi"
 tar -xJf "$deps/taihen.tar.xz" -C "$VITASDK/arm-vita-eabi"
+tar -xJf "$deps/libjpeg-turbo.tar.xz" -C "$VITASDK/arm-vita-eabi"
 
 checkout bythos14/SceShaccCgExt fb0e9d338525b067f3679ab33571323336493cca "$deps/SceShaccCgExt"
 cmake -S "$deps/SceShaccCgExt" -B "$deps/SceShaccCgExt/build" -G Ninja \

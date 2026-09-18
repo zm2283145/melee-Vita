@@ -2825,11 +2825,9 @@ static void copy_tex_impl(void* destination, GXBool clear)
                                 (unsigned) s_tex_copy_dst.mipmap, s_tex_copy_src[0], s_tex_copy_src[1],
                                 s_tex_copy_src[2], s_tex_copy_src[3], (unsigned) clear);
     }
-    if (s_tex_copy_dst.format == 0x20u /* GX_CTF_R4 */) {
-        u32 size = GXGetTexBufferSize(dst_w, dst_h, GX_TF_I4, GX_FALSE, 0);
-        if (size != 0 && size <= 4u * 1024u * 1024u) memset(destination, 0xff, size);
-        return;
-    }
+    /* GX_CTF_R4 is how HSD copies a shadow map out of the framebuffer; it is
+     * sampled later as an I4 texture, and the copy texture keyed by this
+     * destination answers that lookup. */
     if (dst_w > 1024u || dst_h > 1024u) return;
     target = melee_vita_gxm_copy_texture(destination, dst_w, dst_h);
     if (target == NULL) return;

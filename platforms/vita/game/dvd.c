@@ -6,6 +6,10 @@
 #include <dolphin/dvd.h>
 #include <dolphin/os.h>
 
+#include <psp2/io/fcntl.h>
+#include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +17,9 @@
 
 #define MELEE_VITA_DISC_PATH "ux0:data/melee/GALE01.iso"
 #define DVD_COMPLETION_CAPACITY 32
+#define DVD_REQUEST_CAPACITY DVD_COMPLETION_CAPACITY
+#define DVD_THREAD_PRIORITY 0x10000100
+#define DVD_THREAD_STACK (64u * 1024u)
 
 typedef struct {
     DVDCommandBlock* block;
@@ -23,7 +30,19 @@ typedef struct {
     u32 transferred;
 } VitaDvdCompletion;
 
+typedef struct {
+    DVDCommandBlock* block;
+    DVDFileInfo* file;
+    DVDCBCallback block_callback;
+    DVDCallback file_callback;
+    void* output;
+    u32 length;
+    u32 offset;
+    u64 queued_at;
+} VitaDvdRequest;
+
 static FILE* s_disc;
+static SceUID s_async_disc = -1;
 static u8* s_fst;
 static u32 s_fst_size;
 static u32 s_fst_count;
@@ -35,6 +54,21 @@ static DVDDiskID s_disk_id;
 static VitaDvdCompletion s_completions[DVD_COMPLETION_CAPACITY];
 static u32 s_completion_head;
 static u32 s_completion_count;
+static VitaDvdRequest s_requests[DVD_REQUEST_CAPACITY];
+static u32 s_request_head;
+static u32 s_request_count;
+static u32 s_outstanding_count;
+static SceUID s_request_sema = -1;
+static SceUID s_queue_mutex = -1;
+static SceUID s_dvd_thread = -1;
+static BOOL s_async_ready;
+static BOOL s_async_stopping;
+#ifndef MELEE_VITA_RELEASE
+static u64 s_async_queue_us;
+static u64 s_async_io_us;
+static u64 s_async_bytes;
+static u32 s_async_reads;
+#endif
 
 static u32 read_be32(const void* address)
 {
@@ -108,39 +142,166 @@ static s32 find_child(s32 directory, const char* name, size_t length)
     return -1;
 }
 
-static s32 read_at(void* output, u32 length, u32 offset)
+static s32 read_at_file(FILE* disc, void* output, u32 length, u32 offset)
 {
     size_t amount;
-    if (s_disc == NULL || output == NULL) return DVD_RESULT_FATAL_ERROR;
-    if (fseek(s_disc, (long) offset, SEEK_SET) != 0)
+    if (disc == NULL || output == NULL) return DVD_RESULT_FATAL_ERROR;
+    if (fseek(disc, (long) offset, SEEK_SET) != 0)
         return DVD_RESULT_FATAL_ERROR;
-    amount = fread(output, 1, length, s_disc);
+    amount = fread(output, 1, length, disc);
     return amount == length ? (s32) amount : DVD_RESULT_FATAL_ERROR;
 }
 
-static void queue_completion(DVDCommandBlock* block, DVDFileInfo* file,
-                             DVDCBCallback block_callback,
-                             DVDCallback file_callback, s32 result,
-                             u32 transferred)
+static s32 read_at(void* output, u32 length, u32 offset)
+{
+    return read_at_file(s_disc, output, length, offset);
+}
+
+static s32 read_at_async(void* output, u32 length, u32 offset)
+{
+    SceSSize amount;
+    if (s_async_disc < 0 || output == NULL) return DVD_RESULT_FATAL_ERROR;
+    amount = sceIoPread(s_async_disc, output, length, (SceOff) offset);
+    return amount == (SceSSize) length ? (s32) amount
+                                      : DVD_RESULT_FATAL_ERROR;
+}
+
+static void lock_queues(void)
+{
+    if (s_queue_mutex >= 0) sceKernelLockMutex(s_queue_mutex, 1, NULL);
+}
+
+static void unlock_queues(void)
+{
+    if (s_queue_mutex >= 0) sceKernelUnlockMutex(s_queue_mutex, 1);
+}
+
+static void queue_completion_locked(const VitaDvdRequest* request, s32 result)
 {
     u32 slot;
     if (s_completion_count == DVD_COMPLETION_CAPACITY)
         OSPanic(__FILE__, __LINE__, "DVD completion queue overflow");
     slot = (s_completion_head + s_completion_count++) % DVD_COMPLETION_CAPACITY;
-    s_completions[slot].block = block;
-    s_completions[slot].file = file;
-    s_completions[slot].block_callback = block_callback;
-    s_completions[slot].file_callback = file_callback;
+    s_completions[slot].block = request->block;
+    s_completions[slot].file = request->file;
+    s_completions[slot].block_callback = request->block_callback;
+    s_completions[slot].file_callback = request->file_callback;
     s_completions[slot].result = result;
-    s_completions[slot].transferred = transferred;
+    s_completions[slot].transferred = result >= 0 ? (u32) result : 0;
+}
+
+static int dvd_reader_thread(SceSize args, void* argp)
+{
+    (void) args;
+    (void) argp;
+    for (;;) {
+        VitaDvdRequest request;
+        s32 result;
+#ifndef MELEE_VITA_RELEASE
+        u64 started;
+#endif
+        sceKernelWaitSema(s_request_sema, 1, NULL);
+        lock_queues();
+        if (s_request_count == 0) {
+            BOOL stopping = s_async_stopping;
+            unlock_queues();
+            if (stopping) break;
+            continue;
+        }
+        request = s_requests[s_request_head];
+        s_request_head = (s_request_head + 1u) % DVD_REQUEST_CAPACITY;
+        --s_request_count;
+        unlock_queues();
+#ifndef MELEE_VITA_RELEASE
+        started = sceKernelGetProcessTimeWide();
+#endif
+        result = read_at_async(request.output, request.length, request.offset);
+        if (result < 0) {
+            melee_vita_log_info(
+                "[DVD] async read failed off=%u len=%u",
+                (unsigned) request.offset, (unsigned) request.length);
+        }
+        lock_queues();
+#ifndef MELEE_VITA_RELEASE
+        s_async_queue_us += started - request.queued_at;
+        s_async_io_us += sceKernelGetProcessTimeWide() - started;
+        s_async_bytes += request.length;
+        ++s_async_reads;
+#endif
+        queue_completion_locked(&request, result);
+        unlock_queues();
+    }
+    return 0;
+}
+
+static BOOL queue_request(const VitaDvdRequest* request)
+{
+    u32 slot;
+    if (!s_async_ready || s_async_stopping) return FALSE;
+    lock_queues();
+    if (s_outstanding_count == DVD_REQUEST_CAPACITY) {
+        unlock_queues();
+        melee_vita_log_info("[DVD] async request queue full");
+        return FALSE;
+    }
+    slot = (s_request_head + s_request_count++) % DVD_REQUEST_CAPACITY;
+    s_requests[slot] = *request;
+    ++s_outstanding_count;
+    unlock_queues();
+    sceKernelSignalSema(s_request_sema, 1);
+    return TRUE;
+}
+
+void melee_vita_dvd_shutdown(void)
+{
+    if (!s_initialized) return;
+    if (s_async_ready) {
+        lock_queues();
+        s_async_stopping = TRUE;
+        unlock_queues();
+        for (;;) {
+            u32 outstanding;
+            melee_vita_dvd_poll();
+            lock_queues();
+            outstanding = s_outstanding_count;
+            unlock_queues();
+            if (outstanding == 0) break;
+            sceKernelDelayThread(1000);
+        }
+        sceKernelSignalSema(s_request_sema, 1);
+        sceKernelWaitThreadEnd(s_dvd_thread, NULL, NULL);
+    }
+    if (s_dvd_thread >= 0) sceKernelDeleteThread(s_dvd_thread);
+    if (s_queue_mutex >= 0) sceKernelDeleteMutex(s_queue_mutex);
+    if (s_request_sema >= 0) sceKernelDeleteSema(s_request_sema);
+    if (s_async_disc >= 0) sceIoClose(s_async_disc);
+    if (s_disc != NULL) fclose(s_disc);
+    free(s_fst);
+    s_dvd_thread = s_queue_mutex = s_request_sema = -1;
+    s_async_disc = -1;
+    s_disc = NULL;
+    s_fst = NULL;
+    s_fst_size = s_fst_count = 0;
+    s_async_ready = FALSE;
+    s_initialized = FALSE;
 }
 
 void melee_vita_dvd_poll(void)
 {
-    while (s_completion_count != 0) {
-        VitaDvdCompletion completion = s_completions[s_completion_head];
+    for (;;) {
+        VitaDvdCompletion completion;
+        if (s_async_ready) lock_queues();
+        if (s_completion_count == 0) {
+            if (s_async_ready) unlock_queues();
+            break;
+        }
+        completion = s_completions[s_completion_head];
         s_completion_head = (s_completion_head + 1u) % DVD_COMPLETION_CAPACITY;
         --s_completion_count;
+        if (s_async_ready) {
+            --s_outstanding_count;
+            unlock_queues();
+        }
         if (completion.block != NULL) {
             completion.block->transferredSize = completion.transferred;
             completion.block->state = completion.result >= 0
@@ -152,6 +313,33 @@ void melee_vita_dvd_poll(void)
         if (completion.block_callback != NULL)
             completion.block_callback(completion.result, completion.block);
     }
+}
+
+void melee_vita_dvd_log_stats(const char* phase)
+{
+#ifndef MELEE_VITA_RELEASE
+    u64 queue_us;
+    u64 io_us;
+    u64 bytes;
+    u32 reads;
+    if (!s_async_ready) return;
+    lock_queues();
+    queue_us = s_async_queue_us;
+    io_us = s_async_io_us;
+    bytes = s_async_bytes;
+    reads = s_async_reads;
+    s_async_queue_us = 0;
+    s_async_io_us = 0;
+    s_async_bytes = 0;
+    s_async_reads = 0;
+    unlock_queues();
+    melee_vita_log_info(
+        "[DVDPERF] %s reads=%u bytes=%llu queue=%lluus io=%lluus",
+        phase, reads, (unsigned long long) bytes,
+        (unsigned long long) queue_us, (unsigned long long) io_us);
+#else
+    (void) phase;
+#endif
 }
 
 /* The decomp keeps the two HSD font atlases (debug font and the sislib glyphs
@@ -265,6 +453,31 @@ void DVDInit(void)
     s_current_dir = 0;
     s_initialized = TRUE;
     melee_vita_load_disc_fonts(header);
+    s_async_stopping = FALSE;
+    s_async_disc = sceIoOpen(MELEE_VITA_DISC_PATH, SCE_O_RDONLY, 0);
+    s_request_sema = sceKernelCreateSema(
+        "melee_dvd_work", 0, 0, DVD_REQUEST_CAPACITY, NULL);
+    s_queue_mutex = sceKernelCreateMutex("melee_dvd_queue", 0, 1, NULL);
+    s_dvd_thread = sceKernelCreateThread(
+        "melee_dvd", dvd_reader_thread, DVD_THREAD_PRIORITY,
+        DVD_THREAD_STACK, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+    if (s_async_disc >= 0 && s_request_sema >= 0 && s_queue_mutex >= 0 &&
+        s_dvd_thread >= 0 && sceKernelStartThread(s_dvd_thread, 0, NULL) >= 0)
+    {
+        s_async_ready = TRUE;
+        melee_vita_log_info("[DVD] asynchronous reader started");
+    } else {
+        melee_vita_log_info(
+            "[DVD] asynchronous reader unavailable; disc=%d work=%d "
+            "mutex=%d thread=%d",
+            s_async_disc, s_request_sema, s_queue_mutex, s_dvd_thread);
+        if (s_dvd_thread >= 0) sceKernelDeleteThread(s_dvd_thread);
+        if (s_queue_mutex >= 0) sceKernelDeleteMutex(s_queue_mutex);
+        if (s_request_sema >= 0) sceKernelDeleteSema(s_request_sema);
+        if (s_async_disc >= 0) sceIoClose(s_async_disc);
+        s_dvd_thread = s_queue_mutex = s_request_sema = -1;
+        s_async_disc = -1;
+    }
     OSReport("Melee Vita DVD: mounted %s (%u FST entries)\n",
              MELEE_VITA_DISC_PATH, s_fst_count);
     return;
@@ -348,6 +561,7 @@ s32 DVDReadPrio(DVDFileInfo* info, void* output, s32 length, s32 offset,
 BOOL DVDReadAsyncPrio(DVDFileInfo* info, void* output, s32 length, s32 offset,
                       DVDCallback callback, s32 priority)
 {
+    VitaDvdRequest request;
     s32 result;
     (void) priority;
     if (info == NULL || length < 0 || offset < 0 ||
@@ -361,19 +575,28 @@ BOOL DVDReadAsyncPrio(DVDFileInfo* info, void* output, s32 length, s32 offset,
     }
     info->callback = callback;
     info->cb.state = DVD_STATE_BUSY;
-    result = read_at(output, (u32) length, info->startAddr + (u32) offset);
-    if (result < 0)
-        melee_vita_log_info("[DVD] async read failed start=0x%08x file_len=%u off=%d len=%d",
-                            (unsigned) info->startAddr, (unsigned) info->length,
-                            (int) offset, (int) length);
-    queue_completion(&info->cb, info, NULL, callback, result,
-                     result >= 0 ? (u32) result : 0);
-    return TRUE;
+    request.block = &info->cb;
+    request.file = info;
+    request.block_callback = NULL;
+    request.file_callback = callback;
+    request.output = output;
+    request.length = (u32) length;
+    request.offset = info->startAddr + (u32) offset;
+    request.queued_at = sceKernelGetProcessTimeWide();
+    if (queue_request(&request)) return TRUE;
+    if (!s_async_ready) {
+        result = read_at(output, (u32) length, request.offset);
+        queue_completion_locked(&request, result);
+        return TRUE;
+    }
+    info->cb.state = DVD_STATE_FATAL_ERROR;
+    return FALSE;
 }
 
 int DVDReadAbsAsyncPrio(DVDCommandBlock* block, void* output, s32 length,
                         s32 offset, DVDCBCallback callback, s32 priority)
 {
+    VitaDvdRequest request;
     s32 result;
     (void) priority;
     if (block == NULL || length < 0 || offset < 0) return FALSE;
@@ -383,10 +606,22 @@ int DVDReadAbsAsyncPrio(DVDCommandBlock* block, void* output, s32 length,
     block->length = (u32) length;
     block->offset = (u32) offset;
     block->callback = callback;
-    result = read_at(output, (u32) length, (u32) offset);
-    queue_completion(block, NULL, callback, NULL, result,
-                     result >= 0 ? (u32) result : 0);
-    return TRUE;
+    request.block = block;
+    request.file = NULL;
+    request.block_callback = callback;
+    request.file_callback = NULL;
+    request.output = output;
+    request.length = (u32) length;
+    request.offset = (u32) offset;
+    request.queued_at = sceKernelGetProcessTimeWide();
+    if (queue_request(&request)) return TRUE;
+    if (!s_async_ready) {
+        result = read_at(output, (u32) length, request.offset);
+        queue_completion_locked(&request, result);
+        return TRUE;
+    }
+    block->state = DVD_STATE_FATAL_ERROR;
+    return FALSE;
 }
 
 s32 DVDGetFileInfoStatus(const DVDFileInfo* info)

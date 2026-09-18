@@ -18,6 +18,9 @@
 #include <dolphin/gx/GXTransform.h>
 #include <dolphin/gx/GXVert.h>
 #include <melee/sc/types.h>
+#ifdef TARGET_VITA
+#include <pc/widescreen.h>
+#endif
 #include <sysdolphin/baselib/cobj.h>
 #include <sysdolphin/baselib/debug.h>
 #include <sysdolphin/baselib/dobj.h>
@@ -476,7 +479,9 @@ void lb_80012994(HSD_ImageDesc* img, u8 alpha, u8 blur_size, f32 x, f32 y,
     u16 w = img->width;
     u16 h = img->height;
     f32 y_p1, x_p1, y_m1, x_m1;
+#ifndef TARGET_VITA
     f32 x_p2, x_m2, y_p2, y_m2;
+#endif
     f32 off1 = (f32) blur_size / 64.0f;
     f32 off2 = 2.0f * off1;
 
@@ -502,6 +507,7 @@ void lb_80012994(HSD_ImageDesc* img, u8 alpha, u8 blur_size, f32 x, f32 y,
     y_m1 = y - off1;
     lb_8001271C(&tex, x, y_m1, (f32) w, (f32) h, scale_x, scale_y);
 
+#ifndef TARGET_VITA
     setTevAlpha(0xD4);
     lb_8001271C(&tex, x_p1, y_p1, (f32) w, (f32) h, scale_x, scale_y);
 
@@ -553,6 +559,7 @@ void lb_80012994(HSD_ImageDesc* img, u8 alpha, u8 blur_size, f32 x, f32 y,
 
     setTevAlpha(0xF2);
     lb_8001271C(&tex, x_m1, y_m2, (f32) w, (f32) h, scale_x, scale_y);
+#endif
 
     HSD_StateInvalidate(2);
 }
@@ -740,6 +747,9 @@ HSD_GObj* lb_800138EC(HSD_ImageDesc* img, GObj_RenderFunc render_func,
     HSD_CObjSetNear(cobj, zero);
     HSD_CObjSetFar(cobj, far);
     HSD_CObjSetOrtho(cobj, ortho_top, ortho_bot, ortho_left, ortho_right);
+#ifdef TARGET_VITA
+    HSD_CObjSetFlags(cobj, PC_COBJ_FILL_FRAME);
+#endif
     HSD_GObjObject_80390A70(gobj, HSD_GObj_CameraKind, cobj);
 
     data = HSD_MemAlloc(sizeof(struct CameraBlurData));

@@ -131,5 +131,6 @@ u16* gxr_alloc_indices(u32 count);
 bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
               u32 count);
 void gxr_log_stats(void);
+void gxr_flush_warm_cache(void);
 
 #endif

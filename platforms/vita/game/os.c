@@ -104,6 +104,7 @@ void melee_vita_platform_poll(void)
 
 void melee_vita_platform_shutdown(void)
 {
+    melee_vita_dvd_shutdown();
     melee_vita_opening_audio_shutdown();
     melee_vita_gxm_shutdown();
     melee_vita_audio_shutdown();

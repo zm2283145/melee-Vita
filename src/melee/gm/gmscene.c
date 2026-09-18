@@ -283,6 +283,7 @@ static inline u64 maybe_gm_801A48A4(u8 i)
 
 #ifdef TARGET_VITA
 /* Frame phase timing, reported with [FRAMEPHASE] by the Vita GX layer. */
+extern u64 sceKernelGetProcessTimeWide(void);
 u64 g_melee_vita_update_us;
 u64 g_melee_vita_render_us;
 u32 g_melee_vita_update_ticks;
@@ -411,6 +412,12 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
 
         if (!traced_render) {
             OSReport("[FRAME] first render begin\n");
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+            {
+                extern void melee_vita_prof_reset_window(void);
+                melee_vita_prof_reset_window();
+            }
+#endif
         }
 #ifdef TARGET_VITA
         {
@@ -440,10 +447,25 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
             HSD_PerfSetDrawTime();
             HSD_VICopyXFBAsync(HSD_RP_SCREEN);
             melee_vita_prof_add(1 /* present */, sceKernelGetProcessTimeWide() - t1);
+#ifndef MELEE_VITA_RELEASE
             if (!traced_render) {
+                extern void gxr_log_stats(void);
                 extern void melee_vita_gxm_log_memory(const char*);
+                OSReport(
+                    "[TRANSITION] first-render=%lluus\n",
+                    (unsigned long long)
+                        (sceKernelGetProcessTimeWide() -
+                         g_melee_vita_render_start_us));
+                gxr_log_stats();
                 melee_vita_gxm_log_memory("first-render");
+                {
+                    extern void melee_vita_prof_log_window(const char*);
+                    extern void melee_vita_prof_reset_window(void);
+                    melee_vita_prof_log_window("[FIRSTPROF]");
+                    melee_vita_prof_reset_window();
+                }
             }
+#endif
         }
 #else
         HSD_GObj_80390FC0();
@@ -468,5 +490,20 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
         HSD_PerfSetTotalTime();
         HSD_PerfInitStat();
     }
+#ifdef TARGET_VITA
+    {
+        extern void melee_vita_gxm_prepare_texture_invalidation(void);
+        melee_vita_gxm_prepare_texture_invalidation();
+    }
+#endif
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    g_melee_vita_render_start_us = sceKernelGetProcessTimeWide();
+#endif
     HSD_VIWaitXFBFlush();
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    OSReport(
+        "[TRANSITION] xfb-flush=%lluus\n",
+        (unsigned long long)
+            (sceKernelGetProcessTimeWide() - g_melee_vita_render_start_us));
+#endif
 }

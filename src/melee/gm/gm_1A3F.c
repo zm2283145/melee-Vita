@@ -160,6 +160,15 @@ void gm_801A4014(GameMode* mode)
     struct stateMachine* sm;
     struct GameSceneInfo* info;
     u32 dead; ///< @todo regswap hack
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    u64 phase_started;
+    u64 preload_us;
+    u64 state_enter_us;
+    u64 setup_us;
+    u64 scene_exit_us;
+    u64 state_exit_us;
+    u64 cleanup_us;
+#endif
     PAD_STACK(2 * 4);
 
     sm = &state_machine;
@@ -170,12 +179,23 @@ void gm_801A4014(GameMode* mode)
     OSReport("[SCENE] state %u resolved, scene kind %u\n", state->id,
              state->info.scene_kind);
 
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    phase_started = OSGetTime();
+#endif
     preloadState(state);
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    preload_us = OSTicksToMicroseconds(OSGetTime() - phase_started);
+    phase_started = OSGetTime();
+#endif
     if (state->on_enter != NULL) {
         OSReport("[SCENE] state %u enter begin\n", state->id);
         state->on_enter(state);
         OSReport("[SCENE] state %u enter complete\n", state->id);
     }
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    state_enter_us = OSTicksToMicroseconds(OSGetTime() - phase_started);
+    phase_started = OSGetTime();
+#endif
     info = &state->info;
     scene =
         (GameScene*) ((uintptr_t) gm_FindGameSceneHandler(info->scene_kind) |
@@ -186,14 +206,31 @@ void gm_801A4014(GameMode* mode)
     OSReport("[SCENE] scene globals reset\n");
     gm_801A4B88(info);
     OSReport("[SCENE] scene info applied\n");
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    setup_us = OSTicksToMicroseconds(OSGetTime() - phase_started);
+    phase_started = OSGetTime();
+#endif
     if (scene->on_enter != NULL) {
         OSReport("[SCENE] scene %u enter begin\n", info->scene_kind);
         scene->on_enter(info->enter_data);
         OSReport("[SCENE] scene %u enter complete\n", info->scene_kind);
     }
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    OSReport(
+        "[TRANSITION] enter mode=%u state=%u scene=%u preload=%lluus "
+        "state=%lluus setup=%lluus scene=%lluus\n",
+        mode->kind, state->id, info->scene_kind,
+        (unsigned long long) preload_us,
+        (unsigned long long) state_enter_us,
+        (unsigned long long) setup_us,
+        (unsigned long long)
+            OSTicksToMicroseconds(OSGetTime() - phase_started));
+#endif
 #ifdef TARGET_VITA
     {
+        extern void melee_vita_dvd_log_stats(const char*);
         extern void melee_vita_gxm_log_memory(const char*);
+        melee_vita_dvd_log_stats("scene-enter");
         melee_vita_gxm_log_memory("scene-enter");
     }
 #endif
@@ -207,9 +244,23 @@ void gm_801A4014(GameMode* mode)
     }
 #endif
     if (!gmMainLib_8046B0F0.resetting && scene->on_exit != NULL) {
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+        phase_started = OSGetTime();
+#endif
         scene->on_exit(info->exit_data);
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+        scene_exit_us = OSTicksToMicroseconds(OSGetTime() - phase_started);
+#endif
     }
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    else {
+        scene_exit_us = 0;
+    }
+#endif
     if (!gmMainLib_8046B0F0.resetting) {
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+        phase_started = OSGetTime();
+#endif
         if (state->on_exit != NULL) {
             state->on_exit(state);
         }
@@ -222,10 +273,22 @@ void gm_801A4014(GameMode* mode)
         } else {
             sm->routing.curr_state_id = nextState(mode->states);
         }
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+        state_exit_us = OSTicksToMicroseconds(OSGetTime() - phase_started);
+#endif
     }
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    else {
+        state_exit_us = 0;
+    }
+    phase_started = OSGetTime();
+#endif
     lb_8001CDB4();
     lbCardNew_CompleteAllTasks(11);
     lbMthp_8001F800();
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    cleanup_us = OSTicksToMicroseconds(OSGetTime() - phase_started);
+#endif
 #ifdef TARGET_VITA
     {
         extern void melee_vita_gxm_invalidate_textures(void);
@@ -233,6 +296,15 @@ void gm_801A4014(GameMode* mode)
         melee_vita_gxm_invalidate_textures();
         melee_vita_gxm_log_memory("scene-cache-cleared");
     }
+#endif
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    OSReport(
+        "[TRANSITION] exit mode=%u state=%u scene=%u scene=%lluus "
+        "state=%lluus cleanup=%lluus\n",
+        mode->kind, state->id, info->scene_kind,
+        (unsigned long long) scene_exit_us,
+        (unsigned long long) state_exit_us,
+        (unsigned long long) cleanup_us);
 #endif
     if (gmMainLib_8046B0F0.resetting) {
         lbAudioAx_80027DBC();

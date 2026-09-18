@@ -592,16 +592,57 @@ static void free_copy_textures(void)
     memset(s_graveyard, 0, sizeof(s_graveyard));
 }
 
+void melee_vita_gxm_prepare_texture_invalidation(void)
+{
+#ifndef MELEE_VITA_RELEASE
+    const u64 started = sceKernelGetProcessTimeWide();
+#endif
+    if (s_texture_invalidation_pending) return;
+    s_texture_invalidation_pending = 1;
+    if (s_initialized) rq_wait_idle();
+#ifndef MELEE_VITA_RELEASE
+    melee_vita_log_info(
+        "[TRANSITION] texture queue drain=%lluus",
+        (unsigned long long) (sceKernelGetProcessTimeWide() - started));
+#endif
+}
+
 void melee_vita_gxm_invalidate_textures(void)
 {
-    s_texture_invalidation_pending = 1;
+#ifndef MELEE_VITA_RELEASE
+    u32 textures = 0;
+    u32 copies = 0;
+    u32 retired = 0;
+    u64 gpu_done;
+    const u64 started = sceKernelGetProcessTimeWide();
+    for (VitaTextureCacheEntry* entry = s_textures; entry != NULL;
+         entry = entry->next)
+        ++textures;
+    for (u32 i = 0; i < VITA_COPY_TEXTURES; ++i)
+        if (s_copy_textures[i].texture != NULL) ++copies;
+    for (u32 i = 0; i < RQ_GRAVEYARD; ++i)
+        if (s_graveyard[i].texture != NULL) ++retired;
+#endif
+    if (!s_texture_invalidation_pending)
+        melee_vita_gxm_prepare_texture_invalidation();
     if (s_initialized) {
-        rq_wait_idle();
         vita2d_wait_rendering_done();
     }
+#ifndef MELEE_VITA_RELEASE
+    gpu_done = sceKernelGetProcessTimeWide();
+#endif
     free_textures();
     free_copy_textures();
+    gxr_flush_warm_cache();
     s_texture_invalidation_pending = 0;
+#ifndef MELEE_VITA_RELEASE
+    melee_vita_log_info(
+        "[TRANSITION] texture gpu-wait=%lluus free=%lluus "
+        "textures=%u copies=%u retired=%u",
+        (unsigned long long) (gpu_done - started),
+        (unsigned long long) (sceKernelGetProcessTimeWide() - gpu_done),
+        textures, copies, retired);
+#endif
 }
 
 void melee_vita_gxm_log_memory(const char* phase)
@@ -673,9 +714,11 @@ static vita2d_texture* create_copy_target(u32 width, u32 height)
     return texture;
 }
 
-vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 height)
+vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width,
+                                            u32 height, bool* created)
 {
     u32 c, free_slot = VITA_COPY_TEXTURES;
+    if (created != NULL) *created = false;
     for (c = 0; c < VITA_COPY_TEXTURES; ++c) {
         if (s_copy_textures[c].key == key) {
             if (s_copy_textures[c].width == width && s_copy_textures[c].height == height &&
@@ -705,6 +748,7 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 heig
     s_copy_textures[free_slot].frame = s_frame_counter;
     s_copy_textures[free_slot].texture = create_copy_target(width, height);
     if (s_copy_textures[free_slot].texture != NULL) {
+        if (created != NULL) *created = true;
         vita2d_texture_set_filters(s_copy_textures[free_slot].texture, SCE_GXM_TEXTURE_FILTER_LINEAR,
                                    SCE_GXM_TEXTURE_FILTER_LINEAR);
         /* Copied maps are sampled by projection (HSD shadow maps especially),

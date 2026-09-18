@@ -44,7 +44,7 @@ if ($Configuration -eq 'Debug') {
     }
 }
 $configurationFlags = if ($Configuration -eq 'Release') {
-    @('-O2', '-DNDEBUG', '-DMELEE_VITA_RELEASE=1')
+    @('-O3', '-DNDEBUG', '-DMELEE_VITA_RELEASE=1')
 } else {
     @('-Og', '-g3')
 }
@@ -190,6 +190,7 @@ Invoke-VitaTool 'vita-pack-vpk' @(
     '-a', "$(Join-Path $livearea 'bg.png')=sce_sys/livearea/contents/bg.png",
     '-a', "$(Join-Path $livearea 'startup.png')=sce_sys/livearea/contents/startup.png",
     '-a', "$(Join-Path $livearea 'template.xml')=sce_sys/livearea/contents/template.xml",
+    '-a', "$(Join-Path $PSScriptRoot 'shadercache/warm5.bin')=shadercache/warm5.bin",
     $vpk
 )
 

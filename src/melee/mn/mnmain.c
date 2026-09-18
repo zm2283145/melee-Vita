@@ -23,6 +23,9 @@
 #include "mnsoundtest.h"
 #include "mnvibration.h"
 #include "types.h"
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+#include <dolphin/os.h>
+#endif
 #include <dolphin/pad.h>
 #include <melee/gm/gm_unsplit.h>
 #include <melee/gm/gmevent.h>
@@ -2771,6 +2774,9 @@ void mnMain_Scene_OnEnter(void* user_data)
     u8 menu_kind;
     void (*var_r4)(HSD_GObj*);
     MenuEnterData* data = user_data;
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    u64 phase_started;
+#endif
 
     u8 _[0x14];
 
@@ -2786,6 +2792,9 @@ void mnMain_Scene_OnEnter(void* user_data)
     mn_804D6BAC = NULL;
     mn_804D6BB0 = NULL;
     if (data->load_assets != false) {
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+        phase_started = OSGetTime();
+#endif
         {
             void* dp_[80];
             mn_804D6BB8 = lbArchive_LoadSymbols(
@@ -3017,6 +3026,11 @@ void mnMain_Scene_OnEnter(void* user_data)
             DP_SET(MenMainCursorSs_Top.matanim_joint, dp_[78]);
             DP_SET(MenMainCursorSs_Top.shapeanim_joint, dp_[79]);
         }
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+        OSReport("[MENUPERF] archive=%lluus\n",
+                 OSTicksToMicroseconds(OSGetTime() - phase_started));
+        phase_started = OSGetTime();
+#endif
 
         if (lbLang_IsSavedLanguageUS()) {
             HSD_SisLib_803A62A0(0, "SdMenu.usd", "SIS_MenuData");
@@ -3026,8 +3040,15 @@ void mnMain_Scene_OnEnter(void* user_data)
         HSD_SisLib_803A62A0(3, "SdToy.dat", "SIS_ToyData");
         gm_801BA8FC();
         lbAudioAx_8002392C();
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+        OSReport("[MENUPERF] text-audio=%lluus\n",
+                 OSTicksToMicroseconds(OSGetTime() - phase_started));
+#endif
     }
 
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    phase_started = OSGetTime();
+#endif
     mn_8022DDA8_inline(hovered_selection);
     mn_8022BCF8();
     mn_8022BEDC(mn_8022BE34_OnEnter(&pos));
@@ -3052,6 +3073,10 @@ void mnMain_Scene_OnEnter(void* user_data)
     }
     lbAudioAx_80023F28(gmMainLib_8015ECB0());
     lbCardGame_UpdatePowerTime();
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    OSReport("[MENUPERF] objects=%lluus\n",
+             OSTicksToMicroseconds(OSGetTime() - phase_started));
+#endif
 }
 
 char null_terminator[1] = "\0";

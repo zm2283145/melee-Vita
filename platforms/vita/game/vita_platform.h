@@ -18,6 +18,8 @@ void melee_vita_os_run_alarms(void);
  * not cross a VI retrace. */
 void melee_vita_platform_poll(void);
 void melee_vita_dvd_poll(void);
+void melee_vita_dvd_log_stats(const char* phase);
+void melee_vita_dvd_shutdown(void);
 void melee_vita_audio_poll(void);
 void melee_vita_audio_flush(void);
 void melee_vita_audio_shutdown(void);

@@ -125,6 +125,15 @@ static struct lbl_80472D28_t lbl_80472D28;
 
 u16 lbl_803D8B88[] = { 0x18, 0x16, 0x12, 0x3, 0x5, 0x4, 0x6, 0x1a, 0x19, 0x7 };
 
+#ifdef TARGET_VITA
+static void gmRegClear_ExpandWidescreenModel(HSD_JObj* root)
+{
+    /* The full-frame compositor is 960 pixels wide, but the result model's
+     * authored background strips cover only 807 pixels after Vita mapping. */
+    HSD_JObjSetScaleX(root, 960.0f / 807.0f);
+}
+#endif
+
 /// @todo .data order hack
 #ifdef MUST_MATCH
 static void order_data(void)
@@ -666,6 +675,9 @@ void fn_8017FF1C(HSD_GObj* gobj)
     data.state = (data.state = &lbl_80472D28);
     jobj = gobj->hsd_obj;
     HSD_JObjAnimAll(jobj);
+#ifdef TARGET_VITA
+    gmRegClear_ExpandWidescreenModel(jobj);
+#endif
 
     if (data.arg->x118 == 0) {
         fn_8017F608(data.arg);
@@ -836,6 +848,9 @@ s32 fn_801803FC(void* arg0)
     fn_801689E4(jobj, mdl, 0);
     HSD_JObjReqAnimAll(jobj, 0.0f);
     HSD_JObjAnimAll(jobj);
+#ifdef TARGET_VITA
+    gmRegClear_ExpandWidescreenModel(jobj);
+#endif
     {
         lb_8001204C(jobj, &p->x4, lbl_803D8B88, 0xA);
     }

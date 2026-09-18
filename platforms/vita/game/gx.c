@@ -218,11 +218,15 @@ static struct { u32 draws, tris_in, tris_culled, textured, tex_fail, lines; f32 
 enum {
     VPZ_GOBJ_RENDER, VPZ_PRESENT, VPZ_SWAP, VPZ_COPYTEX, VPZ_TEXUPLOAD,
     VPZ_DL_HASH, VPZ_DL_BUILD, VPZ_DRAW_SETUP, VPZ_GPU_SUBMIT, VPZ_IMMEDIATE, VPZ_AUDIO_MIX, VPZ_RT_EXEC,
+    VPZ_VERTEX_PROGRAM, VPZ_FRAGMENT_PROGRAM, VPZ_FRAGMENT_PATCH,
+    VPZ_RQ_PUSH, VPZ_RESOLVE_TEXTURES, VPZ_UNIFORM_COPY,
     VPZ_COUNT
 };
 static const char* const k_vpz_names[VPZ_COUNT] = {
     "gobj_render", "present", "rt_wait", "copytex", "tex_upload",
     "dl_hash", "dl_build", "draw_setup", "gpu_submit", "immediate", "audio_mix", "rt_exec",
+    "vertex_program", "fragment_program", "fragment_patch",
+    "rq_push", "resolve_textures", "uniform_copy",
 };
 static u64 s_vpz_us[VPZ_COUNT];
 static u32 s_vpz_calls[VPZ_COUNT];
@@ -2718,6 +2722,46 @@ void GXSetDispCopySrc(u16 left, u16 top, u16 width, u16 height)
 { s_gx.copy_source[0] = left; s_gx.copy_source[1] = top; s_gx.copy_source[2] = width; s_gx.copy_source[3] = height; }
 void GXSetDispCopyDst(u16 width, u16 height) { s_gx.copy_width = width; s_gx.copy_height = height; }
 u32 GXSetDispCopyYScale(f32 scale) { return (u32) (s_gx.copy_source[3] * scale); }
+
+#ifndef MELEE_VITA_RELEASE
+void melee_vita_prof_reset_window(void)
+{
+    memset(s_vpz_us, 0, sizeof(s_vpz_us));
+    memset(s_vpz_calls, 0, sizeof(s_vpz_calls));
+    s_dl_stats.hits = 0;
+    s_dl_stats.builds = 0;
+    s_dl_stats.rebuilds = 0;
+    s_dl_stats.fallbacks = 0;
+    s_dl_stats.hash_us = 0;
+    s_prof_decode_us = 0;
+    s_prof_fill_us = 0;
+    s_prof_draw_us = 0;
+    s_prof_vertices = 0;
+    s_prof_draws = 0;
+}
+
+void melee_vita_prof_log_window(const char* label)
+{
+    char line[1024];
+    size_t n = snprintf(line, sizeof(line), "%s", label);
+    u64 gx_total = 0;
+    for (u32 z = 0; z < VPZ_COUNT; ++z) {
+        n += snprintf(line + n, sizeof(line) - n, " %s=%.1fms/%u",
+                      k_vpz_names[z], s_vpz_us[z] / 1000.0,
+                      s_vpz_calls[z]);
+        if (z >= VPZ_COPYTEX && z < VPZ_AUDIO_MIX) gx_total += s_vpz_us[z];
+    }
+    snprintf(line + n, sizeof(line) - n,
+             " hsd_other=%.1fms dl=%u/%u/%u/%u decode=%.1fms fill=%.1fms"
+             " draws=%u verts=%u",
+             ((double) s_vpz_us[VPZ_GOBJ_RENDER] - (double) gx_total) / 1000.0,
+             s_dl_stats.hits, s_dl_stats.builds, s_dl_stats.rebuilds,
+             s_dl_stats.fallbacks, s_prof_decode_us / 1000.0,
+             s_prof_fill_us / 1000.0, s_prof_draws, s_prof_vertices);
+    melee_vita_log_info("%s", line);
+}
+#endif
+
 void GXCopyDisp(void* destination, GXBool clear)
 {
     const u32 color = (u32) s_gx.clear_color.r |
@@ -2747,7 +2791,7 @@ void GXCopyDisp(void* destination, GXBool clear)
             g_melee_vita_update_us = g_melee_vita_render_us = 0;
             g_melee_vita_update_ticks = 0;
             {
-                char line[512];
+                char line[1024];
                 size_t n = snprintf(line, sizeof(line), "[PROF] ms/frame:");
                 u64 gx_total = 0;
                 for (u32 z = 0; z < VPZ_COUNT; ++z) {
@@ -2827,7 +2871,7 @@ void melee_vita_gx_begin_shadow(void* key, u32 width, u32 height)
 {
     struct vita2d_texture* target;
     if (key == NULL || width == 0u || height == 0u || width > 1024u || height > 1024u) return;
-    target = melee_vita_gxm_copy_texture(key, width, height);
+    target = melee_vita_gxm_copy_texture(key, width, height, NULL);
     if (target == NULL) return;
     g_melee_vita_last_copy_dst = key;
     s_render_target.active = 1u;
@@ -2855,6 +2899,7 @@ void GXCopyTex(void* destination, GXBool clear)
 static void copy_tex_impl(void* destination, GXBool clear)
 {
     u32 dst_w, dst_h;
+    bool target_created;
     struct vita2d_texture* target;
     if (destination == NULL || s_tex_copy_dst.width == 0 || s_tex_copy_dst.height == 0) return;
     dst_w = s_tex_copy_dst.width;
@@ -2878,7 +2923,8 @@ static void copy_tex_impl(void* destination, GXBool clear)
         return;
     }
     if (dst_w > 1024u || dst_h > 1024u) return;
-    target = melee_vita_gxm_copy_texture(destination, dst_w, dst_h);
+    target = melee_vita_gxm_copy_texture(destination, dst_w, dst_h,
+                                         &target_created);
     if (target == NULL) return;
     {
         /* Each copy forces the GPU to finish the scene so far (tens of ms).
@@ -2890,8 +2936,15 @@ static void copy_tex_impl(void* destination, GXBool clear)
             if (recent[i].key == destination) { slot = i; break; }
             if (recent[i].frame < recent[slot].frame) slot = i;
         }
-        if (i < 8u && s_gx.copied_frames - recent[slot].frame < MELEE_VITA_COPY_INTERVAL &&
-            !clear)
+        bool throttle =
+            !clear ||
+            (dst_w == 640u && dst_h == 480u &&
+             s_tex_copy_dst.format == GX_TF_RGB5A3 &&
+             s_tex_copy_src[0] == 0u && s_tex_copy_src[1] == 0u &&
+             s_tex_copy_src[2] == 640u && s_tex_copy_src[3] == 480u);
+        if (throttle && !target_created && i < 8u &&
+            s_gx.copied_frames - recent[slot].frame <
+                MELEE_VITA_COPY_INTERVAL)
             return;
         recent[slot].key = destination;
         recent[slot].frame = s_gx.copied_frames;

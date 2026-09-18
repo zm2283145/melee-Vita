@@ -2,6 +2,7 @@
 /* Vita ARAM/AX backend. Melee drives GameCube AX voices backed by ARAM; this
  * file decodes and mixes those voices into a native SceAudioOut stream. */
 #include "vita_platform.h"
+#include "opening_audio.h"
 #include "../vita_log.h"
 
 #include <dolphin/ai.h>
@@ -80,6 +81,7 @@ static volatile u32 s_ring_write;
 static volatile int s_audio_thread_running;
 static SceUID s_audio_thread = -1;
 static volatile u32 s_audio_underruns;
+static volatile int s_audio_flush_requested;
 
 static u32 ring_fill(void)
 {
@@ -93,6 +95,12 @@ static int audio_output_thread(SceSize args, void* argp)
     (void) args;
     (void) argp;
     while (__atomic_load_n(&s_audio_thread_running, __ATOMIC_ACQUIRE)) {
+        if (__atomic_exchange_n(&s_audio_flush_requested, 0,
+                                __ATOMIC_ACQ_REL) != 0) {
+            const u32 write =
+                __atomic_load_n(&s_ring_write, __ATOMIC_ACQUIRE);
+            __atomic_store_n(&s_ring_read, write, __ATOMIC_RELEASE);
+        }
         u32 available = ring_fill();
         u32 take = available < VITA_AUDIO_GRAIN ? available : VITA_AUDIO_GRAIN;
         u32 read = __atomic_load_n(&s_ring_read, __ATOMIC_ACQUIRE);
@@ -107,6 +115,7 @@ static int audio_output_thread(SceSize args, void* argp)
             if (take != 0u || s_audio_underruns == 0u) ++s_audio_underruns;
         }
         __atomic_add_fetch(&s_ring_read, take, __ATOMIC_RELEASE);
+        melee_vita_opening_audio_mix(grain, VITA_AUDIO_GRAIN);
         sceAudioOutOutput(s_audio_port, grain);
     }
     return 0;
@@ -533,6 +542,14 @@ void melee_vita_audio_poll(void)
         for (sample = 0; sample < VITA_AX_FALLBACK_FRAMES; ++sample)
             if (s_ax_callback != NULL) s_ax_callback();
     }
+}
+
+void melee_vita_audio_flush(void)
+{
+    if (s_audio_thread < 0) return;
+    __atomic_store_n(&s_audio_flush_requested, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&s_audio_flush_requested, __ATOMIC_ACQUIRE) != 0)
+        sceKernelDelayThread(100u);
 }
 
 void melee_vita_audio_shutdown(void)

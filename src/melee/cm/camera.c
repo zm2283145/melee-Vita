@@ -2997,9 +2997,9 @@ bool Camera_8002E158(f32* arg0, f32 farg0, f32 farg1)
 bool Camera_8002E234(void)
 {
     Vec3 sp14;
-    f32 sp10;
-    f32 spC;
-    f32 sp8;
+    f32 sp10 = game_camera.x368.y;
+    f32 spC = game_camera.x368.z;
+    f32 sp8 = *(s16*) &game_camera.x368;
     f32 temp_f31;
     bool ret;
 
@@ -3136,6 +3136,25 @@ void Camera_8002E490(void* unused)
     }
 
     game_camera.x341_b7 = var_r29 ? 1 : 0;
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
+    {
+        extern void melee_vita_log_info(const char*, ...);
+        static u32 frame;
+        if ((frame++ % 120u) == 0u) {
+            melee_vita_log_info(
+                "[BOSSCAM] mode=%d interest=%u position=%u tween=%u "
+                "done=%u frame=%d/%d eye=(%.1f,%.1f,%.1f)",
+                (int) game_camera.mode, (unsigned) game_camera.x341_b1_b2,
+                (unsigned) game_camera.x341_b3_b4,
+                (unsigned) game_camera.x341_b5_b6,
+                (unsigned) game_camera.x341_b7,
+                game_camera.x378.s32_v, game_camera.x37C.s32_v,
+                game_camera.transform.position.x,
+                game_camera.transform.position.y,
+                game_camera.transform.position.z);
+        }
+    }
+#endif
 }
 
 void Camera_8002E6FC(int arg0)

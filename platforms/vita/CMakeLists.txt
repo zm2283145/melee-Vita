@@ -29,6 +29,7 @@ target_include_directories(melee_vita_game PUBLIC
     "${PROJECT_SOURCE_DIR}/extern/aurora/include"
     "${PROJECT_SOURCE_DIR}/src"
     "${PROJECT_SOURCE_DIR}/src/sdk_include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/game"
 )
 target_compile_features(melee_vita_game PRIVATE c_std_11)
 target_compile_definitions(melee_vita_game PUBLIC
@@ -74,6 +75,9 @@ add_library(melee_vita_platform STATIC EXCLUDE_FROM_ALL
     game/gxm_game.c
     game/heap.c
     game/main.c
+    game/jpeg_hw.c
+    game/opening_audio.c
+    game/opening_movie.c
     game/os.c
     game/pad.c
     game/thp.c
@@ -103,6 +107,7 @@ target_compile_options(melee_vita_platform PRIVATE
 )
 set_source_files_properties(vita_log.c PROPERTIES COMPILE_OPTIONS "-fshort-enums")
 target_link_libraries(melee_vita_platform PUBLIC vitadebugger_logging)
+target_link_libraries(melee_vita_platform PUBLIC turbojpeg)
 
 add_executable(melee_vita
     abi_probe.c

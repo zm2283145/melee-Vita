@@ -19,6 +19,7 @@ void melee_vita_os_run_alarms(void);
 void melee_vita_platform_poll(void);
 void melee_vita_dvd_poll(void);
 void melee_vita_audio_poll(void);
+void melee_vita_audio_flush(void);
 void melee_vita_audio_shutdown(void);
 void melee_vita_card_poll(void);
 

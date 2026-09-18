@@ -8,6 +8,7 @@
 #include <psp2/gxm.h>
 #include <vita2d.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/sysmem.h>
 
 #include <stdbool.h>
 #include <string.h>
@@ -94,17 +95,6 @@ static void free_textures(void)
 }
 
 static void rq_wait_idle(void);
-void melee_vita_gxm_invalidate_textures(void)
-{
-    s_texture_invalidation_pending = 1;
-    if (s_initialized) {
-        rq_wait_idle();
-        vita2d_wait_rendering_done();
-    }
-    free_textures();
-    s_texture_invalidation_pending = 0;
-}
-
 void melee_vita_gxm_mark_texture_data_dirty(void)
 {
     if (++s_texture_content_generation == 0) s_texture_content_generation = 1;
@@ -459,6 +449,11 @@ static void rq_wait_idle(void)
     sceKernelSignalSema(s_rq_done, 1);
 }
 
+void melee_vita_gxm_wait_idle(void)
+{
+    if (s_initialized) rq_wait_idle();
+}
+
 /* ---- game-thread recording API ---- */
 
 void* melee_vita_rq_push(MeleeVitaRqExec exec, u32 payload_size)
@@ -581,6 +576,62 @@ static void collect_graveyard(void)
             vita2d_free_texture(s_graveyard[i].texture);
             s_graveyard[i].texture = NULL;
         }
+}
+
+static void free_copy_textures(void)
+{
+    for (u32 i = 0; i < VITA_COPY_TEXTURES; ++i) {
+        if (s_copy_textures[i].texture != NULL)
+            vita2d_free_texture(s_copy_textures[i].texture);
+    }
+    memset(s_copy_textures, 0, sizeof(s_copy_textures));
+    for (u32 i = 0; i < RQ_GRAVEYARD; ++i) {
+        if (s_graveyard[i].texture != NULL)
+            vita2d_free_texture(s_graveyard[i].texture);
+    }
+    memset(s_graveyard, 0, sizeof(s_graveyard));
+}
+
+void melee_vita_gxm_invalidate_textures(void)
+{
+    s_texture_invalidation_pending = 1;
+    if (s_initialized) {
+        rq_wait_idle();
+        vita2d_wait_rendering_done();
+    }
+    free_textures();
+    free_copy_textures();
+    s_texture_invalidation_pending = 0;
+}
+
+void melee_vita_gxm_log_memory(const char* phase)
+{
+#ifndef MELEE_VITA_RELEASE
+    SceKernelFreeMemorySizeInfo memory = { 0 };
+    u32 textures = 0;
+    u32 copies = 0;
+    u32 retired = 0;
+    for (VitaTextureCacheEntry* entry = s_textures; entry != NULL;
+         entry = entry->next)
+        ++textures;
+    for (u32 i = 0; i < VITA_COPY_TEXTURES; ++i)
+        if (s_copy_textures[i].texture != NULL) ++copies;
+    for (u32 i = 0; i < RQ_GRAVEYARD; ++i)
+        if (s_graveyard[i].texture != NULL) ++retired;
+    memory.size = sizeof(memory);
+    if (sceKernelGetFreeMemorySize(&memory) < 0) {
+        melee_vita_log_info("[MEM] %s query failed", phase);
+        return;
+    }
+    melee_vita_log_info(
+        "[MEM] %s free user=%uKiB cdram=%uKiB phycont=%uKiB "
+        "textures=%u copies=%u retired=%u",
+        phase, (unsigned) memory.size_user / 1024u,
+        (unsigned) memory.size_cdram / 1024u,
+        (unsigned) memory.size_phycont / 1024u, textures, copies, retired);
+#else
+    (void) phase;
+#endif
 }
 
 /* A plain vita2d texture with a GXM render target over its own memory, so a
@@ -980,6 +1031,43 @@ void melee_vita_gxm_draw_points(const MeleeVitaScreenVertex* vertices,
                                 const MeleeVitaRenderState* state)
 {
     draw_colored(vertices, count, SCE_GXM_PRIMITIVE_POINTS, state);
+}
+
+typedef struct RqOverlay {
+    vita2d_texture* texture;
+    u32 width;
+    u32 height;
+} RqOverlay;
+
+static void exec_overlay(const void* payload)
+{
+    const RqOverlay* overlay = payload;
+    const f32 scale = 544.0f / (f32) overlay->height;
+    const f32 width = (f32) overlay->width * scale;
+    ++g_melee_vita_gxm_state_epoch;
+    rt_default_depth();
+    vita2d_set_blend_mode_add(0);
+    vita2d_draw_rectangle(0.0f, 0.0f, 960.0f, 544.0f,
+                          RGBA8(0, 0, 0, 255));
+    if (overlay->texture != NULL) {
+        vita2d_draw_texture_part_scale(
+            overlay->texture, (960.0f - width) * 0.5f, 0.0f,
+            0.0f, 0.0f, (f32) overlay->width, (f32) overlay->height,
+            scale, scale);
+    }
+}
+
+void melee_vita_gxm_queue_overlay(vita2d_texture* texture,
+                                  u32 width, u32 height)
+{
+    RqOverlay* overlay;
+    if (!s_initialized || width == 0u || height == 0u)
+        return;
+    overlay = melee_vita_rq_push(exec_overlay, sizeof(*overlay));
+    if (overlay == NULL) return;
+    overlay->texture = texture;
+    overlay->width = width;
+    overlay->height = height;
 }
 
 /* ---- present ---- */

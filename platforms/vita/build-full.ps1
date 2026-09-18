@@ -10,6 +10,8 @@ param(
     [string]$KuBridgeLibrary = "$PSScriptRoot/../../build-vita/kubridge-build/libkubridge_stub.a",
     [ValidatePattern('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')]
     [string]$LogHost = '10.1.1.146',
+    [ValidateRange(1, 65535)]
+    [int]$DebugNetPort = 18197,
     [switch]$EnableDebugger
 )
 
@@ -83,6 +85,8 @@ $platformSources = @(
     'platforms/vita/game/gxm_game.c',
     'platforms/vita/game/heap.c',
     'platforms/vita/game/main.c',
+    'platforms/vita/game/opening_audio.c',
+    'platforms/vita/game/opening_movie.c',
     'platforms/vita/game/os.c',
     'platforms/vita/game/pad.c',
     'platforms/vita/game/pc_stubs.c',
@@ -103,7 +107,11 @@ $common = @(
     '-include', (Join-Path $PSScriptRoot 'vita_compat.h'), '-c'
 ) + $configurationFlags
 if ($Configuration -eq 'Debug') {
-    $common += @("-I$VitaDebuggerDirectory", "-DMELEE_VITA_LOG_HOST=`"$LogHost`"")
+    $common += @(
+        "-I$VitaDebuggerDirectory",
+        "-DMELEE_VITA_LOG_HOST=`"$LogHost`"",
+        "-DMELEE_VITA_DEBUGNET_PORT=$DebugNetPort"
+    )
 }
 
 $commonCpp = @(
@@ -161,7 +169,7 @@ $link += @(
     '-lSceCommonDialog_stub', '-lm', '-lSceProcessmgr_stub',
     '-lSceSysmem_stub', '-lSceLibKernel_stub', '-lSceKernelModulemgr_stub', '-lSceSysmodule_stub',
     '-lvitashark', '-lSceShaccCgExt', '-ltaihen_stub', '-lSceShaccCg_stub_weak',
-    '-lstdc++', '-pthread', '-o', $elf
+    '-lturbojpeg', '-lstdc++', '-pthread', '-o', $elf
 )
 
 Invoke-VitaTool 'arm-vita-eabi-gcc' $link

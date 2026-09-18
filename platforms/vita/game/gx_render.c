@@ -507,6 +507,95 @@ static const SceGxmProgram* obtain_program(const char* source, bool vertex,
     return copy;
 }
 
+/* vita2d's shader patcher has small fixed pools, and the generated GX programs
+ * are many: after a few scenes' worth of TEV and vertex variants it runs out
+ * and every later patch fails, which shows up as white or shattered geometry
+ * until the game is restarted.  These programs get their own patcher with room
+ * to grow. */
+#define GXR_PATCHER_BUFFER (4u * 1024u * 1024u)
+#define GXR_PATCHER_VERTEX_USSE (1u * 1024u * 1024u)
+#define GXR_PATCHER_FRAGMENT_USSE (1u * 1024u * 1024u)
+
+static SceGxmShaderPatcher* s_patcher;
+
+static void* patcher_alloc(void* user, unsigned int size) { (void) user; return malloc(size); }
+static void patcher_free(void* user, void* mem) { (void) user; free(mem); }
+
+static void* gpu_alloc_mapped(u32 size, u32 attribs, SceUID* uid_out)
+{
+    void* base = NULL;
+    const u32 aligned = (size + 0xfffu) & ~0xfffu;
+    SceUID uid = sceKernelAllocMemBlock("melee_gxr_patcher",
+                                        SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE,
+                                        aligned, NULL);
+    if (uid < 0) return NULL;
+    if (sceKernelGetMemBlockBase(uid, &base) < 0 ||
+        sceGxmMapMemory(base, aligned, attribs) < 0) {
+        sceKernelFreeMemBlock(uid);
+        return NULL;
+    }
+    *uid_out = uid;
+    return base;
+}
+
+static void* usse_alloc(u32 size, SceUID* uid_out, unsigned int* offset_out, int fragment)
+{
+    void* memory = NULL;
+    const u32 aligned = (size + 0xfffu) & ~0xfffu;
+    SceUID uid = sceKernelAllocMemBlock("melee_gxr_usse",
+                                        SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE,
+                                        aligned, NULL);
+    if (uid < 0) return NULL;
+    if (sceKernelGetMemBlockBase(uid, &memory) < 0 ||
+        (fragment ? sceGxmMapFragmentUsseMemory(memory, aligned, offset_out)
+                  : sceGxmMapVertexUsseMemory(memory, aligned, offset_out)) < 0) {
+        sceKernelFreeMemBlock(uid);
+        return NULL;
+    }
+    *uid_out = uid;
+    return memory;
+}
+
+static SceGxmShaderPatcher* gxr_patcher(void)
+{
+    static SceUID buffer_uid = -1, vertex_uid = -1, fragment_uid = -1;
+    SceGxmShaderPatcherParams params;
+    void* buffer;
+    void* vertex_usse;
+    void* fragment_usse;
+    unsigned int vertex_offset = 0, fragment_offset = 0;
+    if (s_patcher != NULL) return s_patcher;
+    buffer = gpu_alloc_mapped(GXR_PATCHER_BUFFER,
+                              SCE_GXM_MEMORY_ATTRIB_READ | SCE_GXM_MEMORY_ATTRIB_WRITE,
+                              &buffer_uid);
+    vertex_usse = usse_alloc(GXR_PATCHER_VERTEX_USSE, &vertex_uid, &vertex_offset, 0);
+    fragment_usse = usse_alloc(GXR_PATCHER_FRAGMENT_USSE, &fragment_uid, &fragment_offset, 1);
+    if (buffer == NULL || vertex_usse == NULL || fragment_usse == NULL) {
+        melee_vita_log_info("[GXR] patcher memory unavailable; using vita2d's");
+        return vita2d_get_shader_patcher();
+    }
+    memset(&params, 0, sizeof(params));
+    params.hostAllocCallback = patcher_alloc;
+    params.hostFreeCallback = patcher_free;
+    params.bufferMem = buffer;
+    params.bufferMemSize = GXR_PATCHER_BUFFER;
+    params.vertexUsseMem = vertex_usse;
+    params.vertexUsseMemSize = GXR_PATCHER_VERTEX_USSE;
+    params.vertexUsseOffset = vertex_offset;
+    params.fragmentUsseMem = fragment_usse;
+    params.fragmentUsseMemSize = GXR_PATCHER_FRAGMENT_USSE;
+    params.fragmentUsseOffset = fragment_offset;
+    if (sceGxmShaderPatcherCreate(&params, &s_patcher) < 0 || s_patcher == NULL) {
+        melee_vita_log_info("[GXR] patcher creation failed; using vita2d's");
+        s_patcher = NULL;
+        return vita2d_get_shader_patcher();
+    }
+    melee_vita_log_info("[GXR] shader patcher: %u KiB buffer, %u KiB vertex USSE, %u KiB fragment USSE",
+                        GXR_PATCHER_BUFFER / 1024u, GXR_PATCHER_VERTEX_USSE / 1024u,
+                        GXR_PATCHER_FRAGMENT_USSE / 1024u);
+    return s_patcher;
+}
+
 int gxr_init(void)
 {
     if (s_ready || s_failed) return s_ready ? 0 : -1;
@@ -520,7 +609,7 @@ int gxr_init(void)
     sceIoMkdir("ux0:data/melee", 0777);
     sceIoMkdir(GXR_CACHE_DIR, 0777);
 
-    SceGxmShaderPatcher* patcher = vita2d_get_shader_patcher();
+    SceGxmShaderPatcher* patcher = gxr_patcher();
     const u64 vertex_hash =
         fnv1a(k_vertex_source, sizeof(k_vertex_source),
               UINT64_C(1469598103934665603) ^ GXR_CACHE_VERSION);
@@ -606,7 +695,7 @@ static GxrProgram* find_program(const GxrShaderKey* key)
     }
     p->program = obtain_program(buffer, false, hash);
     if (p->program == NULL ||
-        sceGxmShaderPatcherRegisterProgram(vita2d_get_shader_patcher(),
+        sceGxmShaderPatcherRegisterProgram(gxr_patcher(),
                                            p->program, &p->id) < 0) {
         p->failed = true;
         melee_vita_log_info("[GXR] fragment compile failed hash=%016llx stages=%u",
@@ -699,7 +788,7 @@ static SceGxmFragmentProgram* find_fragment(GxrProgram* program,
     f->blend = blend;
     f->has_blend = has_blend;
     if (sceGxmShaderPatcherCreateFragmentProgram(
-            vita2d_get_shader_patcher(), program->id,
+            gxr_patcher(), program->id,
             SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4, SCE_GXM_MULTISAMPLE_NONE,
             has_blend ? &blend : NULL, s_vertex_gxp, &f->fragment) < 0) {
         free(f);
@@ -1045,7 +1134,7 @@ static GxrVtxProgram* find_vertex_program(const GxrVtxKey* key)
         return p;
     }
     p->program = obtain_program(buffer, true, hash);
-    SceGxmShaderPatcher* patcher = vita2d_get_shader_patcher();
+    SceGxmShaderPatcher* patcher = gxr_patcher();
     if (p->program == NULL ||
         sceGxmShaderPatcherRegisterProgram(patcher, p->program, &p->id) < 0) {
         melee_vita_log_info("[GXR] vertex compile failed hash=%016llx", (unsigned long long) hash);

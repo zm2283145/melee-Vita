@@ -49,6 +49,7 @@ $platformSources = @(
     'platforms/vita/game/os.c',
     'platforms/vita/game/pad.c',
     'platforms/vita/game/pc_stubs.c',
+    'platforms/vita/game/jpeg_hw.c',
     'platforms/vita/game/thp.c',
     'platforms/vita/game/vi.c',
     'platforms/vita/game/widescreen.c'
@@ -109,7 +110,7 @@ $link = @(
     '-Wl,--start-group', $gameArchive, '-Wl,--end-group',
     'D:/Claude/VitaDebugger/libuvdb.a',
     (Join-Path $root 'build-vita/kubridge-build/libkubridge_stub.a'),
-    '-lSceCtrl_stub', '-lSceDisplay_stub', '-lSceAudio_stub', '-lSceKernelThreadMgr_stub',
+    '-lSceCtrl_stub', '-lSceDisplay_stub', '-lSceAudio_stub', '-lSceJpeg_stub', '-lSceKernelThreadMgr_stub',
     '-lvita2d', '-lSceGxm_stub', '-lSceDisplay_stub', '-lSceAppMgr_stub',
     '-lSceCommonDialog_stub', '-lm', '-lSceProcessmgr_stub',
     '-lSceSysmem_stub', '-lSceLibKernel_stub', '-lSceKernelModulemgr_stub', '-lSceNet_stub',

@@ -191,9 +191,21 @@ void gm_801A4014(GameMode* mode)
         scene->on_enter(info->enter_data);
         OSReport("[SCENE] scene %u enter complete\n", info->scene_kind);
     }
+#ifdef TARGET_VITA
+    {
+        extern void melee_vita_gxm_log_memory(const char*);
+        melee_vita_gxm_log_memory("scene-enter");
+    }
+#endif
     OSReport("[SCENE] scene %u frame loop begin\n", info->scene_kind);
     gm_801A4D34(scene->on_frame, info);
     OSReport("[SCENE] scene %u frame loop complete\n", info->scene_kind);
+#ifdef TARGET_VITA
+    {
+        extern void melee_vita_gxm_log_memory(const char*);
+        melee_vita_gxm_log_memory("scene-exit");
+    }
+#endif
     if (!gmMainLib_8046B0F0.resetting && scene->on_exit != NULL) {
         scene->on_exit(info->exit_data);
     }
@@ -214,6 +226,14 @@ void gm_801A4014(GameMode* mode)
     lb_8001CDB4();
     lbCardNew_CompleteAllTasks(11);
     lbMthp_8001F800();
+#ifdef TARGET_VITA
+    {
+        extern void melee_vita_gxm_invalidate_textures(void);
+        extern void melee_vita_gxm_log_memory(const char*);
+        melee_vita_gxm_invalidate_textures();
+        melee_vita_gxm_log_memory("scene-cache-cleared");
+    }
+#endif
     if (gmMainLib_8046B0F0.resetting) {
         lbAudioAx_80027DBC();
         HSD_PadReset();

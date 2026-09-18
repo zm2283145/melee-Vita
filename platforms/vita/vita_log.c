@@ -14,6 +14,10 @@
 #define MELEE_VITA_LOG_HOST "10.1.1.146"
 #endif
 
+#ifndef MELEE_VITA_DEBUGNET_PORT
+#define MELEE_VITA_DEBUGNET_PORT 18194
+#endif
+
 static unsigned char s_net_memory[1024 * 1024] __attribute__((aligned(64)));
 static int s_module_loaded;
 static int s_net_started;
@@ -35,7 +39,7 @@ int melee_vita_log_start(void)
     s_netctl_started = 1;
     const struct uvdb_debugnet_config config = {
         .server_ip = MELEE_VITA_LOG_HOST,
-        .port = 18194,
+        .port = MELEE_VITA_DEBUGNET_PORT,
         .level = UVDB_LOG_DEBUG,
     };
     if (uvdb_debugnet_start(&config) < 0) goto failure;

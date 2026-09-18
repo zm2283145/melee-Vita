@@ -43,10 +43,11 @@ tar -xJf "$deps/taihen.tar.xz" -C "$VITASDK/arm-vita-eabi"
 
 checkout bythos14/SceShaccCgExt fb0e9d338525b067f3679ab33571323336493cca "$deps/SceShaccCgExt"
 cmake -S "$deps/SceShaccCgExt" -B "$deps/SceShaccCgExt/build" -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_STANDARD=11
 cmake --build "$deps/SceShaccCgExt/build" --target install --parallel 2
 
 checkout Rinnegatamante/vitaShaRK df24065e65098b2d1ac533760109ad4367573f28 "$deps/vitaShaRK"
-make -C "$deps/vitaShaRK" -j2 install
+make -C "$deps/vitaShaRK" -j2 install \
+    CFLAGS='-std=gnu11 -Wl,-q -O2 -ffast-math -mtune=cortex-a9 -mfpu=neon -ftree-vectorize'
 
 arm-vita-eabi-gcc --version

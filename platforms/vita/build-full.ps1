@@ -44,7 +44,7 @@ if ($Configuration -eq 'Debug') {
     }
 }
 $configurationFlags = if ($Configuration -eq 'Release') {
-    @('-O3', '-DNDEBUG', '-DMELEE_VITA_RELEASE=1')
+    @('-O2', '-DNDEBUG', '-DMELEE_VITA_RELEASE=1')
 } else {
     @('-Og', '-g3')
 }

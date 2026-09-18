@@ -25,8 +25,8 @@ if [[ -e "$VITASDK" ]]; then
     exit 1
 fi
 download \
-    https://github.com/vitasdk/autobuilds/releases/download/sdk-snapshot-20260825.612.1/vitasdk-x86_64-linux-gnu-2026-08-25_16-27-41.tar.bz2 \
-    49184a5fcc4dd75e9eb233422a56e5801b6a996d6e52b6ca71178788e9559f51 \
+    https://github.com/vitasdk/autobuilds/releases/download/sdk-snapshot-20260825.611.1/vitasdk-x86_64-linux-gnu-2026-08-25_12-51-16.tar.bz2 \
+    ff0e1aa1d968222a98836fcb90ed2cd3e6f5b53074e94d69f8057c718b607a06 \
     "$deps/vitasdk.tar.bz2"
 mkdir -p "$VITASDK"
 tar -xjf "$deps/vitasdk.tar.bz2" -C "$VITASDK" --strip-components=1

@@ -35,7 +35,8 @@ On Linux, set `VITASDK` and add `$VITASDK/bin` to `PATH`, then run:
 pwsh -NoProfile -File platforms/vita/build-full.ps1 -Configuration Release -Jobs 2
 ```
 
-The output is **`build-vita/full/melee-full.vpk`**, title ID `MLVITA002`.
+The output is **`build-vita/full/SmashMeleevita.vpk`**, with the game title
+**Smash Melee Vita** and unchanged title ID `MLVITA002`.
 [`version.json`](version.json) sets release version **0.6.0** and Vita's
 two-part `APP_VER` value **00.60**. Update both entries for future releases.
 Release is the default even if `-Configuration` is omitted. It uses `-O2`,

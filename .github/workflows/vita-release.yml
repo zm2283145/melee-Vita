@@ -58,19 +58,33 @@ jobs:
       - name: Package release assets
         run: |
           mkdir -p dist
-          cp build-vita/full/melee-full.vpk dist/Melee-Vita.vpk
+          cp build-vita/full/SmashMeleevita.vpk dist/SmashMeleevita.vpk
           cp README.md dist/README-Vita.md
           cp platforms/vita/version.json dist/version.json
           cp LICENSE.md COPYING dist/
           printf '%s\n' "$GITHUB_SHA" > dist/COMMIT.txt
           python3 - <<'PY'
+          import json
+          import struct
           import zipfile
-          with zipfile.ZipFile("dist/Melee-Vita.vpk") as vpk:
+          with zipfile.ZipFile("dist/SmashMeleevita.vpk") as vpk:
               assert vpk.testzip() is None, "Corrupt VPK"
               assert {"eboot.bin", "sce_sys/param.sfo"} <= set(vpk.namelist())
               assert not any(name.lower().endswith((".iso", ".gcm", ".rvz", ".dol", ".suprx", ".skprx")) for name in vpk.namelist())
+              sfo = vpk.read("sce_sys/param.sfo")
+              magic, revision, keys, values, count = struct.unpack_from("<5I", sfo)
+              assert magic == 0x46535000, "Invalid SFO"
+              fields = {}
+              for index in range(count):
+                  key, fmt, size, capacity, offset = struct.unpack_from("<HHIII", sfo, 20 + index * 16)
+                  name = sfo[keys + key:].split(b"\0", 1)[0].decode("ascii")
+                  fields[name] = sfo[values + offset:values + offset + size].rstrip(b"\0")
+              assert fields["TITLE"] == b"Smash Melee Vita", "Incorrect game title"
+              assert fields["TITLE_ID"] == b"MLVITA002", "Title ID must remain compatible"
+              with open("dist/version.json") as version_file:
+                  assert fields["APP_VER"].decode("ascii") == json.load(version_file)["app"]
           PY
-          (cd dist && sha256sum Melee-Vita.vpk README-Vita.md version.json LICENSE.md COPYING COMMIT.txt > SHA256SUMS.txt)
+          (cd dist && sha256sum SmashMeleevita.vpk README-Vita.md version.json LICENSE.md COPYING COMMIT.txt > SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@v4
         with:
@@ -110,7 +124,7 @@ jobs:
           Commit: ${GITHUB_SHA}
           Build: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
-          Install Melee-Vita.vpk with VitaShell. Read README-Vita.md for the required
+          Install SmashMeleevita.vpk with VitaShell. Read README-Vita.md for the required
           homebrew environment, shader compiler module, disc image
           path, and controls. Game data and proprietary modules are not included.
 
@@ -124,8 +138,8 @@ jobs:
           EOF
           gh release create "$tag" \
             --target "$GITHUB_SHA" \
-            --title "Melee Vita ${version} (experimental build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT})" \
+            --title "Smash Melee Vita ${version} (experimental build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT})" \
             --notes-file release-notes.md \
             --draft --prerelease \
-            dist/Melee-Vita.vpk dist/README-Vita.md dist/version.json \
+            dist/SmashMeleevita.vpk dist/README-Vita.md dist/version.json \
             dist/LICENSE.md dist/COPYING dist/COMMIT.txt dist/SHA256SUMS.txt

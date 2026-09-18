@@ -1,4 +1,4 @@
-# Melee Vita - experimental PS Vita port
+# Smash Melee Vita - experimental PS Vita port
 
 An **experimental native PlayStation Vita port of Super Smash Bros. Melee
 (NTSC-U 1.02)**, developed on the
@@ -73,11 +73,11 @@ Development/debug builds have separate requirements.
 
 ## Install and run
 
-1. Download `Melee-Vita.vpk` from a **published Vita release** in
+1. Download `SmashMeleevita.vpk` from a **published Vita release** in
    [Releases](https://github.com/zm2283145/melee-Vita/releases). Unpublished drafts
    are for the maintainer to review, not public downloads.
 2. Install the VPK using VitaShell. It uses title ID **`MLVITA002`** and currently
-   appears as **Melee Vita (Game Code)** in LiveArea.
+   appears as **Smash Melee Vita** in LiveArea.
 3. Copy your uncompressed disc image to **`ux0:data/melee/GALE01.iso`** and
    confirm the shader compiler module is at the path above.
 4. Launch the LiveArea bubble. There is no PC-style disc picker; the Vita build
@@ -140,7 +140,8 @@ and dependency setup. The normal build uses **Release** configuration:
 .\platforms\vita\build-full.ps1 -Configuration Release
 ```
 
-The result is `build-vita/full/melee-full.vpk` (renamed `Melee-Vita.vpk` by CI).
+The result is `build-vita/full/SmashMeleevita.vpk`, also distributed by CI as
+`SmashMeleevita.vpk`.
 Release builds use optimization, disable diagnostic logging and debugger
 support, and do not include debug symbols. Runtime shader compilation and its
 disk cache remain enabled; those are needed for normal gameplay.

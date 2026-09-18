@@ -140,7 +140,7 @@ $elf = Join-Path $build 'melee-full.elf'
 $velf = Join-Path $build 'melee-full.velf'
 $eboot = Join-Path $build 'eboot.bin'
 $sfo = Join-Path $build 'param.sfo'
-$vpk = Join-Path $build 'melee-full.vpk'
+$vpk = Join-Path $build 'SmashMeleevita.vpk'
 
 $link = @(
     '-fno-short-enums', '-Wl,-q', '-Wl,-z,nocopyreloc',
@@ -172,7 +172,7 @@ Invoke-VitaTool 'vita-elf-create' @($elf, $velf)
 Invoke-VitaTool 'vita-make-fself' @('-c', $velf, $eboot)
 Invoke-VitaTool 'vita-mksfoex' @(
     '-s', 'TITLE_ID=MLVITA002', '-s', "APP_VER=$($version.app)",
-    'Melee Vita (Game Code)', $sfo
+    'Smash Melee Vita', $sfo
 )
 $livearea = Join-Path $PSScriptRoot 'livearea'
 Invoke-VitaTool 'vita-pack-vpk' @(

@@ -149,11 +149,9 @@ disk cache remain enabled; those are needed for normal gameplay.
 
 [Vita build and draft release](.github/workflows/vita-release.yml) runs on pushes
 to **`vita-port`**, on pull requests targeting that branch, and on manual
-dispatches selecting that branch when GitHub makes that trigger available.
-GitHub requires the workflow file on the repository's default branch to expose
-the **Run workflow** button; this branch-only setup does not change the default
-branch. Until then, push to `vita-port` or use **Re-run all jobs** on an existing
-Vita workflow run.
+dispatches selecting that branch. **`vita-port` is the repository's default
+branch**, so the **Run workflow** button is available in Actions. You can also
+use **Re-run all jobs** on an existing Vita workflow run.
 
 Pushes and manual builds create an **unpublished prerelease draft** only after
 the Release VPK has built and passed packaging checks. Each draft targets the
@@ -174,6 +172,10 @@ first release, the maintainer can rename its tag to `vita-v0.6.0`.
 GitHub Actions creates these drafts using the repository's built-in
 `GITHUB_TOKEN`; no personal token is required. The inherited desktop workflow
 excludes `vita-port` pushes and `vita-*` tags.
+Keep `vita-port` as the default branch: GitHub's release API rejects the built-in
+token when the target commit changes workflow files relative to the default
+branch. Changing that setting back can prevent draft creation even after the
+VPK builds successfully.
 
 ## Credits and licensing
 

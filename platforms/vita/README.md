@@ -70,6 +70,8 @@ review and update the pinned archive/hash pair together instead of bypassing it.
 The [workflow](../../.github/workflows/vita-release.yml) uploads the VPK and
 creates a draft only for the `vita-port` branch in `zm2283145/melee-Vita`.
 It never publishes a release automatically and does not build the PC targets.
+`vita-port` must remain the default branch for the built-in Actions token to
+create drafts when the Vita workflows differ from those on other branches.
 
 ## Opt-in Debug build
 

@@ -131,8 +131,10 @@ static int decode_with_codec(const void* jpeg, size_t jpeg_size, void* tile_y,
         if (s_standard == NULL) { s_hw_ready = 0; return 0; }
     }
     if (!make_standard_jpeg(jpeg, jpeg_size, s_standard, s_standard_size, &standard_size)) {
-        if (s_hw_ready == -1) melee_vita_log_info("[THP] frame is not a plain JPEG; using the portable decoder");
-        s_hw_ready = 0;
+        static unsigned int bridge_failures;
+        if (bridge_failures++ < 3u)
+            melee_vita_log_info("[THP] bridge failed for a %u byte frame", (unsigned) jpeg_size);
+        if (bridge_failures > 8u) s_hw_ready = 0;
         return 0;
     }
     if (s_hw == NULL) {
@@ -175,11 +177,17 @@ void pc_thp_decode_frame(const void* jpeg, void* tile_y, void* tile_u,
     static unsigned int frames;
     const SceUInt64 start = sceKernelGetProcessTimeWide();
     s32 result;
-    /* THP frames carry their own size; the codec only needs an upper bound. */
-    if (decode_with_codec(jpeg, THP_MAX_JPEG, tile_y, tile_u, tile_v)) {
-        result = 0;
-    } else {
-        result = THPVideoDecode(jpeg, tile_y, tile_u, tile_v, NULL);
+    /* Each frame buffer starts with a big-endian byte count; the caller hands
+     * us the JPEG that follows it. */
+    {
+        const unsigned char* header = (const unsigned char*) jpeg - 4;
+        const size_t jpeg_size = (size_t) header[0] << 24 | (size_t) header[1] << 16 |
+                                 (size_t) header[2] << 8 | header[3];
+        if (jpeg_size > 0u && jpeg_size <= THP_MAX_JPEG &&
+            decode_with_codec(jpeg, jpeg_size, tile_y, tile_u, tile_v))
+            result = 0;
+        else
+            result = THPVideoDecode(jpeg, tile_y, tile_u, tile_v, NULL);
     }
     total += sceKernelGetProcessTimeWide() - start;
     if ((++frames % 60u) == 0u) {

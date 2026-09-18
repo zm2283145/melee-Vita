@@ -2,7 +2,7 @@
 
 An **experimental native PlayStation Vita port of Super Smash Bros. Melee
 (NTSC-U 1.02)**, developed on the
-[`vita-port` branch](https://github.com/zm2283145/melee-pc/tree/vita-port).
+[`vita-port` branch](https://github.com/zm2283145/melee-Vita/tree/vita-port).
 This branch started from `claude-bringup`.
 
 The project builds on [melee-pc](https://github.com/999sian/melee-pc),
@@ -22,7 +22,7 @@ Back up your saves before trying a new build.
 
 **There will be bugs, possible crashes, and other unexpected issues.**
 Please report them in
-[GitHub Issues](https://github.com/zm2283145/melee-pc/issues) so they can be
+[GitHub Issues](https://github.com/zm2283145/melee-Vita/issues) so they can be
 investigated. Check for an existing report first, then include the Vita release
 or commit ID, your Vita model and firmware, relevant plugins, the game mode,
 characters and stage, and clear steps to reproduce what happened. Describe
@@ -71,7 +71,7 @@ Development/debug builds have separate requirements.
 ## Install and run
 
 1. Download `Melee-Vita.vpk` from a **published Vita release** in
-   [Releases](https://github.com/zm2283145/melee-pc/releases). Unpublished drafts
+   [Releases](https://github.com/zm2283145/melee-Vita/releases). Unpublished drafts
    are for the maintainer to review, not public downloads.
 2. Install the VPK using VitaShell. It uses title ID **`MLVITA002`** and currently
    appears as **Melee Vita (Game Code)** in LiveArea.

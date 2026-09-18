@@ -40,15 +40,14 @@ GXRenderModeObj GXNtsc480Prog = {
     VI_XFBMODE_SF,
     0,
     0,
-    { { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 },
-      { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 } },
-    { 0, 0, 21, 22, 21, 0, 0 },
+    {{6, 6}, {6, 6}, {6, 6}, {6, 6}, {6, 6}, {6, 6}, {6, 6}, {6, 6}, {6, 6}, {6, 6}, {6, 6},
+        {6, 6}},
+    {0, 0, 21, 22, 21, 0, 0},
 };
 
 #ifndef TARGET_VITA
-void GXSetCopyClamp(GXFBClamp clamp)
-{
-    (void) clamp;
+void GXSetCopyClamp(GXFBClamp clamp) {
+    (void)clamp;
 }
 
 static u32 s_sound_mode = 1; /* stereo */
@@ -67,9 +66,8 @@ BOOL OSGetResetSwitchState(void) {
 }
 
 #ifndef TARGET_VITA
-void PADSetSamplingRate(u32 msec)
-{
-    (void) msec;
+void PADSetSamplingRate(u32 msec) {
+    (void)msec;
 }
 #endif
 

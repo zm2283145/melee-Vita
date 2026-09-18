@@ -43,6 +43,14 @@ uint32_t pc_vtx_array_size(const void* data);
 
 /* Decode one THP-JPEG frame into GX I8-tiled Y/U/V planes (src/pc/thp.c). */
 void pc_thp_decode_frame(const void* jpeg, void* tile_y, void* tile_u, void* tile_v);
+#ifdef TARGET_VITA
+/* The packed size of a movie frame, recorded as lbMthp reads it into a ring
+ * slot.  The frame does not carry its own size - its header describes the frame
+ * that follows - and without the real size the end of the picture has to be
+ * guessed, where an FF D9 in the entropy data is indistinguishable from the
+ * real end-of-image marker. */
+void pc_thp_note_frame_size(const void* buffer, unsigned int packed_size);
+#endif
 
 /* GX/VI entry points the game uses that aurora does not declare
  * (implemented in src/pc/gx.c and src/pc/vi.c). */

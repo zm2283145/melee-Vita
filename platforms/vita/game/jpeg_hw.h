@@ -83,6 +83,8 @@ int melee_vita_opening_jpeg_hw_decode(
     struct melee_vita_opening_jpeg_hw_timing* timing_out,
     struct melee_vita_opening_jpeg_hw_error* error_out);
 
+extern int melee_vita_jpeg_hw_last_error;
+
 int melee_vita_jpeg_hw_decode_planes(
     struct melee_vita_opening_jpeg_hw* decoder,
     const void* standard_jpeg, size_t standard_jpeg_size,

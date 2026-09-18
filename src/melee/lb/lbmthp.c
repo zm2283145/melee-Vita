@@ -145,6 +145,12 @@ static void fn_8001E910(int arg0, uintptr_t arg1, void* arg2, bool cancelflag)
                              streamPlayer->file_entrynum,
                              streamPlayer->curr_file_offset);
 
+#ifdef TARGET_VITA
+            pc_thp_note_frame_size(
+                (const void*) (uintptr_t)
+                    streamPlayer->frame_buffers[streamPlayer->unk_8C],
+                streamPlayer->currPackedSize);
+#endif
             HSD_DevComRequest(
                 streamPlayer->file_entrynum, streamPlayer->curr_file_offset,
                 (uintptr_t) streamPlayer->frame_buffers[streamPlayer->unk_8C],
@@ -313,6 +319,9 @@ static void fn_8001ECF4(THPDecComp* data, void* buf)
                          data->first_frame_size);
                 HSD_ASSERT(266, 0);
             }
+#ifdef TARGET_VITA
+            pc_thp_note_frame_size(var_r29, var_r24);
+#endif
             lbFile_800161C4(data->file_entrynum, data->curr_file_offset,
                             (uintptr_t) var_r29, (var_r24 + 0x1F) & 0xFFFFFFE0, 0x21,
                             1);
@@ -434,6 +443,12 @@ s32 fn_8001F13C(THPDecComp* streamPlayer)
                              "filnum = %d, ofs = %d, by sugano.",
                              streamPlayer->file_entrynum,
                              streamPlayer->curr_file_offset);
+#ifdef TARGET_VITA
+            pc_thp_note_frame_size(
+                (const void*) (uintptr_t)
+                    streamPlayer->frame_buffers[streamPlayer->unk_8C],
+                streamPlayer->currPackedSize);
+#endif
             HSD_DevComRequest(
                 streamPlayer->file_entrynum, streamPlayer->curr_file_offset,
                 (uintptr_t) streamPlayer->frame_buffers[streamPlayer->unk_8C],

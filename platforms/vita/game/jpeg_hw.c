@@ -388,6 +388,8 @@ int melee_vita_opening_jpeg_hw_decode(
 /* Decode one bridged JPEG and hand back the codec's YCbCr output.  The game
  * build needs the planes rather than an RGBA image: HSD uploads Y, Cb and Cr
  * as separate I8 textures and combines them in the TEV. */
+int melee_vita_jpeg_hw_last_error;
+
 int melee_vita_jpeg_hw_decode_planes(
     struct melee_vita_opening_jpeg_hw* decoder,
     const void* standard_jpeg, size_t standard_jpeg_size,
@@ -404,6 +406,7 @@ int melee_vita_jpeg_hw_decode_planes(
         decoder->stream, (uint32_t) standard_jpeg_size,
         decoder->yuv, decoder->yuv_capacity, decoder->decode_mode,
         decoder->coefficients, decoder->coefficient_capacity);
+    melee_vita_jpeg_hw_last_error = decoded;
     if (decoded < 0) return 0;
     *planes_out = decoder->yuv;
     *pitch_width_out = (uint32_t) decoded >> 16u;

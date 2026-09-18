@@ -1651,7 +1651,7 @@ s32 grCastle_801CFBD4(Ground_GObj* gobj, s32 arg1)
                         target = jobj;
                     }
 
-#ifdef TARGET_VITA
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
                     {
                         extern void melee_vita_log_info(const char*, ...);
                         static u32 tick;

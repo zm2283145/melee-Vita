@@ -101,6 +101,7 @@ static void emit(Source* s, const char* format, ...)
     s->length += (size_t) written;
 }
 
+#ifndef MELEE_VITA_RELEASE
 static void shark_log(const char* message, shark_log_level level, int line)
 {
     if (level >= SHARK_LOG_WARNING)
@@ -108,6 +109,7 @@ static void shark_log(const char* message, shark_log_level level, int line)
                             level == SHARK_LOG_ERROR ? "error" : "warning",
                             line, message);
 }
+#endif
 
 static void* gpu_alloc(SceKernelMemBlockType type, u32 size, SceUID* uid)
 {
@@ -604,7 +606,9 @@ int gxr_init(void)
         melee_vita_log_info("[GXR] shark_init failed (libshacccg.suprx missing?)");
         return -1;
     }
+#ifndef MELEE_VITA_RELEASE
     shark_install_log_cb(shark_log);
+#endif
     shark_set_warnings_level(SHARK_WARN_SILENT);
     sceIoMkdir("ux0:data/melee", 0777);
     sceIoMkdir(GXR_CACHE_DIR, 0777);

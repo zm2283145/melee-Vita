@@ -402,6 +402,10 @@ void OSRegisterVersion(const char* version) { (void) version; }
 
 void OSVReport(const char* format, va_list args)
 {
+#ifdef MELEE_VITA_RELEASE
+    (void) format;
+    (void) args;
+#else
     char message[768];
     va_list log_args;
     va_copy(log_args, args);
@@ -409,6 +413,7 @@ void OSVReport(const char* format, va_list args)
     va_end(log_args);
     melee_vita_log_info("%s", message);
     vprintf(format, args);
+#endif
 }
 
 void OSVAttention(const char* format, va_list args)

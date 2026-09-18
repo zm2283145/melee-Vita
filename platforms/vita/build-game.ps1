@@ -1,6 +1,10 @@
+#Requires -Version 7.0
 param(
     [string]$VitaSdk = $env:VITASDK,
     [string]$BuildDirectory = "$PSScriptRoot/../../build-vita/game",
+    [ValidateSet('Release', 'Debug')]
+    [string]$Configuration = 'Release',
+    [ValidateRange(1, 64)]
     [int]$Jobs = 8
 )
 
@@ -10,12 +14,14 @@ if (-not $VitaSdk) {
 }
 
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$build = [System.IO.Path]::GetFullPath($BuildDirectory)
+$build = Join-Path ($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BuildDirectory)) $Configuration
 $objects = Join-Path $build 'obj'
 New-Item -ItemType Directory -Force -Path $objects | Out-Null
 
-$compiler = Join-Path $VitaSdk 'bin/arm-vita-eabi-gcc.exe'
-$archiver = Join-Path $VitaSdk 'bin/arm-vita-eabi-ar.exe'
+$suffix = if ($IsWindows) { '.exe' } else { '' }
+$compiler = Join-Path $VitaSdk "bin/arm-vita-eabi-gcc$suffix"
+$archiver = Join-Path $VitaSdk "bin/arm-vita-eabi-ar$suffix"
+$python = (Get-Command $(if ($IsWindows) { 'python' } else { 'python3' }) -ErrorAction Stop).Source
 $compat = Join-Path $PSScriptRoot 'vita_compat.h'
 $includeAurora = Join-Path $root 'extern/aurora/include'
 $includeSrc = Join-Path $root 'src'
@@ -23,14 +29,19 @@ $includeSdk = Join-Path $root 'src/sdk_include'
 
 $sources = @(
     Get-ChildItem (Join-Path $root 'src/melee'), (Join-Path $root 'src/sysdolphin') -Recurse -Filter *.c |
-        Where-Object { $_.FullName -notmatch 'baselib\\debugconsole_main\.c$' } |
+        Where-Object { $_.FullName -notmatch 'baselib[\\/]debugconsole_main\.c$' } |
         Sort-Object FullName |
         Select-Object -ExpandProperty FullName
 )
 $sources += Join-Path $root 'src/pc/vtxarray.c'
 
+$configurationFlags = if ($Configuration -eq 'Release') {
+    @('-O2', '-DNDEBUG', '-DMELEE_VITA_RELEASE=1')
+} else {
+    @('-Og', '-g3')
+}
 $common = @(
-    '-std=c11', '-O2', '-g3',
+    '-std=c11',
     '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1', 
     "-I$includeAurora", "-I$includeSrc", "-I$includeSdk",
     '-Wno-all', '-Wno-extra',
@@ -40,7 +51,7 @@ $common = @(
     '-fgnu89-inline',
     '-ffp-contract=off', '-Wno-scalar-storage-order',
     '-include', $compat, '-c'
-)
+) + $configurationFlags
 
 $sjisTool = Join-Path $PSScriptRoot 'sjis_literals.py'
 $sjisDir = Join-Path $build 'sjis'
@@ -63,6 +74,7 @@ $pending = @($compileItems | Where-Object {
 })
 
 Write-Output "Compiling $($pending.Count) of $($compileItems.Count) game sources..."
+$compileErrors = @()
 $pending | ForEach-Object -Parallel {
     $item = $_
     # GCC diagnostics arrive on stderr even when they are non-fatal warnings;
@@ -75,7 +87,7 @@ $pending | ForEach-Object -Parallel {
         # Shift-JIS runtime strings: rewrite UTF-8 literals as CP932 escapes
         # (VitaSDK GCC cannot use -fexec-charset=CP932).
         $generated = Join-Path $using:sjisDir ([System.IO.Path]::GetFileName($item.Object) -replace '\.o$', '.c')
-        & py -3 $using:sjisTool $item.Source $generated
+        & $using:python $using:sjisTool $item.Source $generated
         if ($LASTEXITCODE -ne 0) { throw "Shift-JIS conversion failed: $($item.Source)" }
         $sourceToCompile = $generated
         $extra = @('-iquote', [System.IO.Path]::GetDirectoryName($item.Source))
@@ -85,11 +97,14 @@ $pending | ForEach-Object -Parallel {
     if ($LASTEXITCODE -ne 0) {
         throw "Vita compile failed: $($item.Source)"
     }
-} -ThrottleLimit $Jobs
+} -ThrottleLimit $Jobs -ErrorVariable +compileErrors
+if ($compileErrors.Count -ne 0) {
+    throw "Vita game compilation failed; refusing to archive incomplete or stale objects."
+}
 
 $response = Join-Path $build 'game-objects.rsp'
 $compileItems.Object |
-    ForEach-Object { '"' + ($_.Replace('\\', '/')) + '"' } |
+    ForEach-Object { '"' + ($_.Replace('\', '/')) + '"' } |
     Set-Content -Encoding ascii $response
 $archive = Join-Path $build 'libmelee_vita_game.a'
 & $archiver 'rcs' $archive "@$response"

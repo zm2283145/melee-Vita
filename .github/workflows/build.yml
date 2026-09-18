@@ -2,9 +2,10 @@ name: Build
 
 on:
   push:
-    branches: ['**']
-    tags: ['v*']
+    branches: ['**', '!vita-port']
+    tags: ['v*', '!vita-*']
   pull_request:
+    branches-ignore: [vita-port]
   workflow_dispatch:
 
 # Tag builds publish a release; everything else just produces artifacts.
@@ -17,6 +18,7 @@ concurrency:
 
 jobs:
   lint:
+    if: github.ref != 'refs/heads/vita-port'
     name: Lint & Style Verification
     runs-on: ubuntu-24.04
     steps:
@@ -34,6 +36,7 @@ jobs:
         run: python3 tools/compile_check.py
 
   linux:
+    if: github.ref != 'refs/heads/vita-port'
     name: Linux (${{ matrix.arch }})
     strategy:
       matrix:
@@ -72,6 +75,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: github.ref != 'refs/heads/vita-port'
     name: Windows (x86-64, MinGW cross)
     runs-on: ubuntu-24.04
     steps:
@@ -99,6 +103,7 @@ jobs:
           if-no-files-found: error
 
   android:
+    if: github.ref != 'refs/heads/vita-port'
     name: Android (arm64-v8a)
     runs-on: ubuntu-24.04
     steps:

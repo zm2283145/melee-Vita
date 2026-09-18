@@ -1,5 +1,6 @@
 #include "vita_log.h"
 
+#ifndef MELEE_VITA_RELEASE
 #include <uvdb.h>
 #include <psp2/net/net.h>
 #include <psp2/net/netctl.h>
@@ -83,3 +84,4 @@ void melee_vita_log_stop(void)
     if (s_module_loaded) sceSysmoduleUnloadModule(SCE_SYSMODULE_NET);
     s_logger_started = s_netctl_started = s_net_started = s_module_loaded = 0;
 }
+#endif

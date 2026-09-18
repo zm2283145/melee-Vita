@@ -17,9 +17,11 @@ int melee_main(void);
 
 int main(void)
 {
+#ifndef MELEE_VITA_RELEASE
     int log_result = melee_vita_log_start();
-    int result;
     printf("Melee Vita: logger startup %s\n", log_result == 0 ? "passed" : "failed");
+#endif
+    int result;
     melee_vita_log_info("Melee Vita full boot: process entered");
 
     result = melee_vita_platform_init();

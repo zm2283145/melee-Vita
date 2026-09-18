@@ -1,0 +1,128 @@
+name: Vita build and draft release
+
+on:
+  push:
+    branches: [vita-port]
+  pull_request:
+    branches: [vita-port]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vita-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Vita VPK
+    if: github.ref == 'refs/heads/vita-port' || github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build python3 curl bzip2 xz-utils
+          echo "VITASDK=$RUNNER_TEMP/vitasdk" >> "$GITHUB_ENV"
+
+      - name: Install pinned Vita toolchain and libraries
+        run: bash tools/setup_vita_ci.sh
+
+      - name: Build full game
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:VITASDK/bin:$env:PATH"
+          ./platforms/vita/build-full.ps1 -Configuration Release -Jobs 2
+
+      - name: Verify release has no debug symbols or logger
+        run: |
+          export PATH="$VITASDK/bin:$PATH"
+          arm-vita-eabi-readelf --sections build-vita/full/melee-full.elf > build-vita/sections.txt
+          arm-vita-eabi-nm --defined-only build-vita/full/melee-full.elf > build-vita/symbols.txt
+          if grep -Eq '\.debug_|\.zdebug_' build-vita/sections.txt; then
+            echo "::error::Release ELF still contains debug sections"
+            exit 1
+          fi
+          if grep -Eq ' (uvdb_|melee_vita_(log_|debugger_))' build-vita/symbols.txt; then
+            echo "::error::Release ELF still contains logging/debugger symbols"
+            exit 1
+          fi
+
+      - name: Package release assets
+        run: |
+          mkdir -p dist
+          cp build-vita/full/melee-full.vpk dist/Melee-Vita.vpk
+          cp README.md dist/README-Vita.md
+          cp LICENSE.md COPYING dist/
+          printf '%s\n' "$GITHUB_SHA" > dist/COMMIT.txt
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile("dist/Melee-Vita.vpk") as vpk:
+              assert vpk.testzip() is None, "Corrupt VPK"
+              assert {"eboot.bin", "sce_sys/param.sfo"} <= set(vpk.namelist())
+              assert not any(name.lower().endswith((".iso", ".gcm", ".rvz", ".dol", ".suprx", ".skprx")) for name in vpk.namelist())
+          PY
+          (cd dist && sha256sum Melee-Vita.vpk README-Vita.md LICENSE.md COPYING COMMIT.txt > SHA256SUMS.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vita-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  draft-release:
+    name: Create unpublished release draft
+    needs: build
+    if: >-
+      github.repository == 'zm2283145/melee-pc' &&
+      github.ref == 'refs/heads/vita-port' &&
+      github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vita-${{ github.sha }}
+          path: dist
+
+      - name: Create draft for manual approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="vita-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          cat > release-notes.md <<EOF
+          Experimental native PS Vita port. This is an unpublished draft for maintainer review.
+
+          Commit: ${GITHUB_SHA}
+          Build: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          Install Melee-Vita.vpk with VitaShell. Read README-Vita.md for the required
+          homebrew environment, shader compiler module, disc image
+          path, and controls. Game data and proprietary modules are not included.
+
+          Expect stuttering while shaders compile at runtime. Cached shaders reduce
+          repeat compilation as you play, but performance and compatibility remain
+          experimental. Back up saves before updating.
+
+          This is an optimized Release build with logging and debugger support
+          disabled. Review and publish this draft manually when ready; this
+          workflow never publishes releases automatically.
+          EOF
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "Melee Vita experimental build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
+            --notes-file release-notes.md \
+            --draft --prerelease \
+            dist/Melee-Vita.vpk dist/README-Vita.md \
+            dist/LICENSE.md dist/COPYING dist/COMMIT.txt dist/SHA256SUMS.txt

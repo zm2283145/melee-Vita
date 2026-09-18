@@ -1,7 +1,15 @@
+#Requires -Version 7.0
 param(
     [string]$VitaSdk = $env:VITASDK,
     [string]$BuildDirectory = "$PSScriptRoot/../../build-vita/full",
+    [ValidateSet('Release', 'Debug')]
+    [string]$Configuration = 'Release',
+    [ValidateRange(1, 64)]
     [int]$Jobs = 8,
+    [string]$VitaDebuggerDirectory = 'D:/Claude/VitaDebugger',
+    [string]$KuBridgeLibrary = "$PSScriptRoot/../../build-vita/kubridge-build/libkubridge_stub.a",
+    [ValidatePattern('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')]
+    [string]$LogHost = '10.1.1.146',
     [switch]$EnableDebugger
 )
 
@@ -11,12 +19,34 @@ if (-not $VitaSdk) {
 }
 
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$build = [System.IO.Path]::GetFullPath($BuildDirectory)
+$build = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BuildDirectory)
+if ($EnableDebugger -and $Configuration -ne 'Debug') {
+    throw '-EnableDebugger requires -Configuration Debug.'
+}
+if ($Configuration -eq 'Debug') {
+    $VitaDebuggerDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($VitaDebuggerDirectory)
+    $KuBridgeLibrary = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($KuBridgeLibrary)
+    foreach ($dependency in @(
+        (Join-Path $VitaDebuggerDirectory 'uvdb.h'),
+        (Join-Path $VitaDebuggerDirectory 'libuvdb.a'),
+        $KuBridgeLibrary
+    )) {
+        if (-not (Test-Path -LiteralPath $dependency -PathType Leaf)) {
+            throw "Missing Vita build dependency: $dependency. See platforms/vita/README.md."
+        }
+    }
+}
+$configurationFlags = if ($Configuration -eq 'Release') {
+    @('-O2', '-DNDEBUG', '-DMELEE_VITA_RELEASE=1')
+} else {
+    @('-Og', '-g3')
+}
 $objects = Join-Path $build 'obj'
 New-Item -ItemType Directory -Force -Path $objects | Out-Null
 
 function Invoke-VitaTool([string]$Name, [string[]]$Arguments) {
-    $tool = Join-Path $VitaSdk "bin/$Name.exe"
+    $suffix = if ($IsWindows) { '.exe' } else { '' }
+    $tool = Join-Path $VitaSdk "bin/$Name$suffix"
     & $tool @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "$Name failed with exit code $LASTEXITCODE"
@@ -24,7 +54,9 @@ function Invoke-VitaTool([string]$Name, [string[]]$Arguments) {
 }
 
 $gameArchive = & (Join-Path $PSScriptRoot 'build-game.ps1') `
-    -VitaSdk $VitaSdk -Jobs $Jobs | Select-Object -Last 1
+    -VitaSdk $VitaSdk -BuildDirectory (Join-Path $build 'game') `
+    -Configuration $Configuration -Jobs $Jobs |
+    Select-Object -Last 1
 
 $platformSources = @(
     'extern/aurora/lib/dolphin/mtx/mtx.c',
@@ -56,26 +88,28 @@ $platformSources = @(
 )
 
 $common = @(
-    '-std=gnu11', '-O2', '-g3',
+    '-std=gnu11',
     '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
     "-I$(Join-Path $root 'extern/aurora/include')",
     "-I$(Join-Path $root 'src')",
     "-I$(Join-Path $root 'src/sdk_include')",
     "-I$(Join-Path $root 'platforms/vita/game')",
-    '-ID:/Claude/VitaDebugger',
     '-Wall', '-Wextra', '-Werror', '-Wno-parentheses', '-fno-short-enums',
     '-include', (Join-Path $PSScriptRoot 'vita_compat.h'), '-c'
-)
+) + $configurationFlags
+if ($Configuration -eq 'Debug') {
+    $common += @("-I$VitaDebuggerDirectory", "-DMELEE_VITA_LOG_HOST=`"$LogHost`"")
+}
 
 $commonCpp = @(
-    '-std=c++20', '-O2', '-g3',
+    '-std=c++20',
     '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
     "-I$(Join-Path $root 'extern/aurora/include')",
     "-I$(Join-Path $root 'extern/aurora/lib')",
     "-I$(Join-Path $root 'src')",
     "-I$(Join-Path $root 'src/sdk_include')",
     '-fno-exceptions', '-fno-rtti', '-fno-short-enums', '-c'
-)
+) + $configurationFlags
 
 if ($EnableDebugger) { $common = @('-DMELEE_VITA_WAIT_FOR_DEBUGGER=1') + $common }
 $platformObjects = foreach ($relative in $platformSources) {
@@ -107,19 +141,28 @@ $link = @(
     '-fno-short-enums', '-Wl,-q', '-Wl,-z,nocopyreloc',
     '-Wl,--defsym=__sce_headroom=0x1000', '-Wl,--gc-sections'
 ) + $platformObjects + @(
-    '-Wl,--start-group', $gameArchive, '-Wl,--end-group',
-    'D:/Claude/VitaDebugger/libuvdb.a',
-    (Join-Path $root 'build-vita/kubridge-build/libkubridge_stub.a'),
+    '-Wl,--start-group', $gameArchive, '-Wl,--end-group'
+)
+if ($Configuration -eq 'Debug') {
+    $link += @(
+        (Join-Path $VitaDebuggerDirectory 'libuvdb.a'),
+        $KuBridgeLibrary,
+        '-lSceNet_stub', '-lSceNetCtl_stub', '-lSceNetPs_stub'
+    )
+}
+$link += @(
     '-lSceCtrl_stub', '-lSceDisplay_stub', '-lSceAudio_stub', '-lSceJpeg_stub', '-lSceKernelThreadMgr_stub',
     '-lvita2d', '-lSceGxm_stub', '-lSceDisplay_stub', '-lSceAppMgr_stub',
     '-lSceCommonDialog_stub', '-lm', '-lSceProcessmgr_stub',
-    '-lSceSysmem_stub', '-lSceLibKernel_stub', '-lSceKernelModulemgr_stub', '-lSceNet_stub',
-    '-lSceNetCtl_stub', '-lSceNetPs_stub', '-lSceSysmodule_stub',
+    '-lSceSysmem_stub', '-lSceLibKernel_stub', '-lSceKernelModulemgr_stub', '-lSceSysmodule_stub',
     '-lvitashark', '-lSceShaccCgExt', '-ltaihen_stub', '-lSceShaccCg_stub_weak',
     '-lstdc++', '-pthread', '-o', $elf
 )
 
 Invoke-VitaTool 'arm-vita-eabi-gcc' $link
+if ($Configuration -eq 'Release') {
+    Invoke-VitaTool 'arm-vita-eabi-strip' @('--strip-debug', $elf)
+}
 Invoke-VitaTool 'vita-elf-create' @($elf, $velf)
 Invoke-VitaTool 'vita-make-fself' @('-c', $velf, $eboot)
 Invoke-VitaTool 'vita-mksfoex' @(

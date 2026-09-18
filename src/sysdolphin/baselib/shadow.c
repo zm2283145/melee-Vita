@@ -267,7 +267,7 @@ void HSD_ShadowStartRender(HSD_Shadow* shadow)
             GXSetScissor(2, 2, idesc->width - 4, idesc->height - 4);
         }
 
-    #ifdef TARGET_VITA
+    #if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
     {
         extern void melee_vita_log_info(const char*, ...);
         static u32 logged;
@@ -299,7 +299,7 @@ void HSD_ShadowEndRender(HSD_Shadow* shadow)
         HSD_ShadowSetSize(shadow, idesc->width, idesc->height);
     }
 
-#ifdef TARGET_VITA
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
     {
         extern void melee_vita_log_info(const char*, ...);
         static u32 logged;

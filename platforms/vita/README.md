@@ -1,105 +1,110 @@
-# Vita bring-up
+# Building the Vita port
 
-The `melee_vita` diagnostic target validates the VitaSDK compiler, linker,
-display, controller input, SELF conversion, VPK packaging, asset decoding, and
-the native GXM renderer. Startup also verifies that
-the Vita GCC toolchain implements the big-endian `scalar_storage_order`
-attribute required by Melee's on-disc structures; failure exits with code 2.
+For installation, controls, runtime requirements, and experimental status, see
+the [main Vita README](../../README.md).
 
-The separate `melee_vita_game` target compiles the original Melee and
-sysdolphin sources using the endian-safe disc representation inherited from the
-PC port. It is not linked into the diagnostic application yet. Its purpose is
-to expose and resolve source portability gaps while Vita-native GX, DVD, VI,
-PAD, OS, audio, card, and movie backends are implemented.
+## Full-game Release build
 
-Vita builds use four-byte enums to preserve the original ABI. VitaSDK's GCC
-does not provide an iconv implementation for `-fexec-charset=CP932`, so the PC
-build's automatic UTF-8-to-Shift-JIS literal conversion cannot be reused.
-Japanese runtime strings remain a tracked port item and will be converted in a
-generated source step before the complete game executable is linked.
+`build-full.ps1` is the full-game build entry point on Windows and Linux. It
+compiles the Melee/HSD sources, the native Vita platform layer, and the THP
+decoder, then creates a SELF and a VPK with LiveArea assets.
 
-## Native game platform layer
+Required on the build machine:
 
-`platforms/vita/game` now contains the first native backends used by the real
-game target:
+- PowerShell **7 or newer** (`pwsh`) and Python 3 (`python` on Windows,
+  `python3` on Linux).
+- [VitaSDK](https://vitasdk.org/) with `VITASDK` set and its `bin` directory on
+  `PATH`. The build needs GCC's big-endian `scalar_storage_order` support;
+  the CI SDK uses GCC 15.
+- `libvita2d`, taiHEN import stubs, pthread support, and the SDK system stubs.
+- [SceShaccCgExt](https://github.com/bythos14/SceShaccCgExt) and
+  [vitaShaRK](https://github.com/Rinnegatamante/vitaShaRK), installed in
+  VitaSDK. Build/install SceShaccCgExt first, then vitaShaRK.
 
-- a Vita entry point that calls the original `melee_main`;
-- a 24 MiB MEM1 arena with GameCube-compatible arena allocation;
-- GameCube-rate clocks, calendar conversion, interrupt state, and alarms;
-- the original 32-byte-aligned Dolphin heap and portable matrix/vector math;
-- a direct FST/DVD reader for `ux0:data/melee/GALE01.iso`, including deferred
-  asynchronous completions; and
-- Vita controls exposed through the original PAD API;
-- a Vita-vblank-backed VI frame boundary with original retrace callbacks; and
-- a native GX front end that records FIFO, draw synchronization, projection,
-  viewport, matrix, vertex, texture, lighting, blend, depth, and TEV state for
-  translation into GXM draw batches.
+From the repository root:
 
-All GX symbols currently referenced by the shared Melee/HSD archive are now
-provided by the Vita platform layer. Both big-endian GX display lists and the
-immediate-mode stream used by shape animation are decoded into canonical
-vertices. Quads, triangle lists, strips, and fans are projected with the
-game's current matrices, converted to triangle batches, and submitted to the
-GXM-backed Vita frame sink. `GXCopyDisp` now closes and presents that frame.
-
-The live path decodes and caches I4, I8, IA4, IA8, RGB565, RGB5A3, RGBA8,
-CMPR, C4, C8, and C14X2 textures, including TLUT palettes. GX wrap and filter
-state is mapped onto Vita samplers, and the first TEV stage selects the texture
-used by each batch. Texture-coordinate generation supports position, normal,
-and UV sources with regular and post texture matrices. GX depth testing and
-writes map to native GXM state, GX face culling is normalized after the
-Y-flipped projection, and line/line-strip/point commands use native Vita
-primitives. Mutable texture data safely invalidates the cache at a frame
-boundary.
-
-Multi-stage TEV state and constants are recorded. The current practical
-approximation selects the first active texture stage and folds later constant
-color stages into its tint; a dedicated shader generator will eventually be
-needed for exact multi-texture and indirect-TEV behavior.
-
-The disc image remains external and is never added to the VPK. The DVD backend
-only supports an uncompressed GALE01 revision 1.02 image at this stage.
-
-Default controls are Cross/A, Circle/B, Square/X, Triangle/Y, Select/Z,
-Start/Start, left stick/main stick, right stick/C-stick, and L/R/GameCube
-triggers. Rumble is deferred until external-controller support is added.
-
-Configure and build with:
-
-```sh
-cmake -S . -B build-vita \
-  -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake" \
-  -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-vita
+```powershell
+$env:VITASDK = 'C:\vitasdk'
+$env:PATH = "$env:VITASDK\bin;$env:PATH"
+.\platforms\vita\build-full.ps1 -Configuration Release -Jobs 8
 ```
 
-Compile the shared game-code port explicitly with:
+On Linux, set `VITASDK` and add `$VITASDK/bin` to `PATH`, then run:
 
 ```sh
-cmake --build build-vita --target melee_vita_game
+pwsh -NoProfile -File platforms/vita/build-full.ps1 -Configuration Release -Jobs 2
 ```
 
-Install `build-vita/platforms/vita/melee-vita.vpk`. It checks
-`ux0:data/melee/GALE01.iso`, displays the detected ID, revision, size, and a
-validation result, then waits for Start to exit. The current archive milestone
-loads `PlSsNr.dat`, relocates its complete pointer graph, obtains the
-`PlySamus5K_Share_joint` costume-model root, and validates its joint, material,
-texture, and polygon descriptor graphs.
+The output is **`build-vita/full/melee-full.vpk`**, title ID `MLVITA002`.
+Release is the default even if `-Configuration` is omitted. It uses `-O2`,
+`NDEBUG`, and `MELEE_VITA_RELEASE`, with no `-g` flags. DebugNet logging,
+ordinary OS reports, and the shader diagnostic callback are disabled.
+Fatal panics still terminate with an error. VitaDebugger and kubridge are not
+linked into the Release executable. The runtime shader compiler and persistent
+shader cache are gameplay features and are not disabled.
 
-Retail disc images are never packaged. Keep the image outside the repository;
-the game target will eventually read it from a user-owned path such as
-`ux0:data/melee/GALE01.iso`.
+No game image or proprietary shader compiler module is needed at build time.
+Neither belongs in source control, CI artifacts, or the VPK.
 
-## Optional diagnostics
+## Reproducing CI
 
-VitaDebugger and profiler integrations are opt-in. Supply their header and
-library locations with the `MELEE_VITA_*` CMake cache variables. Defaults point
-at `D:/Claude/VitaDebugger` and `D:/Claude/kuBridge`. The default build has no
-dependency on them. VitaDebugger also requires a built
-`kuBridge/build-local/libkubridge_stub.a`; the profiler archive is already
-available at `VitaDebugger/profiler/build/vita/libvitaprofiler.a`.
+The workflow uses an Ubuntu 24.04 host with PowerShell 7, Python 3, GNU Make,
+CMake, Ninja, curl, Git, bzip2, and xz. From a clean checkout:
 
-The debugger must only be entered after networking has been initialized. It is
-therefore wired as a build dependency here but will not be started by the smoke
-test. The profiler is kept separate so optimized profiling builds do not inherit
-debugger overhead.
+```sh
+export VITASDK="$HOME/melee-vitasdk"
+bash tools/setup_vita_ci.sh
+export PATH="$VITASDK/bin:$PATH"
+pwsh -NoProfile -File platforms/vita/build-full.ps1 -Configuration Release -Jobs 2
+```
+
+`setup_vita_ci.sh` is a Linux x86-64 setup helper, not a Windows SDK installer.
+It refuses to replace an existing SDK. It verifies downloaded SDK/library
+archives with pinned SHA-256 hashes and builds shader libraries at pinned Git
+revisions. Dependencies are downloaded under ignored `build-vita/deps/`.
+If the upstream legacy package assets change, checksum verification fails;
+review and update the pinned archive/hash pair together instead of bypassing it.
+
+The [workflow](../../.github/workflows/vita-release.yml) uploads the VPK and
+creates a draft only for the `vita-port` branch in `zm2283145/melee-pc`.
+It never publishes a release automatically and does not build the PC targets.
+
+## Opt-in Debug build
+
+Debug builds are for development only and are **not** used by release CI.
+They use `-Og -g3`, enable diagnostic logging, and require a built
+[VitaDebugger](https://github.com/zm2283145/VitaDebugger) `libuvdb.a` and
+[kubridge](https://github.com/zm2283145/kubridge) import library.
+The matching kubridge plugin must be installed on the development Vita.
+
+```powershell
+.\platforms\vita\build-full.ps1 -Configuration Debug `
+  -BuildDirectory .\build-vita\debug `
+  -VitaDebuggerDirectory D:\dev\VitaDebugger `
+  -KuBridgeLibrary D:\dev\kubridge\build\libkubridge_stub.a `
+  -LogHost 192.168.1.100
+```
+
+Add `-EnableDebugger` only when you intend to wait for a GDB connection.
+It is rejected for Release builds. DebugNet sends logs to the selected host on
+UDP port 18194; GDB uses TCP port 1234. Use a trusted private LAN only.
+Specify your own paths and log host rather than relying on the historical
+local-machine defaults.
+
+Game archives use separate `Release` and `Debug` subdirectories so configuration
+changes cannot accidentally reuse the other build's game objects. For a fully
+clean build after toolchain/header changes, use a fresh `-BuildDirectory`.
+
+## Source layout and older diagnostics
+
+`game/` contains the native OS, DVD, PAD, audio, memory-card, VI, GX/GXM,
+widescreen, and THP implementations. `gx_render.c` generates and caches
+shaders; `game/pad.c` is the authoritative input mapping. Four-byte enums
+preserve the original ABI. `sjis_literals.py` converts Japanese string
+literals into CP932 escapes because the Windows Vita compiler lacks iconv.
+
+The CMake `melee_vita` target and `build-smoke.ps1` are older diagnostic viewers,
+not the full game. Their VPK is `melee-vita.vpk`, title ID `MLVITA001`.
+The CMake `melee_vita_game` target builds a game-code archive only. These older
+paths retain their bring-up/debugger dependencies and are not used for releases;
+use `build-full.ps1` for the playable experimental port.

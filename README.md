@@ -3,7 +3,6 @@
 An **experimental native PlayStation Vita port of Super Smash Bros. Melee
 (NTSC-U 1.02)**, developed on the
 [`vita-port` branch](https://github.com/zm2283145/melee-Vita/tree/vita-port).
-This branch started from `claude-bringup`.
 
 **Release version: 0.6.0.** Vita's two-part package metadata displays this as
 `00.60`; the GitHub release version is `0.6.0`.
@@ -74,8 +73,7 @@ Development/debug builds have separate requirements.
 ## Install and run
 
 1. Download `Melee-Vita.vpk` from a **published Vita release** in
-   [Releases](https://github.com/zm2283145/melee-Vita/releases). Unpublished drafts
-   are for the maintainer to review, not public downloads.
+   [Releases](https://github.com/zm2283145/melee-Vita/releases).
 2. Install the VPK using VitaShell. It uses title ID **`MLVITA002`** and currently
    appears as **Melee Vita (Game Code)** in LiveArea.
 3. Copy your uncompressed disc image to **`ux0:data/melee/GALE01.iso`** and
@@ -144,38 +142,6 @@ The result is `build-vita/full/melee-full.vpk` (renamed `Melee-Vita.vpk` by CI).
 Release builds use optimization, disable diagnostic logging and debugger
 support, and do not include debug symbols. Runtime shader compilation and its
 disk cache remain enabled; those are needed for normal gameplay.
-
-## Automated builds and release approval
-
-[Vita build and draft release](.github/workflows/vita-release.yml) runs on pushes
-to **`vita-port`**, on pull requests targeting that branch, and on manual
-dispatches selecting that branch. **`vita-port` is the repository's default
-branch**, so the **Run workflow** button is available in Actions. You can also
-use **Re-run all jobs** on an existing Vita workflow run.
-
-Pushes and manual builds create an **unpublished prerelease draft** only after
-the Release VPK has built and passed packaging checks. Each draft targets the
-exact built commit and includes the VPK, this README, licensing information,
-the commit ID, and SHA-256 checksums. Pull requests produce build artifacts
-only; they cannot create releases.
-
-The maintainer reviews the draft under **Releases**, edits its title, tag, or
-notes if needed, tests it on hardware, and clicks **Publish release** when ready.
-The workflow never publishes automatically. Draft tags use
-`vita-v0.6.0-build.<run-number>.<attempt>` for this version; reruns create a new draft rather than
-overwriting a published release. Retain the `vita-` tag prefix so the inherited
-desktop release workflow does not treat it as a PC release.
-The release version and Vita package version are maintained in
-[`platforms/vita/version.json`](platforms/vita/version.json). When approving the
-first release, the maintainer can rename its tag to `vita-v0.6.0`.
-
-GitHub Actions creates these drafts using the repository's built-in
-`GITHUB_TOKEN`; no personal token is required. The inherited desktop workflow
-excludes `vita-port` pushes and `vita-*` tags.
-Keep `vita-port` as the default branch: GitHub's release API rejects the built-in
-token when the target commit changes workflow files relative to the default
-branch. Changing that setting back can prevent draft creation even after the
-VPK builds successfully.
 
 ## Credits and licensing
 

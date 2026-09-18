@@ -428,8 +428,18 @@ static u32 active_texture_stage(void)
 /* Logical 640x480 -> Vita screen mapping.  Widescreen scenes span all 960
  * columns; the rest are pillarboxed at Melee's 73:60 display aspect. */
 extern int melee_vita_widescreen_active(void);
+/* While an offscreen pass is bound (the HSD shadow map), the logical 640x480
+ * frame maps 1:1 onto the target instead of onto the screen. */
+static struct { f32 half_w, half_h; u8 active; } s_render_target = { 480.0f, 272.0f, 0u };
+
 static void screen_mapping(f32* sx, f32* ox, f32* sy)
 {
+    if (s_render_target.active) {
+        *sx = 1.0f;
+        *ox = 0.0f;
+        *sy = 1.0f;
+        return;
+    }
     *sy = 544.0f / 480.0f;
     if (melee_vita_widescreen_active()) {
         *sx = 960.0f / 640.0f;
@@ -773,10 +783,10 @@ static void prepare_xform(GxrXform* x)
     x->perspective = s_gx.projection[0] == (f32) GX_PERSPECTIVE;
     memcpy(x->p, s_gx.projection, sizeof(x->p));
     screen_mapping(&scale, &offset, &yscale);
-    x->ax = (offset + scale * (v[0] + v[2] * 0.5f)) / 480.0f - 1.0f;
-    x->bx = scale * v[2] * 0.5f / 480.0f;
-    x->ay = 1.0f - yscale * (v[1] + v[3] * 0.5f) / 272.0f;
-    x->by = yscale * v[3] * 0.5f / 272.0f;
+    x->ax = (offset + scale * (v[0] + v[2] * 0.5f)) / s_render_target.half_w - 1.0f;
+    x->bx = scale * v[2] * 0.5f / s_render_target.half_w;
+    x->ay = 1.0f - yscale * (v[1] + v[3] * 0.5f) / s_render_target.half_h;
+    x->by = yscale * v[3] * 0.5f / s_render_target.half_h;
     x->z_far = v[5];
     x->z_range = v[5] - v[4];
     x->channel_count = s_gx.channel_count > 2 ? 2u : s_gx.channel_count;
@@ -2177,10 +2187,10 @@ static void fill_vertex_key_uniforms(GxrVtxKey* key, GxrVtxUniforms* u, bool has
     u->proj[0][2] = s_gx.projection[3]; u->proj[0][3] = s_gx.projection[4];
     u->proj[1][0] = s_gx.projection[5]; u->proj[1][1] = s_gx.projection[6];
     screen_mapping(&scale, &offset, &yscale);
-    u->proj[1][2] = (offset + scale * (v[0] + v[2] * 0.5f)) / 480.0f - 1.0f;
-    u->proj[1][3] = scale * v[2] * 0.5f / 480.0f;
-    u->proj[2][0] = 1.0f - yscale * (v[1] + v[3] * 0.5f) / 272.0f;
-    u->proj[2][1] = yscale * v[3] * 0.5f / 272.0f;
+    u->proj[1][2] = (offset + scale * (v[0] + v[2] * 0.5f)) / s_render_target.half_w - 1.0f;
+    u->proj[1][3] = scale * v[2] * 0.5f / s_render_target.half_w;
+    u->proj[2][0] = 1.0f - yscale * (v[1] + v[3] * 0.5f) / s_render_target.half_h;
+    u->proj[2][1] = yscale * v[3] * 0.5f / s_render_target.half_h;
     u->proj[2][2] = v[5];
     u->proj[2][3] = v[5] - v[4];
     u->proj[3][0] = u->proj[3][1] = u->proj[3][2] = 0.0f;
@@ -2804,6 +2814,31 @@ void GXSetTexCopyDst(u16 width, u16 height, GXTexFmt format, GXBool mipmap)
  * HSD shadow maps (GX_CTF_R4) stay fully lit because the shadow pass itself is
  * skipped on Vita. */
 static void copy_tex_impl(void* destination, GXBool clear);
+/* Shadow maps: HSD draws silhouettes and copies them out of the frame.  Here
+ * the pass is given its own render target, so the map never depends on what
+ * else happened to be on screen. */
+void melee_vita_gx_begin_shadow(void* key, u32 width, u32 height)
+{
+    struct vita2d_texture* target;
+    if (key == NULL || width == 0u || height == 0u || width > 1024u || height > 1024u) return;
+    target = melee_vita_gxm_copy_texture(key, width, height);
+    if (target == NULL) return;
+    g_melee_vita_last_copy_dst = key;
+    s_render_target.active = 1u;
+    s_render_target.half_w = (f32) width * 0.5f;
+    s_render_target.half_h = (f32) height * 0.5f;
+    melee_vita_gxm_begin_target(target, width, height, 0xffffffffu);
+}
+
+void melee_vita_gx_end_shadow(void)
+{
+    if (!s_render_target.active) return;
+    s_render_target.active = 0u;
+    s_render_target.half_w = 480.0f;
+    s_render_target.half_h = 272.0f;
+    melee_vita_gxm_end_target();
+}
+
 void GXCopyTex(void* destination, GXBool clear)
 {
     const u64 t0 = sceKernelGetProcessTimeWide();
@@ -2854,10 +2889,19 @@ static void copy_tex_impl(void* destination, GXBool clear)
     {
         f32 scale, offset, yscale;
         screen_mapping(&scale, &offset, &yscale);
+        /* Only the shadow pass needs its rectangle wiped afterwards (its
+         * silhouettes would otherwise show on screen).  Other copies are of
+         * scene content that is drawn again anyway, and blanking those
+         * rectangles punched holes in the frame. */
+        /* Nothing is cleared after a copy: the scene is drawn over these
+         * rectangles afterwards, and wiping them removed content other copies
+         * (the Pokemon Stadium screen) still needed. */
+        const int clear_region = 0;
+        (void) clear;
         melee_vita_gxm_queue_copy(target, dst_w, dst_h,
                                   offset + s_tex_copy_src[0] * scale, s_tex_copy_src[1] * yscale,
                                   s_tex_copy_src[2] * scale / (f32) dst_w,
-                                  s_tex_copy_src[3] * yscale / (f32) dst_h, clear);
+                                  s_tex_copy_src[3] * yscale / (f32) dst_h, clear_region);
     }
 }
 

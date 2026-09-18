@@ -73,8 +73,9 @@ u32 PADRead(PADStatus* status)
         status[0].triggerLeft = 255;
     }
     if (vita.buttons & SCE_CTRL_RTRIGGER) {
-        status[0].button |= PAD_TRIGGER_R;
-        status[0].triggerRight = 255;
+        /* R is the GameCube Z button (grab, and the menu shortcuts that use it);
+         * shielding stays on L, which reports a full trigger press. */
+        status[0].button |= PAD_TRIGGER_Z;
     }
     return 0;
 }

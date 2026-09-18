@@ -186,6 +186,15 @@ void HSD_ShadowStartRender(HSD_Shadow* shadow)
     idesc = shadow->texture->imagedesc;
 
     if (list != NULL) {
+#ifdef TARGET_VITA
+        {
+            extern void melee_vita_gx_begin_shadow(void* key, u32 width, u32 height);
+            if (!idesc->image_ptr) {
+                HSD_ShadowSetSize(shadow, idesc->width, idesc->height);
+            }
+            melee_vita_gx_begin_shadow(DP(void, idesc->image_ptr), idesc->width, idesc->height);
+        }
+#endif
         HSD_CObjSetCurrent(cobj);
         {
             static HSD_Chan chan = {
@@ -291,8 +300,16 @@ void HSD_ShadowEndRender(HSD_Shadow* shadow)
                                 (unsigned) shadow->intensity);
     }
 #endif
+#ifdef TARGET_VITA
+    /* The pass drew straight into the map; there is nothing to copy. */
+    {
+        extern void melee_vita_gx_end_shadow(void);
+        melee_vita_gx_end_shadow();
+    }
+#else
     GXCopyTex(DP(void, idesc->image_ptr), GX_TRUE);
     GXPixModeSync();
+#endif
 
     GXInvalidateTexAll();
 

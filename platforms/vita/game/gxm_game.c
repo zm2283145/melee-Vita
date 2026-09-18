@@ -768,6 +768,69 @@ static void exec_copy(const void* payload)
         rt_default_depth();
     }
 }
+/* ---- offscreen passes -----------------------------------------------------
+ *
+ * HSD renders a shadow map by drawing silhouettes into a corner of the frame
+ * and copying that rectangle out.  Doing the same here made the map depend on
+ * whatever else had been drawn into that corner, so those passes are given
+ * their own render target instead: the drawing goes straight into the map. */
+
+typedef struct RqTarget {
+    vita2d_texture* target;
+    u32 width, height;
+    u32 clear_color;
+    u32 begin;
+} RqTarget;
+
+static void exec_target(const void* payload)
+{
+    const RqTarget* t = payload;
+    SceGxmContext* context = vita2d_get_context();
+    if (t->begin) {
+        if (t->target == NULL || t->target->gxm_rtgt == NULL) return;
+        vita2d_end_drawing();
+        sceGxmBeginScene(context, 0, t->target->gxm_rtgt, NULL, NULL, NULL,
+                         &t->target->gxm_sfc, NULL);
+        ++g_melee_vita_gxm_state_epoch;
+        {
+            const f32 hw = (f32) t->width * 0.5f;
+            const f32 hh = (f32) t->height * 0.5f;
+            sceGxmSetViewport(context, hw, hw, hh, -hh, 0.0f, 1.0f);
+        }
+        sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
+        rt_default_depth();
+        vita2d_set_blend_mode_add(0);
+        /* The map starts fully lit; silhouettes darken it. */
+        vita2d_draw_rectangle(0.0f, 0.0f, 960.0f, 544.0f, t->clear_color);
+    } else {
+        sceGxmEndScene(context, NULL, NULL);
+        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
+        rt_begin_scene(s_exec_frame->clear_color, 0);
+    }
+}
+
+void melee_vita_gxm_begin_target(struct vita2d_texture* target, u32 width, u32 height,
+                                 u32 clear_color)
+{
+    RqTarget* t = melee_vita_rq_push(exec_target, sizeof(RqTarget));
+    if (t == NULL) return;
+    t->target = target;
+    t->width = width;
+    t->height = height;
+    t->clear_color = clear_color;
+    t->begin = 1u;
+}
+
+void melee_vita_gxm_end_target(void)
+{
+    RqTarget* t = melee_vita_rq_push(exec_target, sizeof(RqTarget));
+    if (t == NULL) return;
+    t->target = NULL;
+    t->width = t->height = 0u;
+    t->clear_color = 0u;
+    t->begin = 0u;
+}
+
 void melee_vita_gxm_queue_copy(struct vita2d_texture* target, u32 width, u32 height,
                                f32 x0, f32 y0, f32 sx, f32 sy, int clear)
 {

@@ -99,8 +99,15 @@ void lb_8000B1CC(HSD_JObj* arg0, Vec3* pos0, Vec3* pos1)
     Quaternion r;
     Vec3 s;
 
+    if (pos1 == NULL) {
+        return;
+    }
     if (arg0 == NULL) {
-        *pos1 = *pos0;
+        if (pos0 != NULL) {
+            *pos1 = *pos0;
+        } else {
+            pos1->x = pos1->y = pos1->z = 0.0f;
+        }
         return;
     }
     if (HSD_JObjGetParent(arg0) != NULL) {
@@ -362,17 +369,17 @@ void lb_8000C07C(HSD_JObj* jobj, s32 i, DiscU32* arg3, DiscU32* arg4,
     HSD_ShapeAnimJoint* phi_r6;
 
     if (arg3 != NULL) {
-        phi_r4 = (HSD_AnimJoint*) (uintptr_t) arg3[i].v;
+        phi_r4 = DP(HSD_AnimJoint, arg3[i].v);
     } else {
         phi_r4 = NULL;
     }
     if (arg4 != NULL) {
-        phi_r5 = (HSD_MatAnimJoint*) (uintptr_t) arg4[i].v;
+        phi_r5 = DP(HSD_MatAnimJoint, arg4[i].v);
     } else {
         phi_r5 = NULL;
     }
     if (arg5 != NULL) {
-        phi_r6 = (HSD_ShapeAnimJoint*) (uintptr_t) arg5[i].v;
+        phi_r6 = DP(HSD_ShapeAnimJoint, arg5[i].v);
     } else {
         phi_r6 = NULL;
     }

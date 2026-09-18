@@ -72,11 +72,6 @@ void it_80278F2C(Item_GObj* item_gobj, CommandInfo* cmd)
     it_80278800(item_gobj, ef_id, arg2, &sp20, &sp14, 0, arg6);
 }
 
-#ifdef MUST_MATCH
-#pragma push
-#pragma dont_inline on
-#endif
-
 void it_802790C0(Item_GObj* item_gobj, CommandInfo* cmd)
 {
     u8 _padA[16];
@@ -139,15 +134,15 @@ void it_802790C0(Item_GObj* item_gobj, CommandInfo* cmd)
     hit->x40_b3 = cmd->u->it_create_hitbox_4.x40_b3;
     ++cmd->u;
 
-    hit->x40_b4 = ((u8*) cmd->u)[0];
-    hit->x41_b4 = (((u8*) cmd->u)[1] >> 7) & 1;
-    hit->x41_b5 = (((u8*) cmd->u)[1] >> 6) & 1;
-    hit->x41_b6 = (((u8*) cmd->u)[1] >> 5) & 1;
-    hit->x41_b7 = (((u8*) cmd->u)[1] >> 4) & 1;
-    hit->x42_b0 = (((u8*) cmd->u)[1] >> 3) & 1;
-    hit->x42_b1 = (((u8*) cmd->u)[1] >> 2) & 1;
-    hit->x42_b2 = (((u8*) cmd->u)[1] >> 1) & 1;
-    hit->x42_b3 = ((u8*) cmd->u)[1] & 1;
+    hit->x40_b4 = cmd->u->create_hitbox_5.x0;
+    hit->x41_b4 = cmd->u->create_hitbox_5.x1_b0;
+    hit->x41_b5 = cmd->u->create_hitbox_5.x1_b1;
+    hit->x41_b6 = cmd->u->create_hitbox_5.x1_b2;
+    hit->x41_b7 = cmd->u->create_hitbox_5.x1_b3;
+    hit->x42_b0 = cmd->u->create_hitbox_5.x1_b4;
+    hit->x42_b1 = cmd->u->create_hitbox_5.x1_b5;
+    hit->x42_b2 = cmd->u->create_hitbox_5.x1_b6;
+    hit->x42_b3 = cmd->u->create_hitbox_5.x1_b7;
     hit->x42_b4 = (((u8*) cmd->u)[2] >> 7) & 1;
     hit->x42_b5 = (((u8*) cmd->u)[2] >> 6) & 1;
     hit->x42_b6 = (((u8*) cmd->u)[2] >> 5) & 1;
@@ -163,15 +158,6 @@ void it_802790C0(Item_GObj* item_gobj, CommandInfo* cmd)
         it_8027129C(item_gobj, hitbox_idx);
     }
 }
-
-#ifdef MUST_MATCH
-#pragma pop
-#endif
-
-#ifdef MUST_MATCH
-#pragma push
-#pragma dont_inline on
-#endif
 
 void it_80279544(Item_GObj* item_gobj, CommandInfo* cmd)
 {
@@ -195,15 +181,6 @@ void it_802795EC(Item_GObj* item_gobj, CommandInfo* cmd)
     ++cmd->u;
 }
 
-#ifdef MUST_MATCH
-#pragma pop
-#endif
-
-#ifdef MUST_MATCH
-#pragma push
-#pragma dont_inline on
-#endif
-
 void it_80279680(Item_GObj* item_gobj, CommandInfo* cmd)
 {
     it_80272560(item_gobj, cmd->u->set_throw_flags.hit_idx);
@@ -215,10 +192,6 @@ void it_802796C4(Item_GObj* item_gobj, CommandInfo* cmd)
     it_802725D4(item_gobj);
     ++cmd->u;
 }
-
-#ifdef MUST_MATCH
-#pragma pop
-#endif
 
 void it_802796FC(Item_GObj* item_gobj, CommandInfo* cmd)
 {
@@ -248,10 +221,6 @@ void it_80279768(Item_GObj* gobj, CommandInfo* cmd)
     ++cmd->u;
 }
 
-#ifdef MUST_MATCH
-#pragma push
-#pragma dont_inline on
-#endif
 void it_8027978C(Item_GObj* item_gobj, CommandInfo* cmd)
 {
     Item* item = item_gobj->user_data;
@@ -262,60 +231,41 @@ void it_8027978C(Item_GObj* item_gobj, CommandInfo* cmd)
     u8 arg3;
     PAD_STACK(8);
     cmd->u = (union CmdUnion*) (ptr + 1);
-    if (opcode < 10) {
-        if (opcode < 3) {
-            if (opcode >= 0) {
-                goto low_opcode;
-            }
-        }
-        goto done;
-    } else {
-        if (opcode >= 12) {
-            goto done;
-        }
-        goto high_opcode;
-    }
-
-low_opcode:
-    arg1 = ((DiscU32*) cmd->u)[0].v;
-    ++cmd->u;
-    arg2 = ((u8*) cmd->u)[2];
-    arg3 = ((u8*) cmd->u)[3];
     switch (opcode) {
     case 0:
-        Item_8026AE84(item, arg1, arg2, arg3);
-        break;
     case 1:
-        Item_8026AF0C(item, arg1, arg2, arg3);
-        break;
     case 2:
-        Item_8026AFA0(item, arg1, arg2, arg3);
+        arg1 = ((DiscU32*) cmd->u)[0].v;
+        ++cmd->u;
+        arg2 = ((u8*) cmd->u)[2];
+        arg3 = ((u8*) cmd->u)[3];
+        switch (opcode) {
+        case 0:
+            Item_8026AE84(item, arg1, arg2, arg3);
+            break;
+        case 1:
+            Item_8026AF0C(item, arg1, arg2, arg3);
+            break;
+        case 2:
+            Item_8026AFA0(item, arg1, arg2, arg3);
+            break;
+        }
         break;
-    }
-    goto done;
-
-high_opcode: {
-    ++cmd->u;
-    switch (opcode) {
     case 10:
-        Item_8026B034(item);
-        break;
     case 11:
-        Item_8026B074(item);
+        ++cmd->u;
+        switch (opcode) {
+        case 10:
+            Item_8026B034(item);
+            break;
+        case 11:
+            Item_8026B074(item);
+            break;
+        }
         break;
     }
-}
-done:
     ++cmd->u;
 }
-#ifdef MUST_MATCH
-#pragma pop
-#endif
-
-#ifdef MUST_MATCH
-#pragma push
-#pragma dont_inline on
-#endif
 
 void it_80279888(Item_GObj* item_gobj, CommandInfo* cmd)
 {
@@ -337,10 +287,6 @@ void it_8027990C(Item_GObj* item_gobj, CommandInfo* cmd)
     it_80273648(item_gobj, cmd->u->unk33.unk0, cmd->u->unk33.unk1);
     NEXT_CMD(cmd);
 }
-
-#ifdef MUST_MATCH
-#pragma pop
-#endif
 
 void it_80279958(Item_GObj* item_gobj, CommandInfo* cmd)
 {
@@ -372,41 +318,31 @@ void it_802799E4(Item_GObj* item_gobj)
         cmd->timer -= item->x5D0_animFrameSpeed;
     }
 
-loop:
-    if (cmd->u == NULL) {
-        return;
-    }
-    if (cmd->timer == F32_MAX) {
-        if (cmd->frame_count >= item->x5D0_animFrameSpeed) {
+    while (true) {
+        if (cmd->u == NULL) {
             return;
         }
-        cmd->timer = -cmd->frame_count;
-    } else if (cmd->timer > 0.0f) {
-        return;
-    }
+        if (cmd->timer == F32_MAX) {
+            if (cmd->frame_count >= item->x5D0_animFrameSpeed) {
+                return;
+            }
+            cmd->timer = -cmd->frame_count;
+        } else if (cmd->timer > 0.0f) {
+            return;
+        }
 
-    opcode = cmd->u->unk0.opcode;
-    if (Command_Execute(cmd, opcode) != 0) {
-        goto loop;
+        opcode = cmd->u->unk0.opcode;
+        if (Command_Execute(cmd, opcode) == 0) {
+            opcode -= 10;
+            it_803F22A8[opcode](item_gobj, cmd);
+        }
     }
-    opcode -= 10;
-    it_803F22A8[opcode](item_gobj, cmd);
-    goto loop;
 }
-
-#ifdef MUST_MATCH
-#pragma push
-#pragma dont_inline on
-#endif
 
 void it_80279AF0(Item_GObj* item_gobj, CommandInfo* cmd)
 {
     it_80278F2C(item_gobj, cmd);
 }
-
-#ifdef MUST_MATCH
-#pragma pop
-#endif
 
 void it_80279B10(Item_GObj* item_gobj, CommandInfo* cmd)
 {

@@ -19,6 +19,13 @@
 #include <melee/it/itPKThunder.h>
 #include <melee/lb/types.h>
 
+/// Recent Pokemon selections and the shared Mew/Celebi spawn limit.
+struct PokemonSelectionState {
+    /* 0x0 */ ItemKind last_kind;
+    /* 0x4 */ ItemKind previous_kind;
+    /* 0x8 */ bool rare_spawned;
+};
+
 struct CameraBoxFlags {
     struct {
         u8 b01 : 2;
@@ -239,6 +246,20 @@ typedef struct ItemHitbox {
     u8 x139[3];
 } ItemHitbox;
 
+struct xB6C_t {
+    Vec3 xB6C;
+    // u32 xB6C; // struct DynamicsData* for DynamicsDesc->data?
+    // u32 xB70; // int for DynamicsDesc->count?
+    // u32 xB74; // pos.x?
+    f32 xB78;       // pos.y? scale?
+    HSD_JObj* xB7C; // HSD_JObj* for bone?
+    u32 xB80;
+    Vec3 xB84;
+    // u32 xB88;
+    // u32 xB8C;
+    u32 xB90; // enum_t for BoneDynamicsDesc->bone_id?
+};
+
 struct Item {
     void* x0;
 
@@ -332,19 +353,7 @@ struct Item {
     u8 xB69;
     u8 xB6A;
     u8 xB6B;
-    struct xB6C_t {
-        Vec3 xB6C;
-        // u32 xB6C; // struct DynamicsData* for DynamicsDesc->data?
-        // u32 xB70; // int for DynamicsDesc->count?
-        // u32 xB74; // pos.x?
-        f32 xB78;       // pos.y? scale?
-        HSD_JObj* xB7C; // HSD_JObj* for bone?
-        u32 xB80;
-        Vec3 xB84;
-        // u32 xB88;
-        // u32 xB8C;
-        u32 xB90; // enum_t for BoneDynamicsDesc->bone_id?
-    } xB6C_vars[2];
+    struct xB6C_t xB6C_vars[2];
     // u32 xB94;
     // u32 xB98;
     // u32 xB9C;

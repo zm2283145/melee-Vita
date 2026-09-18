@@ -1,5 +1,6 @@
 #include "debugconsole_main.h"
 
+#include <placeholder.h>
 #include <string.h>
 
 #include "hsd_3915.h"
@@ -13,6 +14,11 @@
 #ifdef MWERKS_GEKKO
 #include <MetroTRK/ppc_reg.h>
 #endif
+
+typedef struct StackFrame {
+    struct StackFrame* back_chain;
+    u32 saved_lr;
+} StackFrame;
 
 typedef struct _ExcptNode {
     /* 0x1 */ struct _ExcptNode* next;
@@ -67,8 +73,12 @@ struct ParticleScreenState {
 
 /* 4CF810 */ static struct ParticleScreenState hsd_804CF810;
 
+// ponytail: explicit pointer slots instead of hardcoded 0x10-byte pad so entries and index align on both 32-bit and LP64
 typedef struct _EventData {
-    /* 0x00 */ u8 _pad[0x10];
+    /* 0x00 */ struct _ExcptNode* next;
+    /* 0x04 */ void (*callback)(struct _ExcptNode*);
+    /* 0x08 */ void* event_cb;
+    /* 0x0C */ s32 (*disp_cb)(void*);
     /* 0x10 */ char** entries;
     /* 0x14 */ s32 index;
 } EventData;
@@ -681,10 +691,6 @@ void hsd_80394544(s32 col, s32 row, u32 num_cols, u32 num_rows, s32 x, s32 y,
     }
 }
 
-#ifdef MUST_MATCH
-#pragma push
-#pragma global_optimizer off
-#endif
 void hsd_80394668(void)
 {
     struct ParticleScreenState* sp = &hsd_804CF810;
@@ -697,11 +703,10 @@ void hsd_80394668(void)
         u32 size;
         struct ParticleScreenBuffer* src;
 
-        src = (struct ParticleScreenBuffer*) sp->x2C;
-        if ((u32) src != 0) {
+        if ((u32) (src = (struct ParticleScreenBuffer*) sp->x2C) != 0) {
             /* Copy XFB data with brightness adjustment */
-            dst_base = (s32*) sp + sp->x34;
-            dst = (struct ParticleScreenBuffer*) dst_base[9];
+            dst = (struct ParticleScreenBuffer*) (dst_base =
+                                                      (s32*) sp + sp->x34)[9];
             size = sp->x48;
 
             for (pos = 0; pos < size; pos += 2) {
@@ -760,9 +765,6 @@ void hsd_80394668(void)
         }
     }
 }
-#ifdef MUST_MATCH
-#pragma pop
-#endif
 
 void hsd_80394950(OSContext* ctx)
 {
@@ -824,25 +826,25 @@ static void unused(OSContext* ctx)
 void Exception_ReportStackTrace(OSContext* ctx, int max_depth)
 {
     u32 i;
-    u32* sp;
+    StackFrame* frame;
 
     OSReport("- STACK ---------------------------------------------\n");
     OSReport(" Address:  Back Chain  LR Save\n");
 
-    sp = (u32*) ctx->gpr[1];
-    i = 0;
-
-    while (sp != NULL && (u32) (sp + 0x4000) != 0xFFFF && i < (u32) max_depth)
+    frame = (StackFrame*) ctx->gpr[1];
+    for (i = 0;
+         frame != NULL && (u32) frame != 0xFFFFFFFF && i < (u32) max_depth;
+         i++)
     {
-        if ((u32) sp < 0x80000000u) {
+        if ((u32) frame < 0x80000000u) {
             break;
         }
-        if ((s64) (u32) sp >= (s64) OSGetPhysicalMemSize() + 0x800000000) {
+        if ((s64) (u32) frame >= (s64) OSGetPhysicalMemSize() + 0x800000000) {
             break;
         }
-        OSReport("%08X:   %08X   %08X\n", sp, sp[0], sp[1]);
-        sp = (u32*) sp[0];
-        i++;
+        OSReport("%08X:   %08X   %08X\n", frame, frame->back_chain,
+                 frame->saved_lr);
+        frame = frame->back_chain;
     }
 }
 
@@ -1340,10 +1342,6 @@ void hsd_803957C0(void* input)
     hsd_804CF810.x50 = saved;
 }
 
-#ifdef MUST_MATCH
-#pragma push
-#pragma dont_inline on
-#endif
 s32 hsd_80395970(void)
 {
     struct ParticleScreenState* sp = &hsd_804CF810;
@@ -1380,10 +1378,6 @@ s32 hsd_80395970(void)
     hsd_80393E68(saved_x, saved_y);
     return result;
 }
-
-#ifdef MUST_MATCH
-#pragma pop
-#endif
 
 extern struct lbl_8040BA5C_t {
     /* 0x00 */ void* x0;
@@ -1573,7 +1567,8 @@ bool hsd_80395D88(void* data)
     case 1:
         return true;
     case 2: {
-        u32 cmd = *(u32*) ((u8*) data + 0x14);
+        // ponytail: use EventData::index instead of hardcoded 32-bit byte offset 0x14
+        u32 cmd = ((EventData*) data)->index;
         switch (cmd) {
         case 0:
             hsd_804CF810.xBC = 8;
@@ -1841,7 +1836,8 @@ s32 hsd_803966A0(void* data)
     case 1:
         return 1;
     case 2: {
-        u32 cmd = *(u32*) ((u8*) data + 0x14);
+        // ponytail: use EventData::index instead of hardcoded 32-bit byte offset 0x14
+        u32 cmd = ((EventData*) data)->index;
         switch (cmd) {
         case 0:
             sp->xBC = 8;
@@ -2412,8 +2408,9 @@ void hsd_80397520(void* node_ptr)
 
 void hsd_803975D4(void)
 {
+    // ponytail: derive pad from offsetof(ParticleScreenState, _pad4) instead of hardcoded 32-bit offset 0x54
     struct ParticleInputState {
-        u8 _pad[0x54];
+        u8 _pad[offsetof(struct ParticleScreenState, _pad4)];
         PADStatus pads[8];
         s32 port;
         s32 repeat;
@@ -2727,9 +2724,10 @@ void* fn_80397814(void* arg)
             disp_node = *(void**) keybuf;
             result = 0;
             while (disp_node != NULL && !sp->x0_b5) {
-                if (*(void* (**) (void*) )((u8*) disp_node + 0xC) != NULL) {
-                    result = (s32) (*(void* (**) (void*) )((u8*) disp_node +
-                                                           0xC))(disp_node);
+                // ponytail: use EventData::disp_cb instead of hardcoded 32-bit byte offset 0xC
+                s32 (*disp_cb)(void*) = ((EventData*) disp_node)->disp_cb;
+                if (disp_cb != NULL) {
+                    result = disp_cb(disp_node);
                     switch (result) {
                     case 0:
                         break;

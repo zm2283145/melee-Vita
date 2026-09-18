@@ -135,7 +135,7 @@ DISC_ASSERT_SIZE(struct gm_evbonus, 0x18);
 DISC_ASSERT_SIZE(struct gm_804D6900_t, 0x28);
 
 /* gm_804D6900[0] is the in-archive `gm_804D6900_t*[]` level table. */
-#define LV(tbl, i) ((struct gm_804D6900_t*) (uintptr_t) (tbl)[i].v)
+#define LV(tbl, i) DP(struct gm_804D6900_t, (tbl)[i].v)
 #define EV_X4(l) DP(struct gm_804D6900_x4_t, (l)->x4)
 #define EV_INIT(l) DP(struct gm_evinit, (l)->evinit)
 #define EV_BONUS(l) DP(struct gm_evbonus, (l)->evbonus)
@@ -153,8 +153,8 @@ DISC_ASSERT_SIZE(struct gm_804D6900_t, 0x28);
 /* 1BBB64 */ static void gm_801BBB64(void);
 /* 1BBFE8 */ static void fn_801BBFE8(void);
 /* 1BC00C */ static void gm_801BC00C(void);
-/* 1BC488 */ static int gm_801BC488(UNK_PARAMS);
-/* 1BC4F4 */ static UNK_RET gm_801BC4F4(HSD_GObj*);
+/* 1BC488 */ static int gm_801BC488(void);
+/* 1BC4F4 */ static void gm_801BC4F4(HSD_GObj*);
 /* 1BC670 */ static void gm_801BC670(HSD_GObj*);
 /* 1BC754 */ static void gm_801BC754(HSD_GObj*);
 /* 1BC9E8 */ static void gm_801BC9E8(HSD_GObj*);
@@ -278,6 +278,7 @@ void onExitCss(GameModeState* arg0)
     temp_r31 = &gmMainLib_804D3EE0->vs.unk_530;
     temp_r3 = gm_GetGameModeStateExitData(arg0);
     if (temp_r3->pending_scene_change == 2) {
+        lbAudioAx_80026F2C(0x1C);
         gm_ChangeGameModeAfterCurrentScene(GM_MENU);
         return;
     }
@@ -687,6 +688,7 @@ void onExitVs(GameModeState* arg0)
         return;
     }
     if (exit->match_end.outcome == OUTCOME_NO_CONTEST) {
+        lbAudioAx_80026F2C(0x1C);
         gm_ChangeGameModeAfterCurrentScene(GM_MENU);
         return;
     }
@@ -703,6 +705,10 @@ void onExitVs(GameModeState* arg0)
         gm_SetNextGameModeStateId(1);
         return;
     }
+    lbAudioAx_80026F2C(0x1C);
+#ifdef TARGET_PC
+    lbAudioAx_80028B90();
+#endif
     if (ev->xB_1) {
         u32 cur = ev->xC;
         u32 best = gmMainLib_8015CF5C(stage);
@@ -957,7 +963,10 @@ void gm_Mode_Event_OnLoad(void)
     }
 }
 
-void gm_Mode_Event_OnUnload(void) {}
+void gm_Mode_Event_OnUnload(void)
+{
+    lbAudioAx_80026F2C(0x1C);
+}
 
 void fn_801BBFE8(void)
 {

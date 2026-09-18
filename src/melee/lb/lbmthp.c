@@ -101,7 +101,7 @@ struct lbl_803BAFE8_t {
 }; /* size = 0x18 */
 
 /* 01F294 */ static s32 fn_8001F294(void);
-/* 4333E0 */ static THPDecComp MoviePlayer;
+/* 4333E0 */ static THPDecComp MoviePlayer __attribute__((aligned(32)));
 
 static void fn_8001E910(int arg0, uintptr_t arg1, void* arg2, bool cancelflag)
 {
@@ -518,6 +518,14 @@ void fn_8001F2A4(OSAlarm* alarm, OSContext* context)
     lbMthp_GetPlayer(&streamPlayer, &rate_table);
 
     frame = lbMthp_GetFrame(rate_table, streamPlayer->unk_80);
+
+#ifdef TARGET_PC
+    /* Catch up buffered frames immediately if video presentation fell behind,
+     * so unk_80 is not stalled and video stays locked in sync with audio. */
+    while (streamPlayer->unk_78 < frame && streamPlayer->unk_108 > 0) {
+        fn_8001F06C(lbMthp_GetDecoder(streamPlayer));
+    }
+#endif
 
     if (streamPlayer->unk_78 == frame) {
         streamPlayer->unk_80 += 1;

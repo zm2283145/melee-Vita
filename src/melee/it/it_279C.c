@@ -984,11 +984,6 @@ void it_80279C48(Item_GObj* item_gobj)
     item->facing_dir = dir;
 }
 
-#ifdef MUST_MATCH
-#pragma push
-#pragma dont_inline on
-#endif
-
 void it_80279CDC(Item_GObj* item_gobj, f32 scale)
 {
     it_8027A13C(item_gobj);
@@ -997,10 +992,6 @@ void it_80279CDC(Item_GObj* item_gobj, f32 scale)
     it_802756D0(item_gobj);
     it_8026BDB4(item_gobj);
 }
-
-#ifdef MUST_MATCH
-#pragma pop
-#endif
 
 void it_80279D38(Item_GObj* item_gobj)
 {
@@ -1105,11 +1096,6 @@ void it_80279FF8(Item_GObj* item_gobj)
     }
 }
 
-#ifdef MUST_MATCH
-#pragma push
-#pragma dont_inline on
-#endif
-
 bool it_8027A09C(Item_GObj* item_gobj)
 {
     Item* item;
@@ -1125,10 +1111,6 @@ bool it_8027A09C(Item_GObj* item_gobj)
     item->xDD4_itemVar.pokemon_spawn.x24 -= 1.0f;
     return false;
 }
-
-#ifdef MUST_MATCH
-#pragma pop
-#endif
 
 bool it_8027A118(Item_GObj* item_gobj, HSD_GObjEvent arg1)
 {
@@ -1215,7 +1197,7 @@ s32 it_8027A364(Item* item)
     int end = It_PKind_Terminate;
 
     for (i = start; i < end; i++) {
-        if (Item_804A0E24.x != i && Item_804A0E24.y != i) {
+        if (Item_804A0E24.last_kind != i && Item_804A0E24.previous_kind != i) {
             ret_val += attr->pokemon_spawn_weights[i - It_PKind_Start];
         }
     }
@@ -1231,26 +1213,26 @@ s32 it_8027A4D4(Item* item)
 
     itPokemonSpawn_DatAttrs* attr = DP(itPokemonSpawn_DatAttrs, item->xC4_article_data->x4_specialAttributes);
 
-    if (HSD_Randi(251) == 0 && Item_804A0E24.z == 0 && gm_80165084()) {
-        Item_804A0E24.z = 1;
+    if (HSD_Randi(251) == 0 && !Item_804A0E24.rare_spawned && gm_80165084()) {
+        Item_804A0E24.rare_spawned = true;
         gm_80172C04();
         return 23;
     }
-    if (HSD_Randi(251) == 0 && Item_804A0E24.z == 0 && gm_80164ABC()) {
-        Item_804A0E24.z = 1;
+    if (HSD_Randi(251) == 0 && !Item_804A0E24.rare_spawned && gm_80164ABC()) {
+        Item_804A0E24.rare_spawned = true;
         gm_80172BC4();
         return 22;
     }
     rand_int = HSD_Randi(it_8027A364(item));
     var_r3 = 0;
     for (i = It_PKind_Start; i < It_PKind_Terminate; i++) {
-        int y = Item_804A0E24.y;
-        int x = Item_804A0E24.x;
-        if (x != i && y != i) {
+        ItemKind previous_kind = Item_804A0E24.previous_kind;
+        ItemKind last_kind = Item_804A0E24.last_kind;
+        if (last_kind != i && previous_kind != i) {
             var_r3 += attr->pokemon_spawn_weights[i - It_PKind_Start];
             if (var_r3 >= rand_int) {
-                Item_804A0E24.y = x;
-                Item_804A0E24.x = i;
+                Item_804A0E24.previous_kind = last_kind;
+                Item_804A0E24.last_kind = i;
                 return i - It_PKind_Start;
             }
         }
@@ -1261,57 +1243,71 @@ s32 it_8027A4D4(Item* item)
 s32 it_8027A780(Item* item, void* arg1)
 {
     u8 _pad[8];
-    S32Vec2 sp10[30];
-    S32Vec2* base;
-    S32Vec2* buf;
-    s32 x;
-    s32 y;
+    struct PokemonSpawnWeight {
+        ItemKind kind;
+        s32 weight;
+    } weights[30];
+    struct PokemonSpawnWeight* base;
+    struct PokemonSpawnWeight* buf;
+    ItemKind last_kind;
+    ItemKind previous_kind;
     itPokemonSpawn_DatAttrs* attr;
     s32 total;
     s32 cnt;
     s32 rand_int;
     s32 idx;
-    s32 result;
+    ItemKind result;
     s32 accum;
     int i;
 
-    base = sp10;
+    base = weights;
     buf = base;
     cnt = 0;
     attr = DP(itPokemonSpawn_DatAttrs, item->xC4_article_data->x4_specialAttributes);
     total = 0;
-    x = Item_804A0E24.x;
-    y = Item_804A0E24.y;
+    last_kind = Item_804A0E24.last_kind;
+    previous_kind = Item_804A0E24.previous_kind;
     for (i = 0; i < 30; i++) {
         ItemKind kind = ((ItemKind*) arg1)[i];
+#ifdef TARGET_PC
+        if ((uint32_t) kind > 0xFFFF) {
+            kind = (ItemKind) __builtin_bswap32((uint32_t) kind);
+        }
+#endif
         if (kind == It_PKind_Terminate) {
             break;
         }
-        if (x != kind && y != kind) {
-            buf->x = kind;
+        if (kind >= It_PKind_Start && kind < It_PKind_Terminate &&
+            last_kind != kind && previous_kind != kind)
+        {
+            buf->kind = kind;
             cnt++;
-            buf->y = attr->pokemon_spawn_weights[((ItemKind*) arg1)[i] -
-                                                 It_PKind_Start];
-            total += buf->y;
+            buf->weight = attr->pokemon_spawn_weights[kind - It_PKind_Start];
+            total += buf->weight;
             buf++;
         }
+    }
+    if (total <= 0) {
+        Item_804A0E24.previous_kind = Item_804A0E24.last_kind;
+        Item_804A0E24.last_kind = It_PKind_Sonans;
+        return It_PKind_Sonans - It_PKind_Start;
     }
     rand_int = HSD_Randi(total);
     accum = 0;
     result = It_PKind_Sonans;
     idx = 0;
     while (cnt > 0) {
-        accum += base->y;
+        accum += base->weight;
         if (rand_int < accum) {
-            result = sp10[idx].x;
+            result = weights[idx].kind;
             break;
         }
         base++;
         idx++;
         cnt--;
     }
-    Item_804A0E24.y = Item_804A0E24.x;
-    Item_804A0E24.x = result;
+    Item_804A0E24.previous_kind = Item_804A0E24.last_kind;
+    Item_804A0E24.last_kind = result;
     return result - It_PKind_Start;
 }
 
@@ -1323,13 +1319,13 @@ s32 it_8027A9B8(Item* item)
     if (vec == NULL) {
         return It_PKind_Sonans;
     }
-    if ((HSD_Randi(251U) == 0) && (Item_804A0E24.z == 0) && gm_80165084()) {
-        Item_804A0E24.z = 1;
+    if ((HSD_Randi(251U) == 0) && (!Item_804A0E24.rare_spawned) && gm_80165084()) {
+        Item_804A0E24.rare_spawned = true;
         gm_80172C04();
         return 23U;
     }
-    if ((HSD_Randi(251U) == 0) && (Item_804A0E24.z == 0) && gm_80164ABC()) {
-        Item_804A0E24.z = 1;
+    if ((HSD_Randi(251U) == 0) && (!Item_804A0E24.rare_spawned) && gm_80164ABC()) {
+        Item_804A0E24.rare_spawned = true;
         gm_80172BC4();
         return 22U;
     }
@@ -1371,68 +1367,27 @@ void it_8027AAA0(Item_GObj* item1_gobj, Item* item2, s32 arg2)
     }
 }
 
-#ifndef MUST_MATCH
-static inline s32 it_8027AB64_SpawnWeight(itPokemonSpawn_DatAttrs* attr,
-                                          s32 index)
+static inline s32 selectPokemonForOpening(Item* item)
 {
-    return attr->pokemon_spawn_weights[index - It_PKind_Start];
-}
-
-static inline s32 it_8027AB64_SelectKind(Item* item)
-{
-    itPokemonSpawn_DatAttrs* attr = DP(itPokemonSpawn_DatAttrs, item->xC4_article_data->x4_specialAttributes);
+    itPokemonSpawn_DatAttrs* attr =
+        DP(itPokemonSpawn_DatAttrs, item->xC4_article_data->x4_specialAttributes);
     s32 rand_int = HSD_Randi(it_8027A364(item));
-    s32 recent_y_val = Item_804A0E24.y;
-    s32 recent_x_val = Item_804A0E24.x;
     s32 index;
-    s32 var_r4;
-    s32 var_ctr;
-
-    var_r4 = 0;
-    index = It_PKind_Start;
-    for (var_ctr = 30; var_ctr != 0; var_ctr--) {
-        if (recent_x_val != index && recent_y_val != index) {
-            var_r4 += it_8027AB64_SpawnWeight(attr, index);
-            if (var_r4 >= rand_int) {
-                Item_804A0E24.y = recent_x_val;
-                Item_804A0E24.x = index;
+    s32 total = 0;
+    for (index = It_PKind_Start; index < It_PKind_Terminate; index++) {
+        ItemKind previous_kind = Item_804A0E24.previous_kind;
+        ItemKind last_kind = Item_804A0E24.last_kind;
+        if (last_kind != index && previous_kind != index) {
+            total += attr->pokemon_spawn_weights[index - It_PKind_Start];
+            if (total >= rand_int) {
+                Item_804A0E24.previous_kind = last_kind;
+                Item_804A0E24.last_kind = index;
                 return index - It_PKind_Start;
             }
         }
-        index++;
     }
     return 0;
 }
-#else
-static inline s32 it_8027AB64_SelectKind(Item* item)
-{
-    itPokemonSpawn_DatAttrs* attr = DP(itPokemonSpawn_DatAttrs, item->xC4_article_data->x4_specialAttributes);
-    s32 rand_int = HSD_Randi(it_8027A364(item));
-    s32 recent_x_val = Item_804A0E24.x;
-    s32 recent_y_val = Item_804A0E24.y;
-    s32* spawn_weights =
-        (s32*) ((u8*) attr + 0x284); // fake, but we'll fix it in post
-    s32 index;
-    s32 var_r4;
-    s32 var_ctr;
-
-    var_r4 = 0;
-    index = It_PKind_Start;
-    for (var_ctr = 30; var_ctr != 0; var_ctr--) {
-        if (recent_x_val != index && recent_y_val != index) {
-            var_r4 += *(spawn_weights - 0x92);
-            if (var_r4 >= rand_int) {
-                Item_804A0E24.y = recent_x_val;
-                Item_804A0E24.x = index;
-                return index - It_PKind_Start;
-            }
-        }
-        spawn_weights++;
-        index++;
-    }
-    return 0;
-}
-#endif
 
 static inline s32 selectPokemonFromList(Item* item, ItemKind* kinds)
 {
@@ -1463,7 +1418,7 @@ bool it_8027AB64(Item_GObj* item_gobj)
         spawn.kind = selectPokemonFromList(item, common_pokemon);
 
     } else if (gm_GetCurrentGameMode() == GM_OPENING_MV) {
-        spawn.kind = it_8027AB64_SelectKind(item);
+        spawn.kind = selectPokemonForOpening(item);
     } else {
         spawn.kind = db_GetCurrentlySelectedPokemon();
         if (spawn.kind == (enum ItemKind) Pokemon_ID_Tosakinto) {

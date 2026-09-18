@@ -18,6 +18,7 @@
 
 #include "pc/pc.h"
 #include "pc/launcher.h"
+#include "pc/touch.h"
 #include "pc/widescreen.h"
 
 bool pc_exit_requested;
@@ -33,8 +34,11 @@ static bool s_in_frame;
 void pc_os_run_alarms(void);
 void aurora_heap_check(void);
 
-void pc_frame_boundary(void)
-{
+uint32_t pc_gfx_prewarm(uint32_t max_wait_ms) {
+    return aurora_wait_pipelines(max_wait_ms);
+}
+
+void pc_frame_boundary(void) {
     static int fps_log = -1;
     static u64 fps_t0;
     static u32 fps_n;
@@ -52,7 +56,7 @@ void pc_frame_boundary(void)
         aurora_end_frame();
         s_in_frame = false;
     }
-    aurora_heap_check(); /* no-op unless MELEE_HEAP_CHECK is set */
+    aurora_heap_check();    /* no-op unless MELEE_HEAP_CHECK is set */
     pc_widescreen_update(); /* Auto mode follows window resizes. */
     if (fps_log < 0) {
         fps_log = getenv("MELEE_FPS") != NULL;
@@ -78,18 +82,16 @@ void pc_frame_boundary(void)
              * cannot tell a shader compile from a disc read; a timestamped
              * marker beside the surrounding records can. */
             if (delta > 50000000ull) {
-                pc_log_line("STALL %.1fms at frame %u", delta / 1e6,
-                            s_retrace_count);
+                pc_log_line("STALL %.1fms at frame %u", delta / 1e6, s_retrace_count);
             }
         }
         frame_prev_ns = now_ns;
         if (now - fps_t0 >= 1000) {
             fprintf(stderr,
-                    "fps %.1f worst %.1fms late>20ms %u late>33ms %u "
-                    "sleep_overshoot %.1fms\n",
-                    fps_n * 1000.0 / (double) (now - fps_t0),
-                    frame_worst_ns / 1e6, frame_late_20, frame_late_33,
-                    sleep_worst_over_ns / 1e6);
+                "fps %.1f worst %.1fms late>20ms %u late>33ms %u "
+                "sleep_overshoot %.1fms\n",
+                fps_n * 1000.0 / (double)(now - fps_t0), frame_worst_ns / 1e6, frame_late_20,
+                frame_late_33, sleep_worst_over_ns / 1e6);
             fflush(stderr);
             fps_t0 = now;
             fps_n = 0;
@@ -110,6 +112,7 @@ void pc_frame_boundary(void)
                 pc_menu_toggle();
             pc_menu_event(&event->sdl);
             pc_keyboard_event(&event->sdl);
+            pc_touch_event(&event->sdl);
         }
         ++event;
     }
@@ -118,23 +121,39 @@ void pc_frame_boundary(void)
      * frame instead of clearing the EFB to black underneath the menu. */
     aurora_preserve_frame_buffer(pc_menu_is_open());
     pc_keyboard_apply();
+    /* MELEE_EXIT_AFTER_FRAMES=<n>: bound a scripted run without needing
+     * synthetic input, which is unreliable under Xwayland. Setting
+     * pc_exit_requested instead of exiting here on purpose: the window-close
+     * path is the one that runs atexit(pc_shutdown_once), and skipping it is
+     * what makes Dawn's static destructors race the live device. */
+    static int exit_after = -1;
+    if (exit_after < 0) {
+        const char* n = getenv("MELEE_EXIT_AFTER_FRAMES");
+        exit_after = n != NULL ? atoi(n) : 0;
+    }
+    if (exit_after > 0 && s_retrace_count >= (u32)exit_after && !pc_exit_requested) {
+        pc_log_line("MELEE_EXIT_AFTER_FRAMES: reached frame %u, exiting", s_retrace_count);
+        pc_exit_requested = true;
+    }
     if (pc_exit_requested) {
         exit(0);
     }
 
-    /* The game is a fixed 60 Hz simulation. When Vsync is active, aurora's
-     * presentation pass is paced by the hardware display's VBlank. Only pace
-     * via SDL_DelayPrecise when Vsync is disabled or unavailable; running
-     * software sleep while hardware Vsync is active causes timing drift and
-     * missed VBlank deadlines (tripping sudden drops to 30 FPS). */
-    if (!aurora_vsync_enabled()) {
-        static u64 next_ns;
-        const u64 period = 1000000000ull / 60;
-        u64 now = SDL_GetTicksNS();
-        if (next_ns == 0 || now > next_ns + period) {
-            next_ns = now; /* first frame, or we fell behind: resync */
-        } else if (now < next_ns) {
-            const u64 want = next_ns - now;
+    /* Enforce deterministic 60 Hz simulation pacing regardless of display refresh rate
+     * (e.g. 120 Hz, 144 Hz, 240 Hz high-refresh monitors). When VSync is enabled on high-refresh
+     * displays, aurora_begin_frame() unblocks at monitor refresh rate. Without this check,
+     * the simulation would run at 2x-4x speed. Pacing strictly to 60.000 Hz ensures physics,
+     * hitboxes, and timers remain bit-identical. */
+    static u64 next_sim_ns;
+    const u64 sim_period = 1000000000ull / 60;
+    u64 now = SDL_GetTicksNS();
+    if (next_sim_ns == 0 || now > next_sim_ns + sim_period * 2) {
+        next_sim_ns = now; /* first frame, or large hitch: resync */
+    } else if (now < next_sim_ns) {
+        const u64 want = next_sim_ns - now;
+        /* On standard 60 Hz VSync, aurora_begin_frame already waited for VBlank. On high-refresh
+         * (120/144/240 Hz) or VSync-off, this throttles simulation to exact 60 Hz. */
+        if (!aurora_vsync_enabled() || want > 2000000ull) {
             SDL_DelayPrecise(want);
             if (fps_log > 0) {
                 const u64 slept = SDL_GetTicksNS() - now;
@@ -143,8 +162,8 @@ void pc_frame_boundary(void)
                 }
             }
         }
-        next_ns += period;
     }
+    next_sim_ns += sim_period;
 
     /* aurora_begin_frame returns false while minimized/paused; keep pumping.
      * Sleep a frame between attempts: without it a minimized window spins a
@@ -162,6 +181,9 @@ void pc_frame_boundary(void)
     s_in_frame = true;
 
     s_retrace_count++;
+    /* Age of the 1000 Hz sample the sim is about to consume, before the pad
+     * alarms (fn_800195FC -> PADRead) fire from pc_os_run_alarms. */
+    pc_input_latency_record();
     pc_os_run_alarms();
     if (s_pre_cb) {
         s_pre_cb(s_retrace_count);
@@ -172,8 +194,7 @@ void pc_frame_boundary(void)
     }
 }
 
-void VIWaitForRetrace(void)
-{
+void VIWaitForRetrace(void) {
     pc_frame_boundary();
     /* The overlay pauses the game. Melee's whole simulation hangs off this
      * call returning, so keep presenting frames and pumping input here and
@@ -183,56 +204,46 @@ void VIWaitForRetrace(void)
     }
 }
 
-u32 VIGetRetraceCount(void)
-{
+u32 VIGetRetraceCount(void) {
     return s_retrace_count;
 }
 
-u32 VIGetNextField(void)
-{
+u32 VIGetNextField(void) {
     return s_retrace_count & 1;
 }
 
-u32 VIGetDTVStatus(void)
-{
+u32 VIGetDTVStatus(void) {
     return 0;
 }
 
-void* VIGetCurrentFrameBuffer(void)
-{
+void* VIGetCurrentFrameBuffer(void) {
     return s_current_fb;
 }
 
-void* VIGetNextFrameBuffer(void)
-{
+void* VIGetNextFrameBuffer(void) {
     return s_next_fb;
 }
 
-void VISetNextFrameBuffer(void* fb)
-{
+void VISetNextFrameBuffer(void* fb) {
     s_next_fb = fb;
 }
 
-void VISetBlack(BOOL black)
-{
+void VISetBlack(BOOL black) {
     s_black = black;
 }
 
-VIRetraceCallback VISetPreRetraceCallback(VIRetraceCallback cb)
-{
+VIRetraceCallback VISetPreRetraceCallback(VIRetraceCallback cb) {
     VIRetraceCallback old = s_pre_cb;
     s_pre_cb = cb;
     return old;
 }
 
-VIRetraceCallback VISetPostRetraceCallback(VIRetraceCallback cb)
-{
+VIRetraceCallback VISetPostRetraceCallback(VIRetraceCallback cb) {
     VIRetraceCallback old = s_post_cb;
     s_post_cb = cb;
     return old;
 }
 
-u16 VIPadFrameBufferWidth(u16 width)
-{
-    return (u16) ((width + 15) & ~15);
+u16 VIPadFrameBufferWidth(u16 width) {
+    return (u16)((width + 15) & ~15);
 }

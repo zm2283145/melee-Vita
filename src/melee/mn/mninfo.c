@@ -304,10 +304,9 @@ static inline void mnInfo_FreeEntries(void)
     MnInfoData* data2;
     MnInfoData* data3;
 
-    j = 0;
     data2 = mnInfo_804D6C78->user_data;
     data3 = data2;
-    do {
+    for (j = 0; j < 4; j++) {
         if (data2->left_column[j] != NULL) {
             HSD_SisLib_803A5CC4(data3->left_column[j]);
             data2->left_column[j] = NULL;
@@ -316,8 +315,7 @@ static inline void mnInfo_FreeEntries(void)
             HSD_SisLib_803A5CC4(data3->right_column[j]);
             data2->right_column[j] = NULL;
         }
-        j++;
-    } while (j < 4);
+    }
 }
 
 void fn_80251FE4(void)
@@ -377,10 +375,6 @@ void fn_80251FE4(void)
     }
 }
 
-#ifdef MUST_MATCH
-#pragma push
-#pragma auto_inline off
-#endif
 void mnInfo_802522B8(HSD_GObj* gobj)
 {
     s32 count;
@@ -407,9 +401,6 @@ void mnInfo_802522B8(HSD_GObj* gobj)
     }
     mn_8022ED6C(jobj, mnInfo_803EFC08);
 }
-#ifdef MUST_MATCH
-#pragma pop
-#endif
 
 void fn_802523B8(HSD_GObj* gobj)
 {

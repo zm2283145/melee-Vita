@@ -1,12 +1,18 @@
-build/
-build-win/
+build*/
 dist/
 *.inc
 __pycache__/
+.zsign_cache/
 
 # Internal working notes stay local; only the screenshots are published.
 docs/*
 !docs/screenshots/
+!docs/architecture.md
+!docs/building.md
+!docs/debugging.md
+!docs/porting-notes.md
+!docs/testing.md
+!docs/site/
 
 # Android build outputs (CI builds these from source).
 platforms/android/.gradle/
@@ -24,3 +30,7 @@ platforms/android/release-signing.env
 # Proton/wine leavings from tools/run_proton.sh.
 vkd3d-proton.cache*
 steam_appid.txt
+
+# MELEE_LOG_FILE defaults to this beside the executable on Windows, so a run
+# started from the repo root writes it here.
+melee-pc.log

@@ -311,15 +311,16 @@ void HSD_ShadowEndRender(HSD_Shadow* shadow)
     }
 #endif
 #ifdef TARGET_VITA
-    /* The pass drew straight into the map; there is nothing to copy. */
+    /* Closes an offscreen shadow target when one is in use; a no-op while the
+     * pass is disabled.  The copy below still runs: with the pass off it is
+     * what leaves the map fully lit instead of black. */
     {
         extern void melee_vita_gx_end_shadow(void);
         melee_vita_gx_end_shadow();
     }
-#else
+#endif
     GXCopyTex(DP(void, idesc->image_ptr), GX_TRUE);
     GXPixModeSync();
-#endif
 
     GXInvalidateTexAll();
 

@@ -1154,12 +1154,42 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
     }
     s_prof_vertex_us += sceKernelGetProcessTimeWide() - prof_start;
     s_prof_vertices += count;
+    {
+        extern int g_melee_vita_in_psdisp;
+        static u32 logged;
+        if (g_melee_vita_in_psdisp && logged++ < 10u)
+            melee_vita_log_info("[PSDRAW] prim=%u n=%u out=%u tex=%p pos=%.2f,%.2f,%.2f,%.2f c0=%.2f,%.2f,%.2f,%.2f bm=%u src=%u dst=%u zc=%u",
+                                (unsigned) primitive, count, output, (void*) s_gx.textures[0],
+                                out[0].position[0], out[0].position[1], out[0].position[2], out[0].position[3],
+                                out[0].color[0][0], out[0].color[0][1], out[0].color[0][2], out[0].color[0][3],
+                                (unsigned) s_gx.blend_mode, (unsigned) s_gx.blend_source, (unsigned) s_gx.blend_destination,
+                                (unsigned) s_gx.depth_compare);
+    }
     if (output == 0) return true;
 
     {
         const u64 fill_start = sceKernelGetProcessTimeWide();
         fill_gxr_draw(draw);
         s_prof_fill_us += sceKernelGetProcessTimeWide() - fill_start;
+    }
+    {
+        extern int g_melee_vita_in_psdisp;
+        static u32 logged;
+        if (g_melee_vita_in_psdisp && logged++ < 10u) {
+            const GxrStage* st = &draw->key.stages[0];
+            melee_vita_log_info("[PSTEV] stages=%u ac=%u/%u ref=%u/%u op=%u | s0 cin=%u,%u,%u,%u ain=%u,%u,%u,%u op=%u/%u out=%u/%u kc=%u ka=%u map=%u coord=%u chan=%u",
+                                (unsigned) draw->key.stage_count, draw->key.alpha_comp[0], draw->key.alpha_comp[1],
+                                draw->key.alpha_ref[0], draw->key.alpha_ref[1], draw->key.alpha_op,
+                                st->color_in[0], st->color_in[1], st->color_in[2], st->color_in[3],
+                                st->alpha_in[0], st->alpha_in[1], st->alpha_in[2], st->alpha_in[3],
+                                st->color_op, st->alpha_op, st->color_out, st->alpha_out,
+                                st->kcsel, st->kasel, st->tex_map, st->tex_coord, st->channel);
+            melee_vita_log_info("[PSTEV] reg0=%.2f,%.2f,%.2f,%.2f reg1=%.2f,%.2f,%.2f,%.2f k0=%.2f,%.2f,%.2f,%.2f upd=%u,%u",
+                                draw->registers[0][0], draw->registers[0][1], draw->registers[0][2], draw->registers[0][3],
+                                draw->registers[1][0], draw->registers[1][1], draw->registers[1][2], draw->registers[1][3],
+                                draw->konst[0][0], draw->konst[0][1], draw->konst[0][2], draw->konst[0][3],
+                                draw->color_update, draw->alpha_update);
+        }
     }
     if (primitive == GX_LINES || primitive == GX_LINESTRIP) {
         draw->primitive = GXR_PRIM_LINES;
@@ -1171,6 +1201,19 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
     {
         const u64 draw_start = sceKernelGetProcessTimeWide();
         const bool ok = gxr_draw(draw, out, idx, output);
+        {
+            extern int g_melee_vita_in_psdisp;
+            static u32 logged, window;
+            if (window != s_gx.copied_frames / 600u) { window = s_gx.copied_frames / 600u; logged = 0; }
+            if (g_melee_vita_in_psdisp && logged++ < 4u)
+                melee_vita_log_info("[PSQUAD] n=%u ndc0=%.3f,%.3f ndc1=%.3f,%.3f ndc2=%.3f,%.3f ndc3=%.3f,%.3f uv0=%.2f,%.2f uv2=%.2f,%.2f",
+                                    count,
+                                    out[0].position[0]/out[0].position[3], out[0].position[1]/out[0].position[3],
+                                    out[1].position[0]/out[1].position[3], out[1].position[1]/out[1].position[3],
+                                    out[2].position[0]/out[2].position[3], out[2].position[1]/out[2].position[3],
+                                    out[3].position[0]/out[3].position[3], out[3].position[1]/out[3].position[3],
+                                    out[0].tex[0][0], out[0].tex[0][1], out[2].tex[0][0], out[2].tex[0][1]);
+        }
         s_prof_draw_us += sceKernelGetProcessTimeWide() - draw_start;
         ++s_prof_draws;
         return ok;
@@ -2408,6 +2451,32 @@ void GXCallDisplayList(const void* list, u32 bytes)
 }
 
 #define GX_VALUE_FN_1(name, type) void name(type a) { (void) a; note_value(); }
+
+/* Inside GXBegin/GXEnd the GameCube FIFO is a byte stream, so sysdolphin
+ * writes some vertex attributes with whichever GX helper emits the right
+ * number of bytes.  psdisp sends a particle quad's indexed texture
+ * coordinates with GXCmd1u8, which is why they arrived here as zeroes. */
+static void immediate_indexed_position(u32 index);
+static void immediate_indexed_normal(u32 index);
+static void immediate_indexed_color(u32 index);
+static void immediate_indexed_texcoord(u32 index);
+static GXAttr immediate_attribute(void);
+static void note_value(void);
+static void immediate_advance(void);
+
+static void immediate_raw_byte(u8 value)
+{
+    const GXAttr attr = immediate_attribute();
+    if (attr == GX_VA_NULL || s_gx.descriptors[attr] != GX_INDEX8) {
+        note_value();
+        return;
+    }
+    if (attr == GX_VA_POS) immediate_indexed_position(value);
+    else if (attr == GX_VA_NRM || attr == GX_VA_NBT) immediate_indexed_normal(value);
+    else if (attr == GX_VA_CLR0 || attr == GX_VA_CLR1) immediate_indexed_color(value);
+    else if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) immediate_indexed_texcoord(value);
+    else { note_value(); immediate_advance(); }
+}
 #define GX_VALUE_FN_2(name, type) void name(type a, type b) { (void) a; (void) b; note_value(); }
 #define GX_VALUE_FN_3(name, type) void name(type a, type b, type c) { (void) a; (void) b; (void) c; note_value(); }
 #define GX_VALUE_FN_4(name, type) void name(type a, type b, type c, type d) { (void) a; (void) b; (void) c; (void) d; note_value(); }
@@ -2497,6 +2566,17 @@ static void immediate_indexed_normal(u32 index)
     if (array->size != 0 && offset >= array->size) { note_value(); immediate_advance(); return; }
     memset(&decoded, 0, sizeof(decoded));
     decode_attribute(&decoded, attr, format, (const u8*) array->data + offset, array->little_endian);
+    {
+        extern int g_melee_vita_in_psdisp;
+        static u32 logged, window;
+        if (window != s_gx.copied_frames / 600u) { window = s_gx.copied_frames / 600u; logged = 0; }
+        if (g_melee_vita_in_psdisp && logged++ < 6u)
+            melee_vita_log_info("[IDXTEX] attr=%u idx=%u stride=%u size=%u fmt=cnt%u/typ%u/frac%u raw=%u,%u -> %.3f,%.3f",
+                                (unsigned) attr, (unsigned) index, (unsigned) array->stride, (unsigned) array->size,
+                                (unsigned) format->count, (unsigned) format->type, (unsigned) format->fraction,
+                                (unsigned) ((const u8*) array->data)[offset], (unsigned) ((const u8*) array->data)[offset + 1u],
+                                decoded.tex[0][0], decoded.tex[0][1]);
+    }
     immediate_normal(decoded.normal[0], decoded.normal[1], decoded.normal[2]);
 }
 void GXNormal1x16(u16 index) { immediate_indexed_normal(index); }
@@ -2580,6 +2660,17 @@ static void immediate_indexed_texcoord(u32 index)
     memset(&decoded, 0, sizeof(decoded));
     decode_attribute(&decoded, attr, format, (const u8*) array->data + offset, array->little_endian);
     {
+        extern int g_melee_vita_in_psdisp;
+        static u32 logged, window;
+        if (window != s_gx.copied_frames / 600u) { window = s_gx.copied_frames / 600u; logged = 0; }
+        if (g_melee_vita_in_psdisp && logged++ < 6u)
+            melee_vita_log_info("[IDXTEX] attr=%u idx=%u stride=%u size=%u fmt=cnt%u/typ%u/frac%u raw=%u,%u -> %.3f,%.3f",
+                                (unsigned) attr, (unsigned) index, (unsigned) array->stride, (unsigned) array->size,
+                                (unsigned) format->count, (unsigned) format->type, (unsigned) format->fraction,
+                                (unsigned) ((const u8*) array->data)[offset], (unsigned) ((const u8*) array->data)[offset + 1u],
+                                decoded.tex[0][0], decoded.tex[0][1]);
+    }
+    {
         const u32 index = attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7 ? (u32) (attr - GX_VA_TEX0) : 0u;
         immediate_texcoord(decoded.tex[index][0], decoded.tex[index][1]);
     }
@@ -2587,7 +2678,7 @@ static void immediate_indexed_texcoord(u32 index)
 void GXTexCoord1x16(u16 index) { immediate_indexed_texcoord(index); }
 void GXTexCoord1x8(u8 index) { immediate_indexed_texcoord(index); }
 
-GX_VALUE_FN_1(GXCmd1u8, u8)
+void GXCmd1u8(u8 a) { if (s_gx.immediate.active) immediate_raw_byte(a); else note_value(); }
 GX_VALUE_FN_1(GXCmd1u16, u16)
 GX_VALUE_FN_1(GXCmd1u32, u32)
 GX_VALUE_FN_1(GXCmd1u64, u64)

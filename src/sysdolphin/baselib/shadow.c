@@ -185,6 +185,16 @@ void HSD_ShadowStartRender(HSD_Shadow* shadow)
     cobj = shadow->camera;
     idesc = shadow->texture->imagedesc;
 
+#ifdef TARGET_VITA
+    /* Shadows are off for now: the map itself renders correctly, but the
+     * stage materials that sample it also disturbed the stage copies
+     * (Pokemon Stadium screen, Fountain floor).  Revisit with the offscreen
+     * frame buffer in place. */
+    (void) list;
+    (void) cobj;
+    (void) idesc;
+    return;
+#endif
     if (list != NULL) {
 #ifdef TARGET_VITA
         {

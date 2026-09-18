@@ -1005,6 +1005,12 @@ static void fill_gxr_draw(GxrDraw* draw)
 #endif
     draw->depth_function = (u8) s_gx.depth_function;
     draw->depth_write = s_gx.depth_update ? 1u : 0u;
+    if (s_render_target.active) {
+        /* The offscreen shadow target has no depth buffer: the pass paints
+         * silhouettes in draw order. */
+        draw->depth_compare = 0;
+        draw->depth_write = 0;
+    }
     memcpy(draw->registers, s_gx.tev_registers_f, sizeof(draw->registers));
     for (i = 0; i < 4u; ++i) gxcolor_to_float(s_gx.tev_kcolors[i], draw->konst[i]);
 }
@@ -2864,9 +2870,13 @@ static void copy_tex_impl(void* destination, GXBool clear)
                                 (unsigned) s_tex_copy_dst.mipmap, s_tex_copy_src[0], s_tex_copy_src[1],
                                 s_tex_copy_src[2], s_tex_copy_src[3], (unsigned) clear);
     }
-    /* GX_CTF_R4 is how HSD copies a shadow map out of the framebuffer; it is
-     * sampled later as an I4 texture, and the copy texture keyed by this
-     * destination answers that lookup. */
+    /* GX_CTF_R4 is an HSD shadow map; with the shadow pass off, leave it
+     * fully lit. */
+    if (s_tex_copy_dst.format == 0x20u) {
+        u32 size = GXGetTexBufferSize(dst_w, dst_h, GX_TF_I4, GX_FALSE, 0);
+        if (size != 0 && size <= 4u * 1024u * 1024u) memset(destination, 0xff, size);
+        return;
+    }
     if (dst_w > 1024u || dst_h > 1024u) return;
     target = melee_vita_gxm_copy_texture(destination, dst_w, dst_h);
     if (target == NULL) return;

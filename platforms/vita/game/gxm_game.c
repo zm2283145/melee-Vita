@@ -714,10 +714,11 @@ static void exec_copy(const void* payload)
     const void* fb = render_fb();
     vita2d_end_drawing();
     {
-        static u32 logged;
+        static u32 logged, window;
+        if (window != s_frame_counter / 600u) { window = s_frame_counter / 600u; logged = 0; }
         if (logged++ < 4u)
-            melee_vita_log_info("[GXCOPY] exec fb=%p target=%p rt=%p %ux%u hist=%u", fb, (void*) c->target,
-                                c->target ? (void*) c->target->gxm_rtgt : NULL, c->width, c->height, s_fb_history_count);
+            melee_vita_log_info("[GXCOPY] exec %ux%u src=%.1f,%.1f step=%.3f,%.3f rt=%p", c->width, c->height,
+                                c->x0, c->y0, c->sx, c->sy, c->target ? (void*) c->target->gxm_rtgt : NULL);
     }
     if (fb != NULL && c->target != NULL && c->target->gxm_rtgt != NULL) {
         /* GPU copy: sample the partially rendered back buffer (alpha forced to
@@ -744,6 +745,12 @@ static void exec_copy(const void* payload)
         if (tex_w > 0.0f && tex_h > 0.0f)
             vita2d_draw_texture_part_scale(&source, 0.0f, 0.0f, c->x0, c->y0, tex_w, tex_h,
                                            960.0f / tex_w, 544.0f / tex_h);
+#ifdef MELEE_VITA_DEBUG_COPIES
+        /* Marker: a full-width stripe along the top of the target, to show how
+         * target coordinates map. */
+        vita2d_draw_rectangle(0.0f, 0.0f, 960.0f, 24.0f, RGBA8(255, 0, 0, 255));
+        vita2d_draw_rectangle(0.0f, 520.0f, 960.0f, 24.0f, RGBA8(0, 0, 255, 255));
+#endif
         sceGxmEndScene(context, NULL, NULL);
         sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
     }
@@ -786,6 +793,13 @@ static void exec_target(const void* payload)
 {
     const RqTarget* t = payload;
     SceGxmContext* context = vita2d_get_context();
+    {
+        static u32 logged, window;
+        if (window != s_frame_counter / 600u) { window = s_frame_counter / 600u; logged = 0; }
+        if (logged++ < 4u)
+            melee_vita_log_info("[TARGET] %s %ux%u rt=%p", t->begin ? "begin" : "end", t->width, t->height,
+                                t->target ? (void*) t->target->gxm_rtgt : NULL);
+    }
     if (t->begin) {
         if (t->target == NULL || t->target->gxm_rtgt == NULL) return;
         vita2d_end_drawing();

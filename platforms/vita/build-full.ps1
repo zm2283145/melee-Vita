@@ -56,7 +56,7 @@ $platformSources = @(
 
 $common = @(
     '-std=gnu11', '-O2', '-g3',
-    '-DMELEE_VITA_DEBUG_COPIES=1', '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
+    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
     "-I$(Join-Path $root 'extern/aurora/include')",
     "-I$(Join-Path $root 'src')",
     "-I$(Join-Path $root 'src/sdk_include')",
@@ -68,7 +68,7 @@ $common = @(
 
 $commonCpp = @(
     '-std=c++20', '-O2', '-g3',
-    '-DMELEE_VITA_DEBUG_COPIES=1', '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
+    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
     "-I$(Join-Path $root 'extern/aurora/include')",
     "-I$(Join-Path $root 'extern/aurora/lib')",
     "-I$(Join-Path $root 'src')",

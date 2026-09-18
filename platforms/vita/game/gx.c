@@ -526,8 +526,10 @@ static const MeleeVitaTextureSource* current_texture_source(
         palette = (const VitaTlutObj*) s_gx.tluts[texture->tlut];
     {
         extern void* g_melee_vita_last_copy_dst;
-        static u32 logged;
-        if (texture->data == g_melee_vita_last_copy_dst && logged++ < 6u)
+        static u32 logged, window;
+        if (window != s_gx.copied_frames / 600u) { window = s_gx.copied_frames / 600u; logged = 0; }
+        if ((texture->data == g_melee_vita_last_copy_dst ||
+             (texture->width == 256u && texture->height == 256u)) && logged++ < 4u)
             melee_vita_log_info("[GXCOPY] sampled as %ux%u fmt=%u tlut=%u", texture->width, texture->height,
                                 (unsigned) texture->format, texture->tlut);
     }
@@ -2819,7 +2821,9 @@ static void copy_tex_impl(void* destination, GXBool clear)
     g_melee_vita_last_copy_dst = destination;
     {
         static u32 logged;
-        if (s_tex_copy_dst.format != 0x20u && logged++ < 8u)
+        static u32 window;
+        if (window != s_gx.copied_frames / 600u) { window = s_gx.copied_frames / 600u; logged = 0; }
+        if (logged++ < 4u)
             melee_vita_log_info("[GXCOPY] dst=%p %ux%u fmt=0x%x mip=%u src=%u,%u %ux%u clear=%u",
                                 destination, dst_w, dst_h, (unsigned) s_tex_copy_dst.format,
                                 (unsigned) s_tex_copy_dst.mipmap, s_tex_copy_src[0], s_tex_copy_src[1],

@@ -648,10 +648,14 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width, u32 heig
     s_copy_textures[free_slot].height = height;
     s_copy_textures[free_slot].frame = s_frame_counter;
     s_copy_textures[free_slot].texture = create_copy_target(width, height);
-    if (s_copy_textures[free_slot].texture != NULL)
+    if (s_copy_textures[free_slot].texture != NULL) {
         vita2d_texture_set_filters(s_copy_textures[free_slot].texture, SCE_GXM_TEXTURE_FILTER_LINEAR,
                                    SCE_GXM_TEXTURE_FILTER_LINEAR);
-    else
+        /* Copied maps are sampled by projection (HSD shadow maps especially),
+         * so anything outside the map must clamp to its edge, not repeat. */
+        sceGxmTextureSetUAddrMode(&s_copy_textures[free_slot].texture->gxm_tex, SCE_GXM_TEXTURE_ADDR_CLAMP);
+        sceGxmTextureSetVAddrMode(&s_copy_textures[free_slot].texture->gxm_tex, SCE_GXM_TEXTURE_ADDR_CLAMP);
+    } else
         s_copy_textures[free_slot].key = NULL;
     return s_copy_textures[free_slot].texture;
 }

@@ -248,7 +248,18 @@ void HSD_ShadowStartRender(HSD_Shadow* shadow)
             GXSetScissor(2, 2, idesc->width - 4, idesc->height - 4);
         }
 
-        for (list = shadow->objects; list != NULL; list = list->next) {
+    #ifdef TARGET_VITA
+    {
+        extern void melee_vita_log_info(const char*, ...);
+        static u32 logged;
+        u32 count = 0;
+        HSD_SList* it;
+        for (it = shadow->objects; it != NULL; it = it->next) ++count;
+        if ((logged++ % 300u) == 0u)
+            melee_vita_log_info("[SHADOW] start objects=%u", count);
+    }
+#endif
+    for (list = shadow->objects; list != NULL; list = list->next) {
             HSD_JObjDispAll(list->data, NULL,
                             (HSD_TrspMask) (HSD_TRSP_OPA | HSD_TRSP_TEXEDGE),
                             RENDER_SHADOW);
@@ -269,6 +280,17 @@ void HSD_ShadowEndRender(HSD_Shadow* shadow)
         HSD_ShadowSetSize(shadow, idesc->width, idesc->height);
     }
 
+#ifdef TARGET_VITA
+    {
+        extern void melee_vita_log_info(const char*, ...);
+        static u32 logged;
+        if ((logged++ % 300u) == 0u)
+            melee_vita_log_info("[SHADOW] end n=%u image=%p %ux%u fmt=%u intensity=%u",
+                                logged, DP(void, idesc->image_ptr), (unsigned) idesc->width,
+                                (unsigned) idesc->height, (unsigned) idesc->format,
+                                (unsigned) shadow->intensity);
+    }
+#endif
     GXCopyTex(DP(void, idesc->image_ptr), GX_TRUE);
     GXPixModeSync();
 

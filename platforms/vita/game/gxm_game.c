@@ -459,6 +459,11 @@ static void rq_wait_idle(void)
     sceKernelSignalSema(s_rq_done, 1);
 }
 
+void melee_vita_gxm_wait_idle(void)
+{
+    if (s_initialized) rq_wait_idle();
+}
+
 /* ---- game-thread recording API ---- */
 
 void* melee_vita_rq_push(MeleeVitaRqExec exec, u32 payload_size)
@@ -980,6 +985,43 @@ void melee_vita_gxm_draw_points(const MeleeVitaScreenVertex* vertices,
                                 const MeleeVitaRenderState* state)
 {
     draw_colored(vertices, count, SCE_GXM_PRIMITIVE_POINTS, state);
+}
+
+typedef struct RqOverlay {
+    vita2d_texture* texture;
+    u32 width;
+    u32 height;
+} RqOverlay;
+
+static void exec_overlay(const void* payload)
+{
+    const RqOverlay* overlay = payload;
+    const f32 scale = 544.0f / (f32) overlay->height;
+    const f32 width = (f32) overlay->width * scale;
+    ++g_melee_vita_gxm_state_epoch;
+    rt_default_depth();
+    vita2d_set_blend_mode_add(0);
+    vita2d_draw_rectangle(0.0f, 0.0f, 960.0f, 544.0f,
+                          RGBA8(0, 0, 0, 255));
+    if (overlay->texture != NULL) {
+        vita2d_draw_texture_part_scale(
+            overlay->texture, (960.0f - width) * 0.5f, 0.0f,
+            0.0f, 0.0f, (f32) overlay->width, (f32) overlay->height,
+            scale, scale);
+    }
+}
+
+void melee_vita_gxm_queue_overlay(vita2d_texture* texture,
+                                  u32 width, u32 height)
+{
+    RqOverlay* overlay;
+    if (!s_initialized || width == 0u || height == 0u)
+        return;
+    overlay = melee_vita_rq_push(exec_overlay, sizeof(*overlay));
+    if (overlay == NULL) return;
+    overlay->texture = texture;
+    overlay->width = width;
+    overlay->height = height;
 }
 
 /* ---- present ---- */

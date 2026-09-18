@@ -69,5 +69,8 @@ void melee_vita_gxm_queue_copy(struct vita2d_texture* target, u32 width, u32 hei
                                f32 x0, f32 y0, f32 sx, f32 sy, int clear);
 void melee_vita_gxm_invalidate_textures(void);
 void melee_vita_gxm_mark_texture_data_dirty(void);
+void melee_vita_gxm_wait_idle(void);
+void melee_vita_gxm_queue_overlay(struct vita2d_texture* texture,
+                                  u32 width, u32 height);
 
 #endif

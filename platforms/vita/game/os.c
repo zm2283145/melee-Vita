@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Vita implementation of the Dolphin OS foundation used during game boot. */
 #include "vita_platform.h"
+#include "opening_audio.h"
 #include "gxm_game.h"
 #include "../vita_log.h"
 
@@ -98,10 +99,12 @@ void melee_vita_platform_poll(void)
     melee_vita_dvd_poll();
     melee_vita_audio_poll();
     melee_vita_card_poll();
+    melee_vita_opening_audio_poll();
 }
 
 void melee_vita_platform_shutdown(void)
 {
+    melee_vita_opening_audio_shutdown();
     melee_vita_gxm_shutdown();
     melee_vita_audio_shutdown();
     free(s_mem1);

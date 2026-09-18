@@ -2,6 +2,9 @@
 #ifdef TARGET_PC
 #include "pc/widescreen.h"
 #endif
+#ifdef TARGET_VITA
+#include "opening_movie.h"
+#endif
 
 #include "gm_1A36.h"
 #include "gm_unsplit.h"
@@ -428,6 +431,9 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
             extern void melee_vita_prof_add(int zone, u64 us);
             u64 t0 = sceKernelGetProcessTimeWide(), t1;
             HSD_GObj_80390FC0();
+#ifdef TARGET_VITA
+            melee_vita_opening_movie_draw_active();
+#endif
             t1 = sceKernelGetProcessTimeWide();
             melee_vita_prof_add(0 /* gobj_render */, t1 - t0);
             HSD_Init_803755A8();

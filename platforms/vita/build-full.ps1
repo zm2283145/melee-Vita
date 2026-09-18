@@ -83,6 +83,8 @@ $platformSources = @(
     'platforms/vita/game/gxm_game.c',
     'platforms/vita/game/heap.c',
     'platforms/vita/game/main.c',
+    'platforms/vita/game/opening_audio.c',
+    'platforms/vita/game/opening_movie.c',
     'platforms/vita/game/os.c',
     'platforms/vita/game/pad.c',
     'platforms/vita/game/pc_stubs.c',
@@ -161,7 +163,7 @@ $link += @(
     '-lSceCommonDialog_stub', '-lm', '-lSceProcessmgr_stub',
     '-lSceSysmem_stub', '-lSceLibKernel_stub', '-lSceKernelModulemgr_stub', '-lSceSysmodule_stub',
     '-lvitashark', '-lSceShaccCgExt', '-ltaihen_stub', '-lSceShaccCg_stub_weak',
-    '-lstdc++', '-pthread', '-o', $elf
+    '-lturbojpeg', '-lstdc++', '-pthread', '-o', $elf
 )
 
 Invoke-VitaTool 'arm-vita-eabi-gcc' $link

@@ -35,7 +35,7 @@ int melee_vita_log_start(void)
     s_netctl_started = 1;
     const struct uvdb_debugnet_config config = {
         .server_ip = MELEE_VITA_LOG_HOST,
-        .port = 18194,
+        .port = 18197,
         .level = UVDB_LOG_DEBUG,
     };
     if (uvdb_debugnet_start(&config) < 0) goto failure;

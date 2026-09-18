@@ -17,6 +17,15 @@
 #include <sysdolphin/baselib/hsd_3924.h>
 #include <sysdolphin/baselib/sobjlib.h>
 
+#ifdef TARGET_VITA
+#include "opening_movie.h"
+#include "vita_platform.h"
+
+static struct melee_vita_opening_movie* s_vita_opening_movie;
+static bool s_vita_native_opening;
+static bool s_vita_native_finished;
+#endif
+
 /* 3B7D68 */ static const Vec3 gm_803B7D68 = { 0.0f, 0.0f, 1.0f };
 /* 3B7D74 */ static const Vec3 gm_803B7D74 = { 0.0f, 0.0f, 0.0f };
 /* 480B38 */ static PerfLabelLine gm_80480B38[4];
@@ -155,6 +164,14 @@ void gm_Scene_Opening_OnEnter(UNK_T arg0)
     gm_804D67E1 = 0;
     gm_804D67DC = 0;
     gm_804D67E2 = 0;
+#ifdef TARGET_VITA
+    s_vita_native_opening = false;
+    s_vita_native_finished = false;
+    if (s_vita_opening_movie != NULL) {
+        melee_vita_opening_movie_free(s_vita_opening_movie);
+        s_vita_opening_movie = NULL;
+    }
+#endif
     gmTitle_801A1AC0();
     lbAudioAx_80026F2C(0x12);
     lbAudioAx_8002702C(2, 4);
@@ -174,28 +191,49 @@ void gm_Scene_Opening_OnEnter(UNK_T arg0)
     temp_r3_2->gxlink_prios = 0x20000;
     gmTitle_801A185C();
 
-    temp_r3_3 = GObj_Create(0xE, 0xF, 0);
-    gm_804D67E8 = temp_r3_3;
-    GObj_SetupGXLink(temp_r3_3, lbMthp_8001F67C, 0xB, 0);
-    lbMthp_8001F624(temp_r3_3, 640, 480);
+#ifdef TARGET_VITA
+    s_vita_opening_movie = melee_vita_opening_movie_load();
+    if (melee_vita_opening_movie_ready(s_vita_opening_movie)) {
+        s_vita_native_opening = true;
+        lbAudioAx_800236DC();
+        melee_vita_audio_flush();
+        melee_vita_opening_movie_start(s_vita_opening_movie);
+    } else {
+        melee_vita_opening_movie_free(s_vita_opening_movie);
+        s_vita_opening_movie = NULL;
+    }
+    if (!s_vita_native_opening)
+#endif
+    {
+        temp_r3_3 = GObj_Create(0xE, 0xF, 0);
+        gm_804D67E8 = temp_r3_3;
+        GObj_SetupGXLink(temp_r3_3, lbMthp_8001F67C, 0xB, 0);
+        lbMthp_8001F624(temp_r3_3, 640, 480);
 
-    lbAudioAx_80027648();
-    lbAudioAx_80023F28(0x3E);
-    lbAudioAx_80024E50(1);
-    lbMthp_8001F410("MvOpen.mth", gm_803DBFB4, 0, 0, 0);
-    lbAudioAx_80024E50(0);
-    gm_804D6724 = fn_801AA0E8;
+        lbAudioAx_80027648();
+        lbAudioAx_80023F28(0x3E);
+        lbAudioAx_80024E50(1);
+        lbMthp_8001F410("MvOpen.mth", gm_803DBFB4, 0, 0, 0);
+        lbAudioAx_80024E50(0);
+        gm_804D6724 = fn_801AA0E8;
+    }
 }
 
 void gm_Scene_Opening_OnFrame(void)
 {
     HSD_GObj* temp_r3_2;
     int temp_r3;
+    int movie_complete;
     HSD_SObj* temp_r3_3;
     PAD_STACK(4);
 
 #ifdef MELEE_VITA_SKIP_OPENING_MOVIE
     /* Development shortcut: behave as if Start was pressed on frame one. */
+#ifdef TARGET_VITA
+    melee_vita_opening_movie_free(s_vita_opening_movie);
+    s_vita_opening_movie = NULL;
+    melee_vita_opening_movie_stop_preserved_audio();
+#endif
     gmMainLib_8015F500();
     lbAudioAx_800236DC();
     lbAudioAx_80023694();
@@ -204,13 +242,52 @@ void gm_Scene_Opening_OnFrame(void)
     gm_SetNewGameModePending();
     return;
 #endif
-    lbMthp_8001F578();
-    temp_r3 = lbMthp_8001F5C4();
+
+#ifdef TARGET_VITA
+    if (s_vita_opening_movie != NULL) {
+        const enum melee_vita_opening_movie_result result =
+            melee_vita_opening_movie_update(s_vita_opening_movie);
+        temp_r3 = (int) melee_vita_opening_movie_elapsed_ticks(
+            s_vita_opening_movie);
+        if (result == MELEE_VITA_OPENING_MOVIE_SKIPPED ||
+            result == MELEE_VITA_OPENING_MOVIE_FAILED)
+        {
+            melee_vita_opening_movie_free(s_vita_opening_movie);
+            s_vita_opening_movie = NULL;
+            gmMainLib_8015F500();
+            lbAudioAx_800236DC();
+            lbAudioAx_80023694();
+            if (result == MELEE_VITA_OPENING_MOVIE_SKIPPED) sfxForward();
+            gm_801A4B60();
+            gm_SetPendingGameMode(GM_TITLE);
+            gm_SetNewGameModePending();
+            return;
+        }
+        if (result == MELEE_VITA_OPENING_MOVIE_FINISHED) {
+            melee_vita_opening_movie_preserve_audio(s_vita_opening_movie);
+            melee_vita_opening_movie_free(s_vita_opening_movie);
+            s_vita_opening_movie = NULL;
+            s_vita_native_finished = true;
+        }
+    } else if (s_vita_native_opening) {
+        temp_r3 = (int) gm_804D67EC + 1;
+    } else
+#endif
+    {
+        lbMthp_8001F578();
+        temp_r3 = lbMthp_8001F5C4();
+    }
     if (gm_804D67EC > 5400) {
         gm_804D67EC += 1;
     } else {
         gm_804D67EC = (u32) temp_r3;
     }
+#ifdef TARGET_VITA
+    movie_complete = s_vita_native_opening
+        ? s_vita_native_finished : lbMthp_8001F604() != 0;
+#else
+    movie_complete = lbMthp_8001F604() != 0;
+#endif
     if (lbLang_IsSettingUS() != 0) {
         if (gm_804D67E0 == 0 && gm_804D67EC >= 5034) {
             lbAudioAx_800237A8(0x4E21, 0x7F, 0x40);
@@ -258,14 +335,26 @@ void gm_Scene_Opening_OnFrame(void)
         gm_804D67D0 = true;
         gm_804D67E4 = (600.0f + (400.0f + gm_804D67EC));
     }
-    if (lbMthp_8001F604() != 0 && !gm_804D67DC && gm_804D67D0) {
+    if (movie_complete && !gm_804D67DC && gm_804D67D0) {
         gm_PreloadTitleDemo();
         gm_804D67DC = true;
     }
     if (gm_804D67D0 && (gm_804D67EC == gm_804D67E4)) {
+#ifdef TARGET_VITA
+        if (s_vita_opening_movie != NULL) {
+            melee_vita_opening_movie_preserve_audio(s_vita_opening_movie);
+            melee_vita_opening_movie_free(s_vita_opening_movie);
+            s_vita_opening_movie = NULL;
+            s_vita_native_finished = true;
+        }
+#endif
         lbAudioAx_800236DC();
         gm_801A4B60();
-    } else if (gmMainLib_8046B0F0.xC && lbMthp_8001F604() == 0) {
+    } else if (gmMainLib_8046B0F0.xC && !movie_complete) {
+#ifdef TARGET_VITA
+        if (s_vita_native_opening)
+            melee_vita_opening_movie_stop_preserved_audio();
+#endif
         gmMainLib_8015F500();
         lbAudioAx_800236DC();
         lbAudioAx_80023694();
@@ -274,6 +363,10 @@ void gm_Scene_Opening_OnFrame(void)
         gm_SetNewGameModePending();
     } else if (gm_804D67EC > 0x157C) {
         if (gm_GetButtonsTriggered(PAD_MAX_CONTROLLERS) & HSD_PAD_START) {
+#ifdef TARGET_VITA
+            if (s_vita_native_opening)
+                melee_vita_opening_movie_stop_preserved_audio();
+#endif
             gmMainLib_8015F500();
             lbAudioAx_800236DC();
             sfxForward();
@@ -289,6 +382,10 @@ void gm_Scene_Opening_OnFrame(void)
         if (gm_GetButtonsTriggered(PAD_MAX_CONTROLLERS) &
             (HSD_PAD_START | HSD_PAD_A))
         {
+#ifdef TARGET_VITA
+            if (s_vita_native_opening)
+                melee_vita_opening_movie_stop_preserved_audio();
+#endif
             gmMainLib_8015F500();
             lbAudioAx_800236DC();
             lbAudioAx_80023694();

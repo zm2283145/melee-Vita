@@ -92,7 +92,7 @@ The matching kubridge plugin must be installed on the development Vita.
 
 Add `-EnableDebugger` only when you intend to wait for a GDB connection.
 It is rejected for Release builds. DebugNet sends logs to the selected host on
-UDP port 18194; GDB uses TCP port 1234. Use a trusted private LAN only.
+UDP port 18197; GDB uses TCP port 1234. Use a trusted private LAN only.
 Specify your own paths and log host rather than relying on the historical
 local-machine defaults.
 

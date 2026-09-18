@@ -26,6 +26,7 @@ $compat = Join-Path $PSScriptRoot 'vita_compat.h'
 $includeAurora = Join-Path $root 'extern/aurora/include'
 $includeSrc = Join-Path $root 'src'
 $includeSdk = Join-Path $root 'src/sdk_include'
+$includeVita = Join-Path $root 'platforms/vita/game'
 
 $sources = @(
     Get-ChildItem (Join-Path $root 'src/melee'), (Join-Path $root 'src/sysdolphin') -Recurse -Filter *.c |
@@ -43,7 +44,7 @@ $configurationFlags = if ($Configuration -eq 'Release') {
 $common = @(
     '-std=c11',
     '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1', 
-    "-I$includeAurora", "-I$includeSrc", "-I$includeSdk",
+    "-I$includeAurora", "-I$includeSrc", "-I$includeSdk", "-I$includeVita",
     '-Wno-all', '-Wno-extra',
     '-Werror=int-conversion', '-Werror=implicit-function-declaration',
     '-Werror=incompatible-pointer-types',

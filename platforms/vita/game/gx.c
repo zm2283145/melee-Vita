@@ -98,6 +98,8 @@ typedef struct VitaImmediateState {
     u32 values_written;
     u32 attribute_cursor;
     u8 nbt_vectors;
+    f32 pending_components[9];
+    u8 pending_count;
     u8 pending_matrix;
     GXBool has_pending_matrix;
     GXBool active;
@@ -1092,16 +1094,6 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
         if (primitive == GX_POINTS) {
             expand_points(&xform, vertices, count, out, idx);
             output = needed;
-            {
-                static u32 logged;
-                if (logged++ < 20u)
-                    melee_vita_log_info("[PTS] n=%u size=%u span=%d off0=%u tex=%p pos=%.1f,%.1f,%.1f,%.1f blend=%u,%u,%u ac=%u,%u",
-                                        count, (unsigned) s_gx.point_size, (int) s_gx.point_offset,
-                                        (unsigned) s_gx.tex_offset_points[0], (void*) s_gx.textures[0],
-                                        out[0].position[0], out[0].position[1], out[0].position[2], out[0].position[3],
-                                        (unsigned) s_gx.blend_mode, (unsigned) s_gx.blend_source, (unsigned) s_gx.blend_destination,
-                                        (unsigned) s_gx.alpha_comp[0], (unsigned) s_gx.alpha_ref[0]);
-            }
         } else
         for (i = 0; i < count; ++i) build_gxr_vertex(&xform, &vertices[i], &out[i]);
 #define EMIT(index) idx[output++] = (u16) (index)
@@ -1154,42 +1146,12 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
     }
     s_prof_vertex_us += sceKernelGetProcessTimeWide() - prof_start;
     s_prof_vertices += count;
-    {
-        extern int g_melee_vita_in_psdisp;
-        static u32 logged;
-        if (g_melee_vita_in_psdisp && logged++ < 10u)
-            melee_vita_log_info("[PSDRAW] prim=%u n=%u out=%u tex=%p pos=%.2f,%.2f,%.2f,%.2f c0=%.2f,%.2f,%.2f,%.2f bm=%u src=%u dst=%u zc=%u",
-                                (unsigned) primitive, count, output, (void*) s_gx.textures[0],
-                                out[0].position[0], out[0].position[1], out[0].position[2], out[0].position[3],
-                                out[0].color[0][0], out[0].color[0][1], out[0].color[0][2], out[0].color[0][3],
-                                (unsigned) s_gx.blend_mode, (unsigned) s_gx.blend_source, (unsigned) s_gx.blend_destination,
-                                (unsigned) s_gx.depth_compare);
-    }
     if (output == 0) return true;
 
     {
         const u64 fill_start = sceKernelGetProcessTimeWide();
         fill_gxr_draw(draw);
         s_prof_fill_us += sceKernelGetProcessTimeWide() - fill_start;
-    }
-    {
-        extern int g_melee_vita_in_psdisp;
-        static u32 logged;
-        if (g_melee_vita_in_psdisp && logged++ < 10u) {
-            const GxrStage* st = &draw->key.stages[0];
-            melee_vita_log_info("[PSTEV] stages=%u ac=%u/%u ref=%u/%u op=%u | s0 cin=%u,%u,%u,%u ain=%u,%u,%u,%u op=%u/%u out=%u/%u kc=%u ka=%u map=%u coord=%u chan=%u",
-                                (unsigned) draw->key.stage_count, draw->key.alpha_comp[0], draw->key.alpha_comp[1],
-                                draw->key.alpha_ref[0], draw->key.alpha_ref[1], draw->key.alpha_op,
-                                st->color_in[0], st->color_in[1], st->color_in[2], st->color_in[3],
-                                st->alpha_in[0], st->alpha_in[1], st->alpha_in[2], st->alpha_in[3],
-                                st->color_op, st->alpha_op, st->color_out, st->alpha_out,
-                                st->kcsel, st->kasel, st->tex_map, st->tex_coord, st->channel);
-            melee_vita_log_info("[PSTEV] reg0=%.2f,%.2f,%.2f,%.2f reg1=%.2f,%.2f,%.2f,%.2f k0=%.2f,%.2f,%.2f,%.2f upd=%u,%u",
-                                draw->registers[0][0], draw->registers[0][1], draw->registers[0][2], draw->registers[0][3],
-                                draw->registers[1][0], draw->registers[1][1], draw->registers[1][2], draw->registers[1][3],
-                                draw->konst[0][0], draw->konst[0][1], draw->konst[0][2], draw->konst[0][3],
-                                draw->color_update, draw->alpha_update);
-        }
     }
     if (primitive == GX_LINES || primitive == GX_LINESTRIP) {
         draw->primitive = GXR_PRIM_LINES;
@@ -1201,19 +1163,6 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
     {
         const u64 draw_start = sceKernelGetProcessTimeWide();
         const bool ok = gxr_draw(draw, out, idx, output);
-        {
-            extern int g_melee_vita_in_psdisp;
-            static u32 logged, window;
-            if (window != s_gx.copied_frames / 600u) { window = s_gx.copied_frames / 600u; logged = 0; }
-            if (g_melee_vita_in_psdisp && logged++ < 4u)
-                melee_vita_log_info("[PSQUAD] n=%u ndc0=%.3f,%.3f ndc1=%.3f,%.3f ndc2=%.3f,%.3f ndc3=%.3f,%.3f uv0=%.2f,%.2f uv2=%.2f,%.2f",
-                                    count,
-                                    out[0].position[0]/out[0].position[3], out[0].position[1]/out[0].position[3],
-                                    out[1].position[0]/out[1].position[3], out[1].position[1]/out[1].position[3],
-                                    out[2].position[0]/out[2].position[3], out[2].position[1]/out[2].position[3],
-                                    out[3].position[0]/out[3].position[3], out[3].position[1]/out[3].position[3],
-                                    out[0].tex[0][0], out[0].tex[0][1], out[2].tex[0][0], out[2].tex[0][1]);
-        }
         s_prof_draw_us += sceKernelGetProcessTimeWide() - draw_start;
         ++s_prof_draws;
         return ok;
@@ -1776,6 +1725,7 @@ void GXBegin(GXPrimitive primitive, GXVtxFmt format, u16 vertices)
     s_gx.immediate.expected_vertices = vertices;
     s_gx.immediate.vertex_count = 0;
     s_gx.immediate.values_written = 0;
+    s_gx.immediate.pending_count = 0;
     s_gx.immediate.attribute_cursor = 0;
     s_gx.immediate.nbt_vectors = 0;
     s_gx.immediate.has_pending_matrix = GX_FALSE;
@@ -2487,6 +2437,81 @@ static VitaDecodedVertex* immediate_vertex(void)
     return &s_decode_vertices[s_gx.immediate.vertex_count - 1u];
 }
 
+/* GX vertex data is a byte stream: the helper a caller picks says how many
+ * bytes it writes, not which attribute they belong to.  sysdolphin relies on
+ * that -- psdisp writes particle positions with GXTexCoord1f32 and indexed
+ * texture coordinates with GXCmd1u8 -- so components are routed by the vertex
+ * descriptor, exactly as the hardware would consume them. */
+static u32 attribute_float_components(GXAttr attr)
+{
+    const VitaVtxFormat* format = valid_attr(attr) ? &s_gx.formats[s_gx.immediate.format][attr] : NULL;
+    if (attr == GX_VA_POS) return format != NULL ? attribute_components(attr, format->count) : 3u;
+    if (attr == GX_VA_NRM) return 3u;
+    if (attr == GX_VA_NBT) return 9u;
+    if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7)
+        return format != NULL ? attribute_components(attr, format->count) : 2u;
+    return 1u;
+}
+
+static void immediate_commit_components(GXAttr attr, const f32* v, u32 count)
+{
+    VitaDecodedVertex* vertex;
+    if (attr == GX_VA_POS) {
+        if (!reserve_vertices(s_gx.immediate.vertex_count + 1u)) return;
+        vertex = &s_decode_vertices[s_gx.immediate.vertex_count++];
+        memset(vertex, 0, sizeof(*vertex));
+        vertex->position[0] = v[0];
+        vertex->position[1] = count > 1u ? v[1] : 0.0f;
+        vertex->position[2] = count > 2u ? v[2] : 0.0f;
+        vertex->normal[2] = 1.0f;
+        vertex->color = packed_color(s_gx.material_colors[0]);
+        if (s_gx.immediate.has_pending_matrix) {
+            vertex->position_matrix = s_gx.immediate.pending_matrix;
+            vertex->has_position_matrix = 1;
+            s_gx.immediate.has_pending_matrix = GX_FALSE;
+        }
+        return;
+    }
+    vertex = immediate_vertex();
+    if (vertex == NULL) return;
+    if (attr == GX_VA_NRM || attr == GX_VA_NBT) {
+        vertex->normal[0] = v[0];
+        vertex->normal[1] = count > 1u ? v[1] : 0.0f;
+        vertex->normal[2] = count > 2u ? v[2] : 0.0f;
+    } else if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) {
+        const u32 index = (u32) (attr - GX_VA_TEX0);
+        vertex->tex[index][0] = v[0];
+        vertex->tex[index][1] = count > 1u ? v[1] : 0.0f;
+        if (index == 0) { vertex->texture[0] = vertex->tex[0][0]; vertex->texture[1] = vertex->tex[0][1]; }
+    }
+}
+
+static void immediate_float(f32 value)
+{
+    GXAttr attr;
+    u32 needed;
+    if (!s_gx.immediate.active) { note_value(); return; }
+    attr = immediate_attribute();
+    if (attr == GX_VA_NULL || s_gx.descriptors[attr] != GX_DIRECT) { note_value(); return; }
+    needed = attribute_float_components(attr);
+    if (needed > sizeof(s_gx.immediate.pending_components) / sizeof(f32))
+        needed = sizeof(s_gx.immediate.pending_components) / sizeof(f32);
+    if (s_gx.immediate.pending_count < needed)
+        s_gx.immediate.pending_components[s_gx.immediate.pending_count++] = value;
+    if (s_gx.immediate.pending_count < needed) return;
+    immediate_commit_components(attr, s_gx.immediate.pending_components, needed);
+    s_gx.immediate.pending_count = 0;
+    note_value();
+    immediate_advance();
+}
+
+static f32 immediate_component_scaled(s32 value)
+{
+    const GXAttr attr = immediate_attribute();
+    const u8 fraction = valid_attr(attr) ? s_gx.formats[s_gx.immediate.format][attr].fraction : 0u;
+    return (f32) value / (f32) (1u << fraction);
+}
+
 static void immediate_position(f32 x, f32 y, f32 z)
 {
     VitaDecodedVertex* vertex;
@@ -2512,16 +2537,16 @@ static f32 immediate_scaled(s32 value, GXAttr attr)
     return (f32) value / (f32) (1u << fraction);
 }
 
-void GXPosition3f32(f32 x, f32 y, f32 z) { immediate_position(x, y, z); }
-void GXPosition3u16(u16 x, u16 y, u16 z) { immediate_position(immediate_scaled(x, GX_VA_POS), immediate_scaled(y, GX_VA_POS), immediate_scaled(z, GX_VA_POS)); }
-void GXPosition3s16(s16 x, s16 y, s16 z) { immediate_position(immediate_scaled(x, GX_VA_POS), immediate_scaled(y, GX_VA_POS), immediate_scaled(z, GX_VA_POS)); }
-void GXPosition3u8(u8 x, u8 y, u8 z) { immediate_position(immediate_scaled(x, GX_VA_POS), immediate_scaled(y, GX_VA_POS), immediate_scaled(z, GX_VA_POS)); }
-void GXPosition3s8(s8 x, s8 y, s8 z) { immediate_position(immediate_scaled(x, GX_VA_POS), immediate_scaled(y, GX_VA_POS), immediate_scaled(z, GX_VA_POS)); }
-void GXPosition2f32(f32 x, f32 y) { immediate_position(x, y, 0.0f); }
-void GXPosition2u16(u16 x, u16 y) { immediate_position(immediate_scaled(x, GX_VA_POS), immediate_scaled(y, GX_VA_POS), 0.0f); }
-void GXPosition2s16(s16 x, s16 y) { immediate_position(immediate_scaled(x, GX_VA_POS), immediate_scaled(y, GX_VA_POS), 0.0f); }
-void GXPosition2u8(u8 x, u8 y) { immediate_position(immediate_scaled(x, GX_VA_POS), immediate_scaled(y, GX_VA_POS), 0.0f); }
-void GXPosition2s8(s8 x, s8 y) { immediate_position(immediate_scaled(x, GX_VA_POS), immediate_scaled(y, GX_VA_POS), 0.0f); }
+void GXPosition3f32(f32 x, f32 y, f32 z) { immediate_float(x); immediate_float(y); immediate_float(z); }
+void GXPosition3u16(u16 x, u16 y, u16 z) { immediate_float(immediate_component_scaled(x)); immediate_float(immediate_component_scaled(y)); immediate_float(immediate_component_scaled(z)); }
+void GXPosition3s16(s16 x, s16 y, s16 z) { immediate_float(immediate_component_scaled(x)); immediate_float(immediate_component_scaled(y)); immediate_float(immediate_component_scaled(z)); }
+void GXPosition3u8(u8 x, u8 y, u8 z) { immediate_float(immediate_component_scaled(x)); immediate_float(immediate_component_scaled(y)); immediate_float(immediate_component_scaled(z)); }
+void GXPosition3s8(s8 x, s8 y, s8 z) { immediate_float(immediate_component_scaled(x)); immediate_float(immediate_component_scaled(y)); immediate_float(immediate_component_scaled(z)); }
+void GXPosition2f32(f32 x, f32 y) { immediate_float(x); immediate_float(y); }
+void GXPosition2u16(u16 x, u16 y) { immediate_float(immediate_component_scaled(x)); immediate_float(immediate_component_scaled(y)); }
+void GXPosition2s16(s16 x, s16 y) { immediate_float(immediate_component_scaled(x)); immediate_float(immediate_component_scaled(y)); }
+void GXPosition2u8(u8 x, u8 y) { immediate_float(immediate_component_scaled(x)); immediate_float(immediate_component_scaled(y)); }
+void GXPosition2s8(s8 x, s8 y) { immediate_float(immediate_component_scaled(x)); immediate_float(immediate_component_scaled(y)); }
 
 static void immediate_indexed_position(u32 index)
 {
@@ -2551,7 +2576,7 @@ static void immediate_normal(f32 x, f32 y, f32 z)
     s_gx.immediate.nbt_vectors = 0;
     immediate_advance();
 }
-void GXNormal3f32(f32 x, f32 y, f32 z) { immediate_normal(x, y, z); }
+void GXNormal3f32(f32 x, f32 y, f32 z) { immediate_float(x); immediate_float(y); immediate_float(z); }
 void GXNormal3s16(s16 x, s16 y, s16 z) { immediate_normal(immediate_scaled(x, GX_VA_NRM), immediate_scaled(y, GX_VA_NRM), immediate_scaled(z, GX_VA_NRM)); }
 void GXNormal3s8(s8 x, s8 y, s8 z) { immediate_normal(immediate_scaled(x, GX_VA_NRM), immediate_scaled(y, GX_VA_NRM), immediate_scaled(z, GX_VA_NRM)); }
 static void immediate_indexed_normal(u32 index)
@@ -2566,17 +2591,6 @@ static void immediate_indexed_normal(u32 index)
     if (array->size != 0 && offset >= array->size) { note_value(); immediate_advance(); return; }
     memset(&decoded, 0, sizeof(decoded));
     decode_attribute(&decoded, attr, format, (const u8*) array->data + offset, array->little_endian);
-    {
-        extern int g_melee_vita_in_psdisp;
-        static u32 logged, window;
-        if (window != s_gx.copied_frames / 600u) { window = s_gx.copied_frames / 600u; logged = 0; }
-        if (g_melee_vita_in_psdisp && logged++ < 6u)
-            melee_vita_log_info("[IDXTEX] attr=%u idx=%u stride=%u size=%u fmt=cnt%u/typ%u/frac%u raw=%u,%u -> %.3f,%.3f",
-                                (unsigned) attr, (unsigned) index, (unsigned) array->stride, (unsigned) array->size,
-                                (unsigned) format->count, (unsigned) format->type, (unsigned) format->fraction,
-                                (unsigned) ((const u8*) array->data)[offset], (unsigned) ((const u8*) array->data)[offset + 1u],
-                                decoded.tex[0][0], decoded.tex[0][1]);
-    }
     immediate_normal(decoded.normal[0], decoded.normal[1], decoded.normal[2]);
 }
 void GXNormal1x16(u16 index) { immediate_indexed_normal(index); }
@@ -2625,14 +2639,14 @@ static void immediate_texcoord(f32 s, f32 t)
     note_value();
     immediate_advance();
 }
-void GXTexCoord2f32(f32 s, f32 t) { immediate_texcoord(s, t); }
-void GXTexCoord2u16(u16 s, u16 t) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), immediate_scaled(t, GX_VA_TEX0)); }
-void GXTexCoord2s16(s16 s, s16 t) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), immediate_scaled(t, GX_VA_TEX0)); }
-void GXTexCoord2u8(u8 s, u8 t) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), immediate_scaled(t, GX_VA_TEX0)); }
-void GXTexCoord2s8(s8 s, s8 t) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), immediate_scaled(t, GX_VA_TEX0)); }
-void GXTexCoord1f32(f32 s) { immediate_texcoord(s, 0.0f); }
-void GXTexCoord1u16(u16 s) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), 0.0f); }
-void GXTexCoord1s16(s16 s) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), 0.0f); }
+void GXTexCoord2f32(f32 s, f32 t) { immediate_float(s); immediate_float(t); }
+void GXTexCoord2u16(u16 s, u16 t) { immediate_float(immediate_component_scaled(s)); immediate_float(immediate_component_scaled(t)); }
+void GXTexCoord2s16(s16 s, s16 t) { immediate_float(immediate_component_scaled(s)); immediate_float(immediate_component_scaled(t)); }
+void GXTexCoord2u8(u8 s, u8 t) { immediate_float(immediate_component_scaled(s)); immediate_float(immediate_component_scaled(t)); }
+void GXTexCoord2s8(s8 s, s8 t) { immediate_float(immediate_component_scaled(s)); immediate_float(immediate_component_scaled(t)); }
+void GXTexCoord1f32(f32 s) { immediate_float(s); }
+void GXTexCoord1u16(u16 s) { immediate_float(immediate_component_scaled(s)); }
+void GXTexCoord1s16(s16 s) { immediate_float(immediate_component_scaled(s)); }
 void GXTexCoord1u8(u8 s)
 {
     GXAttr attr = immediate_attribute();
@@ -2645,7 +2659,7 @@ void GXTexCoord1u8(u8 s)
         immediate_advance();
     } else immediate_texcoord(immediate_scaled(s, attr), 0.0f);
 }
-void GXTexCoord1s8(s8 s) { immediate_texcoord(immediate_scaled(s, GX_VA_TEX0), 0.0f); }
+void GXTexCoord1s8(s8 s) { immediate_float(immediate_component_scaled(s)); }
 
 static void immediate_indexed_texcoord(u32 index)
 {
@@ -2659,17 +2673,6 @@ static void immediate_indexed_texcoord(u32 index)
     if (array->size != 0 && offset >= array->size) { note_value(); immediate_advance(); return; }
     memset(&decoded, 0, sizeof(decoded));
     decode_attribute(&decoded, attr, format, (const u8*) array->data + offset, array->little_endian);
-    {
-        extern int g_melee_vita_in_psdisp;
-        static u32 logged, window;
-        if (window != s_gx.copied_frames / 600u) { window = s_gx.copied_frames / 600u; logged = 0; }
-        if (g_melee_vita_in_psdisp && logged++ < 6u)
-            melee_vita_log_info("[IDXTEX] attr=%u idx=%u stride=%u size=%u fmt=cnt%u/typ%u/frac%u raw=%u,%u -> %.3f,%.3f",
-                                (unsigned) attr, (unsigned) index, (unsigned) array->stride, (unsigned) array->size,
-                                (unsigned) format->count, (unsigned) format->type, (unsigned) format->fraction,
-                                (unsigned) ((const u8*) array->data)[offset], (unsigned) ((const u8*) array->data)[offset + 1u],
-                                decoded.tex[0][0], decoded.tex[0][1]);
-    }
     {
         const u32 index = attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7 ? (u32) (attr - GX_VA_TEX0) : 0u;
         immediate_texcoord(decoded.tex[index][0], decoded.tex[index][1]);

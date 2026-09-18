@@ -24,18 +24,11 @@
  * the per-particle render path. */
 static bool pc_ps_texmiss(void)
 {
-#ifdef TARGET_VITA
-    /* The Vita has no environment; report the first misses unconditionally,
-     * since a dropped particle is invisible and leaves no other trace. */
-    static u32 reported;
-    return reported++ < 40u;
-#else
     static int cached = -1;
     if (cached < 0) {
         cached = getenv("MELEE_PS_TEXMISS") != NULL;
     }
     return cached != 0;
-#endif
 }
 
 typedef struct {
@@ -1880,17 +1873,6 @@ void psDispParticles(u32 target_link, u32 sw)
     u32 prev_kind;
     HSD_Particle* pp;
 
-#ifdef TARGET_VITA
-    {
-        extern void melee_vita_log_info(const char*, ...);
-        static u32 calls, drawn;
-        ++calls;
-        if ((calls % 300u) == 0u)
-            melee_vita_log_info("[PSDISP] calls=%u link=%08x sw=%u drawn=%u", calls,
-                                (unsigned) target_link, (unsigned) sw, drawn);
-        (void) drawn;
-    }
-#endif
     alpha_compare_mode = 0;
     prev_tex_interp_near = 0;
     sp7A5 = 0;
@@ -1936,15 +1918,6 @@ void psDispParticles(u32 target_link, u32 sw)
                     break;
                 }
                 if (!(pp->size < FLT_EPSILON)) {
-#ifdef TARGET_VITA
-                    {
-                        extern void melee_vita_log_info(const char*, ...);
-                        static u32 seen;
-                        if ((seen++ % 500u) == 0u)
-                            melee_vita_log_info("[PSDISP] particle kind=%08x size=%.2f bank=%d texGroup=%d",
-                                                (unsigned) pp->kind, pp->size, (int) pp->bank, (int) pp->texGroup);
-                    }
-#endif
                     if (needs_setup != 0) {
                         sp79C = NULL;
                         prevPointSize = -1;

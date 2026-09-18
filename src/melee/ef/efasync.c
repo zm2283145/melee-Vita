@@ -1268,12 +1268,6 @@ void efAsync_LoadAsync(int index)
         return;
     }
 
-#ifdef TARGET_VITA
-    {
-        extern void melee_vita_log_info(const char*, ...);
-        melee_vita_log_info("[EF] request index=%d file=%s", index, entry->ef_DAT_file);
-    }
-#endif
     lbDvd_800178E8(3, entry->ef_DAT_file, 4, 4, 0, 1U, 4, 4U, index);
 }
 
@@ -1281,12 +1275,6 @@ void efAsync_OnLoad(HSD_Archive* archive, u8* data, u32 length, int index)
 {
     struct EF_DataTable* result;
 
-#ifdef TARGET_VITA
-    {
-        extern void melee_vita_log_info(const char*, ...);
-        melee_vita_log_info("[EF] loaded index=%d len=%u", index, (unsigned) length);
-    }
-#endif
     lbArchive_InitializeDAT(archive, data, length);
     result = HSD_ArchiveGetPublicAddress(
         archive, efAsync_DatEntries[index].effDataTable_name);

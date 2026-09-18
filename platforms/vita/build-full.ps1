@@ -10,6 +10,8 @@ param(
     [string]$KuBridgeLibrary = "$PSScriptRoot/../../build-vita/kubridge-build/libkubridge_stub.a",
     [ValidatePattern('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')]
     [string]$LogHost = '10.1.1.146',
+    [ValidateRange(1, 65535)]
+    [int]$DebugNetPort = 18197,
     [switch]$EnableDebugger
 )
 
@@ -105,7 +107,11 @@ $common = @(
     '-include', (Join-Path $PSScriptRoot 'vita_compat.h'), '-c'
 ) + $configurationFlags
 if ($Configuration -eq 'Debug') {
-    $common += @("-I$VitaDebuggerDirectory", "-DMELEE_VITA_LOG_HOST=`"$LogHost`"")
+    $common += @(
+        "-I$VitaDebuggerDirectory",
+        "-DMELEE_VITA_LOG_HOST=`"$LogHost`"",
+        "-DMELEE_VITA_DEBUGNET_PORT=$DebugNetPort"
+    )
 }
 
 $commonCpp = @(

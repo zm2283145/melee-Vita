@@ -440,6 +440,10 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
             HSD_PerfSetDrawTime();
             HSD_VICopyXFBAsync(HSD_RP_SCREEN);
             melee_vita_prof_add(1 /* present */, sceKernelGetProcessTimeWide() - t1);
+            if (!traced_render) {
+                extern void melee_vita_gxm_log_memory(const char*);
+                melee_vita_gxm_log_memory("first-render");
+            }
         }
 #else
         HSD_GObj_80390FC0();

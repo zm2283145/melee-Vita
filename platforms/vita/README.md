@@ -87,14 +87,15 @@ The matching kubridge plugin must be installed on the development Vita.
   -BuildDirectory .\build-vita\debug `
   -VitaDebuggerDirectory D:\dev\VitaDebugger `
   -KuBridgeLibrary D:\dev\kubridge\build\libkubridge_stub.a `
-  -LogHost 192.168.1.100
+  -LogHost 192.168.1.100 `
+  -DebugNetPort 18194
 ```
 
 Add `-EnableDebugger` only when you intend to wait for a GDB connection.
 It is rejected for Release builds. DebugNet sends logs to the selected host on
-UDP port 18197; GDB uses TCP port 1234. Use a trusted private LAN only.
-Specify your own paths and log host rather than relying on the historical
-local-machine defaults.
+the selected UDP port (18197 by default); GDB uses TCP port 1234. Use a trusted
+private LAN only. Specify your own paths and log host rather than relying on
+the historical local-machine defaults.
 
 Game archives use separate `Release` and `Debug` subdirectories so configuration
 changes cannot accidentally reuse the other build's game objects. For a fully

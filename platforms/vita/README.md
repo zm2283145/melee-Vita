@@ -36,6 +36,8 @@ pwsh -NoProfile -File platforms/vita/build-full.ps1 -Configuration Release -Jobs
 ```
 
 The output is **`build-vita/full/melee-full.vpk`**, title ID `MLVITA002`.
+[`version.json`](version.json) sets release version **0.6.0** and Vita's
+two-part `APP_VER` value **00.60**. Update both entries for future releases.
 Release is the default even if `-Configuration` is omitted. It uses `-O2`,
 `NDEBUG`, and `MELEE_VITA_RELEASE`, with no `-g` flags. DebugNet logging,
 ordinary OS reports, and the shader diagnostic callback are disabled.

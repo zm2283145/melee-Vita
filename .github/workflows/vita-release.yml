@@ -60,6 +60,7 @@ jobs:
           mkdir -p dist
           cp build-vita/full/melee-full.vpk dist/Melee-Vita.vpk
           cp README.md dist/README-Vita.md
+          cp platforms/vita/version.json dist/version.json
           cp LICENSE.md COPYING dist/
           printf '%s\n' "$GITHUB_SHA" > dist/COMMIT.txt
           python3 - <<'PY'
@@ -69,7 +70,7 @@ jobs:
               assert {"eboot.bin", "sce_sys/param.sfo"} <= set(vpk.namelist())
               assert not any(name.lower().endswith((".iso", ".gcm", ".rvz", ".dol", ".suprx", ".skprx")) for name in vpk.namelist())
           PY
-          (cd dist && sha256sum Melee-Vita.vpk README-Vita.md LICENSE.md COPYING COMMIT.txt > SHA256SUMS.txt)
+          (cd dist && sha256sum Melee-Vita.vpk README-Vita.md version.json LICENSE.md COPYING COMMIT.txt > SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@v4
         with:
@@ -100,10 +101,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          tag="vita-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          version=$(python3 -c 'import json; print(json.load(open("dist/version.json"))["release"])')
+          tag="vita-v${version}-build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
           cat > release-notes.md <<EOF
           Experimental native PS Vita port. This is an unpublished draft for maintainer review.
 
+          Release version: ${version}
           Commit: ${GITHUB_SHA}
           Build: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
 
@@ -121,8 +124,8 @@ jobs:
           EOF
           gh release create "$tag" \
             --target "$GITHUB_SHA" \
-            --title "Melee Vita experimental build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" \
+            --title "Melee Vita ${version} (experimental build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT})" \
             --notes-file release-notes.md \
             --draft --prerelease \
-            dist/Melee-Vita.vpk dist/README-Vita.md \
+            dist/Melee-Vita.vpk dist/README-Vita.md dist/version.json \
             dist/LICENSE.md dist/COPYING dist/COMMIT.txt dist/SHA256SUMS.txt

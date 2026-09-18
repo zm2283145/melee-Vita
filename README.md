@@ -5,6 +5,9 @@ An **experimental native PlayStation Vita port of Super Smash Bros. Melee
 [`vita-port` branch](https://github.com/zm2283145/melee-Vita/tree/vita-port).
 This branch started from `claude-bringup`.
 
+**Release version: 0.6.0.** Vita's two-part package metadata displays this as
+`00.60`; the GitHub release version is `0.6.0`.
+
 The project builds on [melee-pc](https://github.com/999sian/melee-pc),
 [doldecomp/melee](https://github.com/doldecomp/melee), and
 [aurora](https://github.com/encounter/aurora). Rather than running a GameCube
@@ -161,9 +164,12 @@ only; they cannot create releases.
 The maintainer reviews the draft under **Releases**, edits its title, tag, or
 notes if needed, tests it on hardware, and clicks **Publish release** when ready.
 The workflow never publishes automatically. Draft tags use
-`vita-build-<run-number>-<attempt>`; reruns create a new draft rather than
+`vita-v0.6.0-build.<run-number>.<attempt>` for this version; reruns create a new draft rather than
 overwriting a published release. Retain the `vita-` tag prefix so the inherited
 desktop release workflow does not treat it as a PC release.
+The release version and Vita package version are maintained in
+[`platforms/vita/version.json`](platforms/vita/version.json). When approving the
+first release, the maintainer can rename its tag to `vita-v0.6.0`.
 
 GitHub Actions creates these drafts using the repository's built-in
 `GITHUB_TOKEN`; no personal token is required. The inherited desktop workflow

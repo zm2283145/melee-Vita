@@ -19,6 +19,11 @@ if (-not $VitaSdk) {
 }
 
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+$version = Get-Content -Raw (Join-Path $PSScriptRoot 'version.json') | ConvertFrom-Json
+if ($version.release -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or
+    $version.app -notmatch '^[0-9]{2}\.[0-9]{2}$') {
+    throw 'Invalid release or Vita app version in platforms/vita/version.json.'
+}
 $build = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BuildDirectory)
 if ($EnableDebugger -and $Configuration -ne 'Debug') {
     throw '-EnableDebugger requires -Configuration Debug.'
@@ -166,7 +171,7 @@ if ($Configuration -eq 'Release') {
 Invoke-VitaTool 'vita-elf-create' @($elf, $velf)
 Invoke-VitaTool 'vita-make-fself' @('-c', $velf, $eboot)
 Invoke-VitaTool 'vita-mksfoex' @(
-    '-s', 'TITLE_ID=MLVITA002', '-s', 'APP_VER=00.01',
+    '-s', 'TITLE_ID=MLVITA002', '-s', "APP_VER=$($version.app)",
     'Melee Vita (Game Code)', $sfo
 )
 $livearea = Join-Path $PSScriptRoot 'livearea'

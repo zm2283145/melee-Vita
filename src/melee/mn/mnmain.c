@@ -770,6 +770,41 @@ static inline u8 mn_80229A04_dontinline(MenuKind kind, int selection)
     return mn_80229A04(kind, selection);
 }
 
+#ifdef TARGET_VITA
+static void mn_VitaCreateDebugLabel(MainMenuData* data)
+{
+    static Vec3 const origin = { 0.0f, 0.0f, 0.0f };
+    Vec3 position;
+    HSD_Text* label;
+    u8 unlocked_index;
+
+    if (data->vita_debug_label != NULL ||
+        data->menu_kind != MENU_KIND_SETTINGS || !mnVitaDebug_IsUnlocked())
+    {
+        return;
+    }
+
+    unlocked_index =
+        mn_80229A04(MENU_KIND_SETTINGS, SEL_SETTINGS_VITA_DEBUG);
+    lb_8000B1CC(data->tree[mn_803EAE68[unlocked_index]], (Vec3*) &origin,
+                &position);
+    label = HSD_SisLib_803A6754(0, mn_804D6BB4);
+    label->font_size.x = 0.023f;
+    label->font_size.y = 0.045f;
+    label->pos_x = position.x - 4.0f;
+    label->pos_y = -position.y - 0.5f;
+    label->pos_z = position.z;
+    label->default_alignment = 0;
+    if (data->hovered_selection == SEL_SETTINGS_VITA_DEBUG) {
+        label->text_color = (GXColor){ 0x18, 0x12, 0x08, 0xFF };
+    } else {
+        label->text_color = (GXColor){ 0xE0, 0xB8, 0x60, 0xFF };
+    }
+    HSD_SisLib_803A6B98(label, 0.0f, 0.0f, "DEBUG TOOLS");
+    data->vita_debug_label = label;
+}
+#endif
+
 /// @brief creates the description text for the hovered selection
 static void mn_80229A7C(MainMenuData* data, MenuKind menu_kind, int selection)
 {
@@ -1397,6 +1432,9 @@ void fn_8022AFEC(HSD_GObj* gp)
         data->menu_kind = mn_804A04F0.cur_menu;
     }
 #ifdef TARGET_VITA
+    if (final_data->state == MENU_STATE_IDLE) {
+        mn_VitaCreateDebugLabel(final_data);
+    }
     if (final_data->vita_debug_label != NULL) {
         GXColor label_color = { 0xE0, 0xB8, 0x60, 0xFF };
         if (hovered_selection == SEL_SETTINGS_VITA_DEBUG) {
@@ -1565,28 +1603,6 @@ HSD_GObj* mn_8022B3A0(u8 state)
         }
     }
 #ifdef TARGET_VITA
-    if (cur_menu == MENU_KIND_SETTINGS && mnVitaDebug_IsUnlocked()) {
-        static Vec3 const origin = { 0.0f, 0.0f, 0.0f };
-        Vec3 position;
-        HSD_Text* label = HSD_SisLib_803A6754(0, mn_804D6BB4);
-        unlocked_index =
-            mn_80229A04(MENU_KIND_SETTINGS, SEL_SETTINGS_VITA_DEBUG);
-        lb_8000B1CC(option_jobjs[unlocked_index], (Vec3*) &origin, &position);
-        label->font_size.x = 0.023f;
-        label->font_size.y = 0.045f;
-        label->pos_x = position.x - 4.0f;
-        label->pos_y = -position.y - 0.5f;
-        label->pos_z = position.z;
-        label->default_alignment = 0;
-        if (hovered_selection == SEL_SETTINGS_VITA_DEBUG) {
-            label->text_color = (GXColor){ 0x18, 0x12, 0x08, 0xFF };
-        } else {
-            label->text_color = (GXColor){ 0xE0, 0xB8, 0x60, 0xFF };
-        }
-        label->hidden = state != MENU_STATE_IDLE;
-        HSD_SisLib_803A6B98(label, 0.0f, 0.0f, "DEBUG TOOLS");
-        user_data->vita_debug_label = label;
-    }
     mn_vita_menu_gobj = gobj;
 #endif
     hover_jobj = user_data->tree[14];

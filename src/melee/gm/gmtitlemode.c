@@ -2,6 +2,9 @@
 
 #include "gm_1A3F.h"
 #include "gm_unsplit.h"
+#ifdef MELEE_VITA_DIRECT_SNAG
+#include "gmmain_lib.h"
+#endif
 #include "types.h"
 #include <melee/db/db.h>
 #include <melee/lb/lbdvd.h>
@@ -51,7 +54,13 @@ void onExit(GameModeState* scene)
         } else if (*buttons & HSD_PAD_X) {
             gm_SetPendingGameMode(GM_DEBUG_SOUND_TEST);
         } else if (*buttons & HSD_PAD_Y) {
+#ifdef MELEE_VITA_DIRECT_SNAG
+            struct gmm_x0_528_t* classic = gmMainLib_8015CDC8();
+            classic->x5 = 5;
+            gm_SetPendingGameMode(GM_CLASSIC);
+#else
             gm_SetPendingGameMode(GM_DEBUG);
+#endif
         } else {
             gm_801BF708(1);
             gm_SetPendingGameMode(GM_OPENING_MV);

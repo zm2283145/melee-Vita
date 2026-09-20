@@ -37,8 +37,8 @@ pwsh -NoProfile -File platforms/vita/build-full.ps1 -Configuration Release -Jobs
 
 The output is **`build-vita/full/SmashMeleevita.vpk`**, with the game title
 **Smash Melee Vita** and unchanged title ID `MLVITA002`.
-[`version.json`](version.json) sets release version **0.6.0** and Vita's
-two-part `APP_VER` value **00.60**. Update both entries for future releases.
+[`version.json`](version.json) sets release version **0.7.1** and Vita's
+two-part `APP_VER` value **00.71**. Update both entries for future releases.
 Release is the default even if `-Configuration` is omitted. It uses `-O2`,
 `NDEBUG`, and `MELEE_VITA_RELEASE`, with no `-g` flags. DebugNet logging,
 ordinary OS reports, and the shader diagnostic callback are disabled.
@@ -133,6 +133,24 @@ ordinary Release builds retain retail behavior. An enabled Vita build selects
 screen, **Cross** enters Debug VS, **Square** enters the sound test,
 **Triangle** enters the main debug menu, and **Start** follows the normal menu
 path.
+
+Add `-EnableModernDebugMenu` to retain the original menu descriptors and
+callbacks while using a Vita-friendly presentation with an opaque backdrop,
+one active submenu, a visible selection marker, a controls legend, and clearer
+English display aliases:
+
+```powershell
+.\platforms\vita\build-full.ps1 -Configuration Release -EnableDebugMenu -EnableModernDebugMenu
+```
+
+For direct Snag the Trophies renderer testing without navigating the legacy
+debug-menu overlay, add `-EnableDirectSnag`. Triangle on the title screen then
+opens Classic character select with route stage 6 selected, so starting the
+route enters Snag the Trophies with normal Classic initialization:
+
+```powershell
+.\platforms\vita\build-full.ps1 -Configuration Release -EnableDebugMenu -EnableDirectSnag
+```
 
 The debug setup loads `DbCo.dat` and other original debug-scene resources from
 the game filesystem. The build option cannot supply missing proprietary assets;

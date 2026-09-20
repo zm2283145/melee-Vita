@@ -42,6 +42,9 @@ typedef struct GxrProgram {
     const SceGxmProgram* program;
     const SceGxmProgramParameter* registers[4];
     const SceGxmProgramParameter* konst[4];
+    const SceGxmProgramParameter* z_bias;
+    const SceGxmProgramParameter* fog_color;
+    const SceGxmProgramParameter* fog_params;
     bool failed;
     struct GxrFragment* fragments;
     struct GxrProgram* next;
@@ -59,6 +62,12 @@ static bool s_failed;
 static SceGxmShaderPatcherId s_vertex_id;
 static const SceGxmProgram* s_vertex_gxp;
 static SceGxmVertexProgram* s_vertex_program;
+static SceGxmShaderPatcherId s_depth_copy_id;
+static const SceGxmProgram* s_depth_copy_gxp;
+static SceGxmFragmentProgram* s_depth_copy_fragment;
+static SceGxmShaderPatcherId s_color_copy_id;
+static const SceGxmProgram* s_color_copy_gxp;
+static SceGxmFragmentProgram* s_color_copy_fragment;
 static const SceGxmProgramParameter* s_point_size_param;
 static GxrProgram* s_programs[GXR_PROGRAM_BUCKETS];
 static u16* s_indices;
@@ -470,6 +479,8 @@ static void alpha_compare_expr(Source* s, u8 comp, u8 ref)
 
 static bool build_fragment_source(const GxrShaderKey* key, Source* s)
 {
+    const u8 z_tex_op = key->z_tex_op & 3u;
+    const u8 fog_type = key->z_tex_op >> 4;
     bool uses_coord[GXR_MAX_TEXCOORDS] = { false };
     bool uses_map[GXR_MAX_TEXMAPS] = { false };
     for (u32 i = 0; i < key->stage_count; ++i) {
@@ -480,14 +491,30 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         }
     }
 
-    emit(s, TEVT "4 main(\n");
+    const bool writes_depth =
+        z_tex_op != GX_ZT_DISABLE &&
+        key->z_tex_format == GX_TF_Z24X8 &&
+        key->stage_count > 0u;
+    const bool needs_position = fog_type != GX_FOG_NONE ||
+                                z_tex_op == GX_ZT_ADD;
+    if (writes_depth)
+        emit(s, "struct GxrFragmentOut { " TEVT "4 color : COLOR; float depth : DEPTH; };\n");
+    emit(s, writes_depth ? "GxrFragmentOut main(\n" : TEVT "4 main(\n");
     emit(s, "    float4 vColor0 : COLOR0,\n    float4 vColor1 : COLOR1");
     for (u32 i = 0; i < GXR_MAX_TEXCOORDS; ++i)
         if (uses_coord[i]) emit(s, ",\n    float2 vTex%u : TEXCOORD%u", i, i);
     for (u32 i = 0; i < GXR_MAX_TEXMAPS; ++i)
         if (uses_map[i]) emit(s, ",\n    uniform sampler2D uMap%u : TEXUNIT%u", i, i);
     emit(s, ",\n    uniform float4 uPrev, uniform float4 uReg0, uniform float4 uReg1, uniform float4 uReg2");
-    emit(s, ",\n    uniform float4 uK0, uniform float4 uK1, uniform float4 uK2, uniform float4 uK3) : COLOR\n{\n");
+    emit(s, ",\n    uniform float4 uK0, uniform float4 uK1, uniform float4 uK2, uniform float4 uK3");
+    if (needs_position)
+        emit(s, ",\n    float4 vPosition : WPOS");
+    if (fog_type != GX_FOG_NONE)
+        emit(s, ",\n    uniform float4 uFogColor, uniform float4 uFogParams");
+    if (writes_depth)
+        emit(s, ",\n    uniform float uZBias)\n{\n");
+    else
+        emit(s, ") : COLOR\n{\n");
     emit(s, "    " TEVT "4 prev = uPrev;\n    " TEVT "4 r0 = uReg0;\n    " TEVT "4 r1 = uReg1;\n    " TEVT "4 r2 = uReg2;\n");
     emit(s, "    " TEVT "4 k0 = uK0;\n    " TEVT "4 k1 = uK1;\n    " TEVT "4 k2 = uK2;\n    " TEVT "4 k3 = uK3;\n");
     emit(s, "    " TEVT "4 ras0 = vColor0;\n    " TEVT "4 ras1 = vColor1;\n");
@@ -549,7 +576,63 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         alpha_compare_expr(s, key->alpha_comp[1], key->alpha_ref[1]);
         emit(s, ")) discard;\n");
     }
-    emit(s, "    return clamp(prev, 0.0, 1.0);\n}\n");
+    if (fog_type != GX_FOG_NONE) {
+        if ((fog_type & 8u) != 0u)
+            emit(s, "    float fogBase = uFogParams.x * vPosition.z;\n");
+        else
+            emit(s, "    float fogBase = (1.0 / max(vPosition.w, 0.00000001)) * uFogParams.w;\n");
+        emit(s, "    float fogF = clamp(fogBase - uFogParams.z, 0.0, 1.0);\n");
+        switch (fog_type) {
+        case GX_FOG_PERSP_LIN:
+        case GX_FOG_ORTHO_LIN:
+            emit(s, "    float fogZ = fogF;\n");
+            break;
+        case GX_FOG_PERSP_EXP:
+        case GX_FOG_ORTHO_EXP:
+            emit(s, "    float fogZ = 1.0 - exp2(-8.0 * fogF);\n");
+            break;
+        case GX_FOG_PERSP_EXP2:
+        case GX_FOG_ORTHO_EXP2:
+            emit(s, "    float fogZ = 1.0 - exp2(-8.0 * fogF * fogF);\n");
+            break;
+        case GX_FOG_PERSP_REVEXP:
+        case GX_FOG_ORTHO_REVEXP:
+            emit(s, "    float fogZ = exp2(-8.0 * (1.0 - fogF));\n");
+            break;
+        case GX_FOG_PERSP_REVEXP2:
+        case GX_FOG_ORTHO_REVEXP2:
+            emit(s, "    fogF = 1.0 - fogF;\n");
+            emit(s, "    float fogZ = exp2(-8.0 * fogF * fogF);\n");
+            break;
+        default:
+            emit(s, "    float fogZ = 0.0;\n");
+            break;
+        }
+        emit(s, "    prev.rgb = lerp(prev.rgb, uFogColor.rgb, clamp(fogZ, 0.0, 1.0));\n");
+    }
+    if (writes_depth) {
+        const u32 stage_index = key->stage_count - 1u;
+        const GxrStage* stage = &key->stages[stage_index];
+        char texel[96];
+        snprintf(texel, sizeof(texel), "s%u", stage_index);
+        {
+            char swapped_texel[128];
+            swapped(swapped_texel, sizeof(swapped_texel), texel, key,
+                    stage->swap_tex, false);
+            emit(s, "    float3 zt = floor(%s * 255.0 + 0.5);\n",
+                 swapped_texel);
+        }
+        emit(s, "    float z24 = dot(zt, float3(65536.0, 256.0, 1.0)) + uZBias;\n");
+        if (z_tex_op == GX_ZT_ADD)
+            emit(s, "    z24 += floor(clamp(vPosition.z, 0.0, 1.0) * 16777215.0 + 0.5);\n");
+        emit(s, "    z24 -= floor(z24 / 16777216.0) * 16777216.0;\n");
+        emit(s, "    GxrFragmentOut output;\n");
+        emit(s, "    output.color = clamp(prev, 0.0, 1.0);\n");
+        emit(s, "    output.depth = z24 / 16777215.0;\n");
+        emit(s, "    return output;\n}\n");
+    } else {
+        emit(s, "    return clamp(prev, 0.0, 1.0);\n}\n");
+    }
     return !s->overflow;
 }
 
@@ -571,6 +654,25 @@ static const char k_vertex_source[] =
     "    vColor0 = aColor0; vColor1 = aColor1;\n"
     "    vTex0 = aTex0; vTex1 = aTex1; vTex2 = aTex2; vTex3 = aTex3;\n"
     "    vTex4 = aTex4; vTex5 = aTex5; vTex6 = aTex6; vTex7 = aTex7;\n"
+    "}\n";
+
+static const char k_depth_copy_source[] =
+    "float4 main(float2 vTex0 : TEXCOORD0,\n"
+    "    uniform sampler2D uDepth : TEXUNIT0) : COLOR\n"
+    "{\n"
+    "    float depth = clamp(tex2D(uDepth, vTex0).r, 0.0, 1.0);\n"
+    "    float z24 = floor(depth * 16777215.0 + 0.5);\n"
+    "    float high = floor(z24 / 65536.0);\n"
+    "    float middle = floor(z24 / 256.0) - high * 256.0;\n"
+    "    float low = z24 - floor(z24 / 256.0) * 256.0;\n"
+    "    return float4(high, middle, low, 255.0) / 255.0;\n"
+    "}\n";
+
+static const char k_color_copy_source[] =
+    "float4 main(float2 vTex0 : TEXCOORD0,\n"
+    "    uniform sampler2D uColor : TEXUNIT0) : COLOR\n"
+    "{\n"
+    "    return tex2D(uColor, vTex0);\n"
     "}\n";
 
 /* ------------------------------------------------------------ compilation */
@@ -815,6 +917,43 @@ int gxr_init(void)
     }
     s_point_size_param = sceGxmProgramFindParameterByName(s_vertex_gxp, "uPointSize");
 
+    {
+        const u64 depth_copy_hash =
+            fnv1a(k_depth_copy_source, sizeof(k_depth_copy_source),
+                  UINT64_C(1469598103934665603) ^ GXR_CACHE_VERSION);
+        s_depth_copy_gxp =
+            obtain_program(k_depth_copy_source, false, depth_copy_hash);
+        if (s_depth_copy_gxp != NULL &&
+            sceGxmShaderPatcherRegisterProgram(
+                patcher, s_depth_copy_gxp, &s_depth_copy_id) >= 0) {
+            sceGxmShaderPatcherCreateFragmentProgram(
+                patcher, s_depth_copy_id,
+                SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4,
+                SCE_GXM_MULTISAMPLE_NONE, NULL, s_vertex_gxp,
+                &s_depth_copy_fragment);
+        }
+        if (s_depth_copy_fragment == NULL)
+            melee_vita_log_info("[GXR] depth-copy shader unavailable");
+    }
+    {
+        const u64 color_copy_hash =
+            fnv1a(k_color_copy_source, sizeof(k_color_copy_source),
+                  UINT64_C(1469598103934665603) ^ GXR_CACHE_VERSION);
+        s_color_copy_gxp =
+            obtain_program(k_color_copy_source, false, color_copy_hash);
+        if (s_color_copy_gxp != NULL &&
+            sceGxmShaderPatcherRegisterProgram(
+                patcher, s_color_copy_gxp, &s_color_copy_id) >= 0) {
+            sceGxmShaderPatcherCreateFragmentProgram(
+                patcher, s_color_copy_id,
+                SCE_GXM_OUTPUT_REGISTER_FORMAT_UCHAR4,
+                SCE_GXM_MULTISAMPLE_NONE, NULL, s_vertex_gxp,
+                &s_color_copy_fragment);
+        }
+        if (s_color_copy_fragment == NULL)
+            melee_vita_log_info("[GXR] color-copy shader unavailable");
+    }
+
     s_indices = gpu_alloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE,
                           GXR_MAX_INDEX * sizeof(u16), &s_index_block);
     if (s_indices == NULL) return -1;
@@ -895,6 +1034,11 @@ static GxrProgram* find_program(const GxrShaderKey* key)
         p->registers[i] = sceGxmProgramFindParameterByName(p->program, reg_names[i]);
         p->konst[i] = sceGxmProgramFindParameterByName(p->program, k_names[i]);
     }
+    p->z_bias = sceGxmProgramFindParameterByName(p->program, "uZBias");
+    p->fog_color =
+        sceGxmProgramFindParameterByName(p->program, "uFogColor");
+    p->fog_params =
+        sceGxmProgramFindParameterByName(p->program, "uFogParams");
     return p;
 }
 
@@ -1023,6 +1167,9 @@ typedef struct RqDraw {
     SceGxmPrimitiveType primitive;
     u32 line_width;
     f32 point_size;
+    f32 z_bias;
+    f32 fog_color[4];
+    f32 fog_params[4];
     u8 texture_mask;
     u8 cpu_path;
     u16 mtx_comps, tg_comps, light_comps, reserved;
@@ -1128,6 +1275,9 @@ bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
     d->point_size = draw->line_width < 1.0f ? 1.0f : draw->line_width;
     memcpy(d->registers, draw->registers, sizeof(d->registers));
     memcpy(d->konst, draw->konst, sizeof(d->konst));
+    d->z_bias = (f32) draw->z_tex_bias;
+    memcpy(d->fog_color, draw->fog_color, sizeof(d->fog_color));
+    memcpy(d->fog_params, draw->fog_params, sizeof(d->fog_params));
     resolve_textures(draw, d);
     ++s_stats.draws;
     return true;
@@ -1548,6 +1698,9 @@ bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
     d->light_comps = (u16) light_comps;
     memcpy(d->registers, draw->registers, sizeof(d->registers));
     memcpy(d->konst, draw->konst, sizeof(d->konst));
+    d->z_bias = (f32) draw->z_tex_bias;
+    memcpy(d->fog_color, draw->fog_color, sizeof(d->fog_color));
+    memcpy(d->fog_params, draw->fog_params, sizeof(d->fog_params));
     GXR_DETAIL_START();
     resolve_textures(draw, d);
     GXR_DETAIL_END(VPZ_RESOLVE_TEXTURES);
@@ -1664,6 +1817,8 @@ static void exec_draw(const void* payload)
         bool any = false;
         for (u32 i = 0; i < 4u; ++i)
             if (program->registers[i] != NULL || program->konst[i] != NULL) any = true;
+        if (program->z_bias != NULL) any = true;
+        if (program->fog_color != NULL || program->fog_params != NULL) any = true;
         if (any) {
             void* fbuf = NULL;
             sceGxmReserveFragmentDefaultUniformBuffer(context, &fbuf);
@@ -1674,9 +1829,19 @@ static void exec_draw(const void* payload)
                     if (program->konst[i] != NULL)
                         sceGxmSetUniformDataF(fbuf, program->konst[i], 0, 4, d->konst[i]);
                 }
+                if (program->z_bias != NULL)
+                    sceGxmSetUniformDataF(
+                        fbuf, program->z_bias, 0, 1, &d->z_bias);
+                if (program->fog_color != NULL)
+                    sceGxmSetUniformDataF(
+                        fbuf, program->fog_color, 0, 4, d->fog_color);
+                if (program->fog_params != NULL)
+                    sceGxmSetUniformDataF(
+                        fbuf, program->fog_params, 0, 4, d->fog_params);
             }
         }
     }
+
     sceGxmSetVertexStream(context, 0, d->vertices);
     if (d->indices != NULL) {
         sceGxmDraw(context, d->primitive, SCE_GXM_INDEX_FORMAT_U16, d->indices, d->count);
@@ -1688,6 +1853,52 @@ static void exec_draw(const void* payload)
             sceGxmDraw(context, d->primitive, SCE_GXM_INDEX_FORMAT_U16, s_indices, n);
         }
     }
+}
+
+bool gxr_copy_depth(const SceGxmTexture* texture,
+                    const GxrVertex* vertices, const u16* indices)
+{
+    SceGxmContext* context;
+    if (!s_ready || s_depth_copy_fragment == NULL || texture == NULL ||
+        vertices == NULL || indices == NULL)
+        return false;
+    context = vita2d_get_context();
+    sceGxmSetVertexProgram(context, s_vertex_program);
+    sceGxmSetFragmentProgram(context, s_depth_copy_fragment);
+    sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
+    sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
+    sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
+    sceGxmSetFragmentTexture(context, 0, texture);
+    sceGxmSetVertexStream(context, 0, vertices);
+    sceGxmDraw(context, SCE_GXM_PRIMITIVE_TRIANGLES,
+               SCE_GXM_INDEX_FORMAT_U16, indices, 6);
+    s_rt_state.valid = false;
+    return true;
+}
+
+bool gxr_copy_color(const SceGxmTexture* texture,
+                    const GxrVertex* vertices, const u16* indices)
+{
+    SceGxmContext* context;
+    if (!s_ready || s_color_copy_fragment == NULL || texture == NULL ||
+        vertices == NULL || indices == NULL)
+        return false;
+    context = vita2d_get_context();
+    sceGxmSetVertexProgram(context, s_vertex_program);
+    sceGxmSetFragmentProgram(context, s_color_copy_fragment);
+    sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
+    sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
+    sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
+    sceGxmSetFragmentTexture(context, 0, texture);
+    sceGxmSetVertexStream(context, 0, vertices);
+    sceGxmDraw(context, SCE_GXM_PRIMITIVE_TRIANGLES,
+               SCE_GXM_INDEX_FORMAT_U16, indices, 6);
+    s_rt_state.valid = false;
+    return true;
 }
 
 void gxr_log_stats(void)

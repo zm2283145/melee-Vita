@@ -1,6 +1,7 @@
 #include <Runtime/platform.h>
 
 #include <printf.h> // IWYU pragma: keep
+#include <string.h>
 
 #include "textdraw.h"
 #include "textlib.h"
@@ -20,6 +21,143 @@
 /* 4D6E44 */ struct un_80304138_objalloc_t* un_804D6E44;
 /* 4D6E40 */ struct un_80304138_objalloc_t* un_804D6E40;
 /* 4A2688 */ static HSD_ObjAllocData un_804A2688;
+
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+struct DevTextAlias {
+    char* original;
+    char* friendly;
+};
+
+static char* devtext_friendly_name(char* text)
+{
+    static struct DevTextAlias const aliases[] = {
+        { "< DaiRanTou >", "< Match Setup >" },
+        { "MODE : DaiRanTou >", "Match Setup >" },
+        { "Mode Team Test >", "Test Categories >" },
+        { "-----------EXIT", "Start Match" },
+        { "<TEST MODE>", "< Test Categories >" },
+        { "MODE : Hanyu    >", "Match Counts & Players >" },
+        { "MODE : Otoguro  >", "Unlocks & Records >" },
+        { "MODE : Taniguti >", "1P Route Stage Select >" },
+        { "MODE : Nagasima >", "Movies & Endings >" },
+        { "MODE : Kim      >", "Results, Card & Movies >" },
+        { "MODE : Sakoda   >", "Event & Fixed Camera >" },
+        { "MODE : Sugano   >", "Match & Credits >" },
+        { "MODE : Yoshiki  >", "Memory Card & Snapshots >" },
+        { "< Hanyu Test >", "< Match Counts & Players >" },
+        { "< Otoguro Test >", "< Unlocks & Records >" },
+        { "< Taniguti Test >", "< 1P Route Stage Select >" },
+        { "< Nagasima Test >", "< Movies & Endings >" },
+        { "< Kim Test >", "< Results, Card & Movies >" },
+        { "< Sakoda Test >", "< Event & Fixed Camera >" },
+        { "< Sugano Test >", "< Match & Credits >" },
+        { "< Yoshiki Test >", "< Memory Card & Snapshots >" },
+        { "Char  Select ->", "Characters >" },
+        { "Scale Select ->", "Player Scale >" },
+        { "Kind  Select ->", "Player Control >" },
+        { "Color Select ->", "Costumes >" },
+        { "  Sub Color  ->", "Sub-Costumes >" },
+        { "Damage Set   ->", "Starting Damage >" },
+        { "  OffenceRatio>", "Attack Ratio >" },
+        { "  DefenceRatio>", "Defense Ratio >" },
+        { "CpuType  Set ->", "CPU Behavior >" },
+        { "CpuLevel Set ->", "CPU Level >" },
+        { "Team  Select ->", "Teams >" },
+        { "Reg:Normal  >", "Adventure Route Start >" },
+        { "Reg:Easy    >", "Classic Route Start >" },
+        { "Reg:Allstar >", "All-Star Route Start >" },
+        { "RegularEnding Test >", "Configure Ending Test >" },
+        { "RegularEnding Real >", "Play Ending Sequence >" },
+        { "Visual-Scene Start", "Play Visual Scene" },
+        { "Opening Start", "Play Opening Movie" },
+        { "Omake15 Start", "Play Bonus Movie 15" },
+        { "Figure Max", "Unlock All Trophies" },
+        { "Samus Mask Get", "Unlock Samus Mask Event" },
+        { "Mario & Yoshi Get", "Unlock Mario & Yoshi Event" },
+        { "Set Gold Coin :", "Coin Total :" },
+        { "Go to  Meikyu", "Go to Underground Maze" },
+        { "Go to  Kinoko", "Go to Mushroom Kingdom" },
+        { "STAFFROLL START >", "Play Credits >" },
+        { "FixCamera Start >", "Start Fixed-Camera Event >" },
+        { "CKind_Captain", "Captain Falcon" },
+        { "CKind_Donkey", "Donkey Kong" },
+        { "CKind_Fox", "Fox" },
+        { "CKind_GameWatch", "Mr. Game & Watch" },
+        { "CKind_Kirby", "Kirby" },
+        { "CKind_Koopa", "Bowser" },
+        { "CKind_Link", "Link" },
+        { "CKind_Luigi", "Luigi" },
+        { "CKind_Mario", "Mario" },
+        { "CKind_Mars", "Marth" },
+        { "CKind_Mewtwo", "Mewtwo" },
+        { "CKind_Ness", "Ness" },
+        { "CKind_Peach", "Peach" },
+        { "CKind_Pikachu", "Pikachu" },
+        { "CKind_PopoNana", "Ice Climbers" },
+        { "CKind_Purin", "Jigglypuff" },
+        { "CKind_Samus", "Samus" },
+        { "CKind_Yoshi", "Yoshi" },
+        { "CKind_Ze->Se", "Zelda -> Sheik" },
+        { "CKind_Se->Ze", "Sheik -> Zelda" },
+        { "CKind_Falco", "Falco" },
+        { "CKind_Clink", "Young Link" },
+        { "CKind_Drmario", "Dr. Mario" },
+        { "CKind_Emblem", "Roy" },
+        { "CKind_Pichu", "Pichu" },
+        { "CKind_Ganon", "Ganondorf" },
+        { "CKind_MasterH", "Master Hand" },
+        { "CKind_Boy", "Male Wireframe" },
+        { "CKind_Girl", "Female Wireframe" },
+        { "CKind_GKoops", "Giga Bowser" },
+        { "Ckind_CrezyH", "Crazy Hand" },
+        { "ChKind_Sandbag", "Sandbag" },
+        { "ChKind_Popo", "Popo" },
+        { "ChKind_None", "None" },
+        { "Izumi   ", "Fountain of Dreams" },
+        { "PStadium", "Pokemon Stadium" },
+        { "Castle  ", "Peach's Castle" },
+        { "Kongo   ", "Kongo Jungle" },
+        { "Zebes   ", "Brinstar" },
+        { "Corneria", "Corneria" },
+        { "Story   ", "Yoshi's Story" },
+        { "RCruise ", "Rainbow Cruise" },
+        { "Garden  ", "Jungle Japes" },
+        { "GreatBay", "Great Bay" },
+        { "Shrine  ", "Hyrule Temple" },
+        { "Kraid   ", "Brinstar Depths" },
+        { "Yoster  ", "Yoshi's Island" },
+        { "Greens  ", "Green Greens" },
+        { "Inishie1", "Mushroom Kingdom" },
+        { "Inishie2", "Mushroom Kingdom II" },
+        { "Akaneia ", "Akaneia (Unused)" },
+        { "Pura    ", "Poke Floats" },
+        { "Icemt   ", "Icicle Mountain" },
+        { "Flatzone", "Flat Zone" },
+        { "old ppp ", "Dream Land (N64)" },
+        { "old yosh", "Yoshi's Island (N64)" },
+        { "old kong", "Kongo Jungle (N64)" },
+        { "battle  ", "Battlefield" },
+        { "last    ", "Final Destination" },
+        { "tukisusume", "Race to the Finish" },
+        { "figureget ", "Snag the Trophies" },
+        { "homerun   ", "Home-Run Contest" },
+        { "heal      ", "All-Star Rest Area" },
+    };
+    int i;
+
+    if (text == NULL) {
+        return NULL;
+    }
+    for (i = 0; i < ARRAY_SIZE(aliases); i++) {
+        if (strcmp(text, aliases[i].original) == 0) {
+            return aliases[i].friendly;
+        }
+    }
+    return text;
+}
+#else
+#define devtext_friendly_name(text) (text)
+#endif
 
 #ifdef MUST_MATCH
 #pragma push
@@ -53,12 +191,18 @@ int un_80302EA4(struct un_80304138_objalloc_t_x8* arg0)
     int z = 1;
     while (arg0->x0 != 9) {
         if ((unsigned int) arg0->x0 <= 1) {
-            int len = DevText_StrLen(arg0->x8) + 1;
+            int len = DevText_StrLen(devtext_friendly_name(arg0->x8)) + 1;
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+            len += 2;
+#endif
             if (len > z) {
                 z = len;
             }
         } else {
-            int len = DevText_StrLen(arg0->x8) + 1;
+            int len = DevText_StrLen(devtext_friendly_name(arg0->x8)) + 1;
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+            len += 2;
+#endif
             if (len > x) {
                 x = len;
             }
@@ -80,7 +224,7 @@ int un_80302EA4(struct un_80304138_objalloc_t_x8* arg0)
         }
         if (arg0->x0 == 2) {
             for (i = 0; i < (int) arg0->x18; i++) {
-                int len = DevText_StrLen(arg0->xC[i]);
+                int len = DevText_StrLen(devtext_friendly_name(arg0->xC[i]));
                 if (len > y) {
                     y = len;
                 }
@@ -89,6 +233,9 @@ int un_80302EA4(struct un_80304138_objalloc_t_x8* arg0)
         arg0++;
     }
     x += y;
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+    x += 2;
+#endif
     if (x > z) {
         return x + 1;
     } else {
@@ -106,10 +253,17 @@ static inline GXColor adjust(GXColor c)
 
 static inline int un_80302FFC_maxlen(struct un_80304138_objalloc_t_x8* thing)
 {
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+    int cursor_x = 3;
+#else
     int cursor_x = 1;
+#endif
     for (; thing->x0 != 9; thing++) {
         if (thing->x0 != 0 && thing->x0 != 1) {
-            int len = DevText_StrLen(thing->x8);
+            int len = DevText_StrLen(devtext_friendly_name(thing->x8));
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+            len += 2;
+#endif
             if (len + 1 > cursor_x) {
                 cursor_x = len + 1;
             }
@@ -143,7 +297,15 @@ void un_80302FFC(struct un_80304138_objalloc_t* arg0)
         DevText_SetTextColor(arg0->x4, un_804D5A10);
         DevText_StoreColorIndex(arg0->x4, 2);
         DevText_SetTextColor(arg0->x4, un_804D5A14);
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+        {
+            GXColor bg = un_804D5A08;
+            bg.a = 0xF0;
+            DevText_SetBGColor(arg0->x4, bg);
+        }
+#else
         DevText_SetBGColor(arg0->x4, un_804D5A08);
+#endif
     }
     for (cursor_y = 0; cursor_y < arg0->x4->h; cursor_y++) {
         if (x8->x0 == 0) {
@@ -154,11 +316,20 @@ void un_80302FFC(struct un_80304138_objalloc_t* arg0)
             DevText_StoreColorIndex(arg0->x4, 0);
         }
         DevText_SetCursorXY(arg0->x4, 0, cursor_y);
-        DevText_Print(arg0->x4, x8->x8);
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+        if (x8->x0 != 0 && arg0->x0 == cursor_y) {
+            DevText_Print(arg0->x4, "> ");
+        } else {
+            DevText_Print(arg0->x4, "  ");
+        }
+#endif
+        DevText_Print(arg0->x4, devtext_friendly_name(x8->x8));
         DevText_SetCursorXY(arg0->x4, cursor_x, cursor_y);
         switch (x8->x0) {
         case 2:
-            DevText_Print(arg0->x4, x8->xC[*(int*) x8->x10]);
+            DevText_Print(
+                arg0->x4,
+                devtext_friendly_name(x8->xC[*(int*) x8->x10]));
             break;
         case 3:
             DevText_PrintInt(arg0->x4, *(int*) x8->x10);
@@ -485,6 +656,12 @@ void fn_80303EF4(HSD_GObj* gobj)
 {
     struct un_80304138_objalloc_t* q = un_804D6E40;
     while (q != NULL) {
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+        if (q->x1 & 0x10) {
+            DevText_HideText(q->x4);
+            DevText_HideBackground(q->x4);
+        } else
+#endif
         if (q->x1 & 0x20) {
             DevText_HideText(q->x4);
             DevText_HideBackground(q->x4);

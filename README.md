@@ -4,8 +4,8 @@ An **experimental native PlayStation Vita port of Super Smash Bros. Melee
 (NTSC-U 1.02)**, developed on the
 [`vita-port` branch](https://github.com/zm2283145/melee-Vita/tree/vita-port).
 
-**Release version: 0.6.0.** Vita's two-part package metadata displays this as
-`00.60`; the GitHub release version is `0.6.0`.
+**Release version: 0.7.1.** Vita's two-part package metadata displays this as
+`00.71`; the GitHub release version is `0.7.1`.
 
 The project builds on [melee-pc](https://github.com/999sian/melee-pc),
 [doldecomp/melee](https://github.com/doldecomp/melee), and
@@ -98,15 +98,14 @@ The built-in Vita controls act as GameCube controller port 1.
 | Square | X: jump |
 | Triangle | Y: jump |
 | **L shoulder** | **L trigger: shield** |
-| **R shoulder** | **Z: grab** |
-| Select | Z: alternate grab / Z menu shortcuts |
+| **R shoulder** | **R trigger: shield** |
+| **Select** | **Z: grab / Z menu shortcuts** |
 | Start | Start / pause |
 
-L reports a full digital trigger press; there is no variable analog
-light-shield pressure. GameCube R is not separately mapped. Touch controls,
-rumble, external controllers, and multiple human controller ports are not
-implemented by the current Vita input backend. CPU opponents use the game's
-normal controls.
+L and R report full digital trigger presses; there is no variable analog
+light-shield pressure. Touch controls, rumble, external controllers, and
+multiple human controller ports are not implemented by the current Vita input
+backend. CPU opponents use the game's normal controls.
 
 ## Saves
 
@@ -148,6 +147,8 @@ disk cache remain enabled; those are needed for normal gameplay.
 
 Thanks to the Melee decompilation and PC-port contributors, aurora, VitaSDK,
 vita2d, vitaShaRK, SceShaccCgExt, and the Vita homebrew community.
+The updated LiveArea artwork was created by Reddit user
+[u/cool_pain_6315](https://www.reddit.com/user/cool_pain_6315/).
 This project is not affiliated with Nintendo, HAL Laboratory, or Sony.
 
 Read [LICENSE.md](LICENSE.md) and [COPYING](COPYING) before redistributing.

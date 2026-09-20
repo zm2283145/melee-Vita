@@ -6,10 +6,32 @@ the image you supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.7.1
+
+- Trophy Gallery trophies and gameplay objects now receive their intended
+  lighting instead of appearing flat, dark, or inside visible rectangles.
+- Snag the Trophies restores its foggy background, and copied-screen effects
+  such as the off-screen player magnifier and Pokemon Stadium monitor work
+  without breaking one another.
+- Star Rod and other item effects no longer draw large boxes around their
+  textures.
+- Screen clears now happen when the GameCube game requests them. This fixes the
+  Stage Clear overlay flicker and addresses missing or black stage elements such
+  as Peach's Castle switches and Brinstar props.
+- Fixed the Adventure Mode crash triggered by jumping on the first Goomba.
+- Fixed a recurring render-thread crash during copied-screen transitions,
+  including the crash seen at the end of Adventure Mode on Battlefield.
+- Added 1,437 built-in warmed shaders gathered from real Vita play. The Release
+  build still learns and saves new shaders as you play, so uncommon first-time
+  effects can still stutter once.
+- Vita **R** now acts as the GameCube R trigger, and **Select** acts as Z.
+- Updated the LiveArea icon and backgrounds.
+
 ## Downloads
 
 | Platform | File | Notes |
 |---|---|---|
+| PS Vita | `SmashMeleevita.vpk` | Experimental native Vita build for title ID `MLVITA002`. |
 | Linux x86-64 | `Melee-x86_64.AppImage` | Needs a Vulkan driver. `chmod +x`, then run. |
 | Linux x86-64 | `melee-linux-x86_64.tar.gz` | Portable directory; run `run.sh`. |
 | Linux aarch64 (ARM64) | `Melee-aarch64.AppImage` | For 64-bit ARM Linux (Raspberry Pi 5, Asahi Linux, Orange Pi). |

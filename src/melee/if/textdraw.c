@@ -4,6 +4,8 @@
 
 #include "types.h"
 #include <dolphin/mtx.h>
+#include <melee/gm/forward.h>
+#include <melee/gm/gm_1A3F.h>
 #include <sysdolphin/baselib/cobj.h>
 #include <sysdolphin/baselib/fog.h>
 #include <sysdolphin/baselib/gobj.h>
@@ -141,24 +143,23 @@ void DevText_Remove(DevText** ptext)
 {
     DevText* text = *ptext;
     DevText* next;
-    DevText* cur;
+
+    if (text == NULL) {
+        return;
+    }
     next = text->next;
     if (next) {
         next->prev = text->prev;
     }
-    cur = *ptext;
-    if ((*ptext)->prev) {
-        (*ptext)->prev->next = (*ptext)->next;
-    } else {
-        if (cur->next != 0) {
-            *ptext = (*ptext)->next;
-        } else {
-            *ptext = NULL;
-        }
+    if (text->prev) {
+        text->prev->next = next;
+    } else if (devtext_drawlist == text) {
+        devtext_drawlist = next;
     }
     text->next = devtext_poolhead;
     text->prev = NULL;
     devtext_poolhead = text;
+    *ptext = NULL;
 }
 
 void DevText_SetupCObj(void)
@@ -267,6 +268,25 @@ void DevText_DrawAll(HSD_GObj* gobj, int pass)
         DevText* text = devtext_drawlist;
         HSD_FogSet(NULL);
         DevText_SetupCObj();
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+        if (text != NULL && gm_GetCurrentGameMode() == GM_DEBUG &&
+            gm_GetCurrentSceneIndex() <= 2)
+        {
+            static GXColor const backdrop = { 0x08, 0x0C, 0x18, 0xFF };
+            static GXColor const help = { 0xA0, 0xB8, 0xD0, 0xFF };
+            static char const controls[] =
+                "D-PAD: MOVE/CHANGE   A: SELECT   B: BACK   START: RUN";
+            float x = 20.0f;
+            int i;
+
+            hsd_80391A04(8.0f, 12.0f, 8);
+            DrawRectangle(-20.0f, -20.0f, 680.0f, 520.0f,
+                          (GXColor*) &backdrop);
+            for (i = 0; controls[i] != '\0'; i++) {
+                x += DrawASCII(controls[i], x, 458.0f, (GXColor*) &help);
+            }
+        }
+#endif
         while (text) {
             DevText_Draw(text);
             text = text->next;
@@ -342,7 +362,9 @@ void DevText_AddToList(DevText** list, DevText* text)
         }
 
         text->next = next;
-        // next->prev = text;
+        if (next) {
+            next->prev = text;
+        }
 
         if (prev) {
             prev->next = text;

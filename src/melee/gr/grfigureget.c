@@ -26,6 +26,11 @@
 #include <melee/ty/tydisplay.h>
 #include <sysdolphin/baselib/gobj.h>
 #include <sysdolphin/baselib/gobjproc.h>
+#ifdef MELEE_VITA_RENDER_TRACE
+#include <sysdolphin/baselib/dobj.h>
+#include <sysdolphin/baselib/jobj.h>
+#include <sysdolphin/baselib/mobj.h>
+#endif
 
 typedef struct DISC_STRUCT grFigureGet_Data {
     s32 x0;
@@ -95,6 +100,32 @@ StageData grFigureGet_StageData = {
 
 static grFigureGet_Params* yakumono_param;
 
+#ifdef MELEE_VITA_RENDER_TRACE
+static void grFigureGet_TraceJObj(HSD_JObj* jobj, int depth, int* index)
+{
+    for (; jobj != NULL; jobj = jobj->next) {
+        HSD_DObj* dobj = union_type_dobj(jobj) ? jobj->u.dobj : NULL;
+        int dobj_index = 0;
+        int current = (*index)++;
+        OSReport("[FIGUREGET-JOBJ] index=%d depth=%d jobj=%p flags=%08x "
+                 "pos=%.2f,%.2f,%.2f scale=%.2f,%.2f,%.2f child=%p\n",
+                 current, depth, jobj, jobj->flags, jobj->translate.x,
+                 jobj->translate.y, jobj->translate.z, jobj->scale.x,
+                 jobj->scale.y, jobj->scale.z, jobj->child);
+        for (; dobj != NULL; dobj = dobj->next, ++dobj_index) {
+            OSReport("[FIGUREGET-DOBJ] jobj=%d dobj=%d ptr=%p flags=%08x "
+                     "mobj=%p render=%08x pobj=%p\n",
+                     current, dobj_index, dobj, dobj->flags, dobj->mobj,
+                     dobj->mobj != NULL ? dobj->mobj->rendermode : 0,
+                     dobj->pobj);
+        }
+        if (jobj->child != NULL) {
+            grFigureGet_TraceJObj(jobj->child, depth + 1, index);
+        }
+    }
+}
+#endif
+
 void grFigureGet_OnDemoInit(s32 unused) {}
 
 void grFigureGet_OnInit(void)
@@ -128,6 +159,11 @@ HSD_GObj* grFigureGet_802195CC(int gobj_id)
     gobj = Ground_GetStageGObj(gobj_id);
 
     if (gobj != NULL) {
+#ifdef MELEE_VITA_RENDER_TRACE
+        OSReport("[FIGUREGET] map=%d gobj=%p class=%u plink=%u gxlink=%u hsd=%p\n",
+                 gobj_id, gobj, gobj->classifier, gobj->p_link, gobj->gx_link,
+                 gobj->hsd_obj);
+#endif
         Ground_SetupStageCallbacks(gobj, callbacks);
     } else {
         OSReport("%s:%d: couldn t get gobj(id=%d)\n", __FILE__, 187, gobj_id);
@@ -139,6 +175,12 @@ HSD_GObj* grFigureGet_802195CC(int gobj_id)
 static void stageGObj0_OnInit(Ground_GObj* gobj)
 {
     Ground_StartMapAnim(gobj);
+#ifdef MELEE_VITA_RENDER_TRACE
+    {
+        int index = 0;
+        grFigureGet_TraceJObj(GET_JOBJ(gobj), 0, &index);
+    }
+#endif
 }
 
 bool grFigureGet_802196E0(Ground_GObj* gobj)

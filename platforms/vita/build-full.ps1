@@ -17,6 +17,8 @@ param(
     [int]$WarmCacheFtpPort = 1337,
     [switch]$EnableDebugger,
     [switch]$EnableDebugMenu,
+    [switch]$EnableModernDebugMenu,
+    [switch]$EnableDirectSnag,
     [switch]$EnableRenderTrace,
     [switch]$UseCpuVertexPath
 )
@@ -103,6 +105,12 @@ $build = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath
 if ($EnableDebugger -and $Configuration -ne 'Debug') {
     throw '-EnableDebugger requires -Configuration Debug.'
 }
+if ($EnableDirectSnag -and -not $EnableDebugMenu) {
+    throw '-EnableDirectSnag requires -EnableDebugMenu.'
+}
+if ($EnableModernDebugMenu -and -not $EnableDebugMenu) {
+    throw '-EnableModernDebugMenu requires -EnableDebugMenu.'
+}
 if ($Configuration -eq 'Debug') {
     $VitaDebuggerDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($VitaDebuggerDirectory)
     $KuBridgeLibrary = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($KuBridgeLibrary)
@@ -136,7 +144,10 @@ function Invoke-VitaTool([string]$Name, [string[]]$Arguments) {
 $gameArchive = & (Join-Path $PSScriptRoot 'build-game.ps1') `
     -VitaSdk $VitaSdk -BuildDirectory (Join-Path $build 'game') `
     -Configuration $Configuration -Jobs $Jobs `
-    -EnableDebugMenu:$EnableDebugMenu |
+    -EnableDebugMenu:$EnableDebugMenu `
+    -EnableModernDebugMenu:$EnableModernDebugMenu `
+    -EnableDirectSnag:$EnableDirectSnag `
+    -EnableRenderTrace:$EnableRenderTrace |
     Select-Object -Last 1
 
 $platformSources = @(
@@ -233,7 +244,7 @@ $vpk = Join-Path $build 'SmashMeleevita.vpk'
 $link = @(
     '-fno-short-enums', '-Wl,-q', '-Wl,-z,nocopyreloc',
     '-Wl,--defsym=__sce_headroom=0x1000', '-Wl,--gc-sections',
-    '-Wl,--wrap=sceGxmBeginScene'
+    '-Wl,--wrap=sceGxmBeginScene', '-Wl,--wrap=sceGxmCreateRenderTarget'
 ) + $platformObjects + @(
     '-Wl,--start-group', $gameArchive, '-Wl,--end-group'
 )

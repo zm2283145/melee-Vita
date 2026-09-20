@@ -5,6 +5,7 @@
 #include "gx_render.h"
 #include "../vita_log.h"
 
+#include <dolphin/gx/GXEnum.h>
 #include <psp2/gxm.h>
 #include <vita2d.h>
 #include <psp2/kernel/processmgr.h>
@@ -19,6 +20,32 @@ static int s_texture_invalidation_pending;
 static u32 s_texture_content_generation = 1;
 static void* s_main_color_data;
 static u32 s_main_color_stride;
+static void* s_main_depth_data;
+
+#define VITA_MAIN_SCENES_PER_FRAME 8u
+
+int __real_sceGxmCreateRenderTarget(
+    const SceGxmRenderTargetParams* params,
+    SceGxmRenderTarget** render_target);
+
+int __wrap_sceGxmCreateRenderTarget(
+    const SceGxmRenderTargetParams* params,
+    SceGxmRenderTarget** render_target)
+{
+    SceGxmRenderTargetParams adjusted;
+
+    if (params == NULL) {
+        return __real_sceGxmCreateRenderTarget(params, render_target);
+    }
+    adjusted = *params;
+    if (adjusted.width == 960u && adjusted.height == 544u &&
+        adjusted.scenesPerFrame < VITA_MAIN_SCENES_PER_FRAME) {
+        /* EFB copies end and resume the display scene. libvita2d declares one
+         * scene per frame, but GXM requires this field to cover every resume. */
+        adjusted.scenesPerFrame = VITA_MAIN_SCENES_PER_FRAME;
+    }
+    return __real_sceGxmCreateRenderTarget(&adjusted, render_target);
+}
 
 int __real_sceGxmBeginScene(
     SceGxmContext* context, unsigned int flags,
@@ -45,6 +72,7 @@ int __wrap_sceGxmBeginScene(
         s_main_color_data = sceGxmColorSurfaceGetData(color_surface);
         s_main_color_stride =
             sceGxmColorSurfaceGetStrideInPixels(color_surface);
+        s_main_depth_data = depth_stencil->depthData;
     }
     return result;
 }
@@ -107,8 +135,9 @@ static SceGxmTextureAddrMode address_mode(u32 mode)
 {
     if (mode == 1u) return SCE_GXM_TEXTURE_ADDR_REPEAT;
     /* GXM rejects ADDR_MIRROR (0x805b0009) for these textures; the shader
-     * folds mirrored coordinates and samples with REPEAT instead. */
-    if (mode == 2u) return SCE_GXM_TEXTURE_ADDR_REPEAT;
+     * folds mirrored coordinates into [0, 1], which must then be clamped so
+     * the 1.0 edge does not wrap back to the opposite texel. */
+    if (mode == 2u) return SCE_GXM_TEXTURE_ADDR_CLAMP;
     return SCE_GXM_TEXTURE_ADDR_CLAMP;
 }
 
@@ -309,6 +338,13 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
         if (s_copy_textures[c].key == source->data && s_copy_textures[c].texture != NULL) {
             if (s_frame_counter - s_copy_textures[c].frame <= VITA_COPY_STALE_FRAMES)
                 return s_copy_textures[c].texture;
+#ifdef MELEE_VITA_RENDER_TRACE
+            melee_vita_log_info(
+                "[COPYSTALE] key=%p age=%u copy=%ux%u sample=%ux%u fmt=%u",
+                source->data, s_frame_counter - s_copy_textures[c].frame,
+                s_copy_textures[c].width, s_copy_textures[c].height,
+                source->width, source->height, source->format);
+#endif
             retire_texture(s_copy_textures[c].texture);
             s_copy_textures[c].texture = NULL;
             s_copy_textures[c].key = NULL;
@@ -475,15 +511,24 @@ static void rt_default_depth(void)
 
 static void rt_begin_scene(u32 clear_color, int clear)
 {
+    SceGxmContext* context;
     vita2d_start_drawing();
     ++g_melee_vita_gxm_state_epoch;
-    /* vita2d's clear quad must not leave its own depth in the buffer: GX
-     * scenes clear depth to the far plane and test against it. */
-    rt_default_depth();
+    context = vita2d_get_context();
     if (clear) {
+        /* GXCopyDisp(..., GX_TRUE) clears the EFB depth buffer as well as
+         * color.  Force the clear quad to the far plane so depth from the
+         * previous frame cannot occlude the next one. */
+        sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+        sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+        sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
+        sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
+        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 1.0f, 0.0f);
         vita2d_set_clear_color(clear_color);
         vita2d_clear_screen();
+        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
     }
+    rt_default_depth();
 }
 
 static int render_thread(SceSize args, void* argp)
@@ -840,29 +885,65 @@ vita2d_texture* melee_vita_gxm_texture(const MeleeVitaTextureSource* source)
 
 typedef struct RqCopy {
     vita2d_texture* target;
+    GxrVertex* vertices;
+    u16* indices;
     u32 width, height;
     f32 x0, y0, sx, sy;
+    u32 format;
     u32 clear;
 } RqCopy;
+
+typedef struct RqCopyClear {
+    f32 x, y, width, height;
+} RqCopyClear;
 
 static void* render_fb(void)
 {
     return s_main_color_data;
 }
 
+static void clear_copy_region(f32 x, f32 y, f32 width, f32 height)
+{
+    SceGxmContext* context = vita2d_get_context();
+    ++g_melee_vita_gxm_state_epoch;
+    sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
+    sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
+    sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
+    /* zScale 0 / zOffset 1 writes the far plane, as a GX clear does. */
+    sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 1.0f, 0.0f);
+    vita2d_set_blend_mode_add(0);
+    vita2d_draw_rectangle(x, y, width > 0.0f ? width : 1.0f,
+                          height > 0.0f ? height : 1.0f,
+                          s_exec_frame->clear_color);
+    sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
+    rt_default_depth();
+}
+
+static void exec_copy_clear(const void* payload)
+{
+    const RqCopyClear* clear = payload;
+    clear_copy_region(clear->x, clear->y, clear->width, clear->height);
+}
+
 static void exec_copy(const void* payload)
 {
     const RqCopy* c = payload;
     SceGxmContext* context = vita2d_get_context();
-    const void* fb = render_fb();
+    const bool depth_copy = c->format == GX_TF_Z24X8;
+    const void* fb = depth_copy ? s_main_depth_data : render_fb();
     vita2d_end_drawing();
+#ifdef MELEE_VITA_RENDER_TRACE
     {
         static u32 logged, window;
         if (window != s_frame_counter / 600u) { window = s_frame_counter / 600u; logged = 0; }
         if (logged++ < 4u)
-            melee_vita_log_info("[GXCOPY] exec %ux%u src=%.1f,%.1f step=%.3f,%.3f rt=%p", c->width, c->height,
-                                c->x0, c->y0, c->sx, c->sy, c->target ? (void*) c->target->gxm_rtgt : NULL);
+            melee_vita_log_info("[GXCOPY] exec %ux%u fmt=0x%x src=%.1f,%.1f step=%.3f,%.3f rt=%p",
+                                c->width, c->height, (unsigned) c->format,
+                                c->x0, c->y0, c->sx, c->sy,
+                                c->target ? (void*) c->target->gxm_rtgt : NULL);
     }
+#endif
     if (fb != NULL && c->target != NULL && c->target->gxm_rtgt != NULL) {
         /* GPU copy: sample the partially rendered back buffer, including its
          * alpha, into the render-target texture.  Results portraits and Snag
@@ -870,11 +951,26 @@ static void exec_copy(const void* payload)
         static vita2d_texture source;
         const f32 tex_w = (f32) c->width * c->sx;
         const f32 tex_h = (f32) c->height * c->sy;
-        sceGxmTextureInitLinearStrided(
-            &source.gxm_tex, fb, SCE_GXM_TEXTURE_FORMAT_A8B8G8R8,
-            960, 544, s_main_color_stride * sizeof(u32));
-        sceGxmTextureSetMinFilter(&source.gxm_tex, SCE_GXM_TEXTURE_FILTER_LINEAR);
-        sceGxmTextureSetMagFilter(&source.gxm_tex, SCE_GXM_TEXTURE_FILTER_LINEAR);
+        int texture_error;
+        if (depth_copy)
+            texture_error = sceGxmTextureInitTiled(
+                &source.gxm_tex, fb, SCE_GXM_TEXTURE_FORMAT_U24X8_DS,
+                960, 544, 0);
+        else
+            texture_error = sceGxmTextureInitLinearStrided(
+                &source.gxm_tex, fb, SCE_GXM_TEXTURE_FORMAT_A8B8G8R8,
+                960, 544, s_main_color_stride * sizeof(u32));
+        if (texture_error < 0) {
+            melee_vita_log_info(
+                "[GXCOPY] source texture init failed fmt=0x%x error=0x%08x",
+                (unsigned) c->format, (unsigned) texture_error);
+        }
+        sceGxmTextureSetMinFilter(
+            &source.gxm_tex, depth_copy ? SCE_GXM_TEXTURE_FILTER_POINT
+                                        : SCE_GXM_TEXTURE_FILTER_LINEAR);
+        sceGxmTextureSetMagFilter(
+            &source.gxm_tex, depth_copy ? SCE_GXM_TEXTURE_FILTER_POINT
+                                        : SCE_GXM_TEXTURE_FILTER_LINEAR);
         {
             const int err = sceGxmBeginScene(context, 0, c->target->gxm_rtgt, NULL, NULL, NULL,
                                              &c->target->gxm_sfc, NULL);
@@ -887,15 +983,14 @@ static void exec_copy(const void* payload)
         sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
         rt_default_depth();
         vita2d_set_blend_mode_add(0);
-        if (tex_w > 0.0f && tex_h > 0.0f)
-            vita2d_draw_texture_part_scale(&source, 0.0f, 0.0f, c->x0, c->y0, tex_w, tex_h,
-                                           960.0f / tex_w, 544.0f / tex_h);
-#ifdef MELEE_VITA_DEBUG_COPIES
-        /* Marker: a full-width stripe along the top of the target, to show how
-         * target coordinates map. */
-        vita2d_draw_rectangle(0.0f, 0.0f, 960.0f, 24.0f, RGBA8(255, 0, 0, 255));
-        vita2d_draw_rectangle(0.0f, 520.0f, 960.0f, 24.0f, RGBA8(0, 0, 255, 255));
-#endif
+        if (depth_copy && texture_error >= 0) {
+            if (!gxr_copy_depth(&source.gxm_tex, c->vertices, c->indices))
+                melee_vita_log_info("[GXCOPY] depth copy draw unavailable");
+        } else if (!depth_copy && texture_error >= 0 &&
+                   tex_w > 0.0f && tex_h > 0.0f) {
+            if (!gxr_copy_color(&source.gxm_tex, c->vertices, c->indices))
+                melee_vita_log_info("[GXCOPY] color copy draw unavailable");
+        }
         sceGxmEndScene(context, NULL, NULL);
         sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
     }
@@ -906,18 +1001,7 @@ static void exec_copy(const void* payload)
     if (c->clear) {
         const f32 w = (f32) c->width * c->sx;
         const f32 h = (f32) c->height * c->sy;
-        ++g_melee_vita_gxm_state_epoch;
-        sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
-        sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
-        sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
-        sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
-        /* zScale 0 / zOffset 1 writes the far plane, as a GX clear does. */
-        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 1.0f, 0.0f);
-        vita2d_set_blend_mode_add(0);
-        vita2d_draw_rectangle(c->x0, c->y0, w > 0.0f ? w : 1.0f, h > 0.0f ? h : 1.0f,
-                              s_exec_frame->clear_color);
-        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
-        rt_default_depth();
+        clear_copy_region(c->x0, c->y0, w, h);
     }
 }
 /* ---- offscreen passes -----------------------------------------------------
@@ -938,6 +1022,7 @@ static void exec_target(const void* payload)
 {
     const RqTarget* t = payload;
     SceGxmContext* context = vita2d_get_context();
+#ifdef MELEE_VITA_RENDER_TRACE
     {
         static u32 logged, window;
         if (window != s_frame_counter / 600u) { window = s_frame_counter / 600u; logged = 0; }
@@ -945,6 +1030,7 @@ static void exec_target(const void* payload)
             melee_vita_log_info("[TARGET] %s %ux%u rt=%p", t->begin ? "begin" : "end", t->width, t->height,
                                 t->target ? (void*) t->target->gxm_rtgt : NULL);
     }
+#endif
     if (t->begin) {
         if (t->target == NULL || t->target->gxm_rtgt == NULL) return;
         vita2d_end_drawing();
@@ -991,15 +1077,67 @@ void melee_vita_gxm_end_target(void)
 }
 
 void melee_vita_gxm_queue_copy(struct vita2d_texture* target, u32 width, u32 height,
-                               f32 x0, f32 y0, f32 sx, f32 sy, int clear)
+                               f32 x0, f32 y0, f32 sx, f32 sy, u32 format,
+                               int clear)
 {
     RqCopy* c = melee_vita_rq_push(exec_copy, sizeof(RqCopy));
     if (c == NULL) return;
+    memset(c, 0, sizeof(*c));
     c->target = target;
     c->width = width;
     c->height = height;
     c->x0 = x0; c->y0 = y0; c->sx = sx; c->sy = sy;
+    c->format = format;
     c->clear = clear ? 1u : 0u;
+    if (gxr_available()) {
+        static const u16 quad_indices[6] = { 0, 1, 2, 2, 3, 0 };
+        const f32 u0 = x0 / 960.0f;
+        const f32 v0 = y0 / 544.0f;
+        const f32 u1 = (x0 + (f32) width * sx) / 960.0f;
+        const f32 v1 = (y0 + (f32) height * sy) / 544.0f;
+        c->vertices = gxr_alloc_vertices(4);
+        c->indices = gxr_alloc_indices(6);
+        if (c->vertices != NULL && c->indices != NULL) {
+            memset(c->vertices, 0, 4u * sizeof(*c->vertices));
+            c->vertices[0].position[0] = -1.0f;
+            c->vertices[0].position[1] = 1.0f;
+            c->vertices[1].position[0] = 1.0f;
+            c->vertices[1].position[1] = 1.0f;
+            c->vertices[2].position[0] = 1.0f;
+            c->vertices[2].position[1] = -1.0f;
+            c->vertices[3].position[0] = -1.0f;
+            c->vertices[3].position[1] = -1.0f;
+            for (u32 i = 0; i < 4u; ++i) {
+                c->vertices[i].position[3] = 1.0f;
+                c->vertices[i].color[0][0] = c->vertices[i].color[0][1] =
+                    c->vertices[i].color[0][2] = c->vertices[i].color[0][3] =
+                    1.0f;
+                c->vertices[i].color[1][0] = c->vertices[i].color[1][1] =
+                    c->vertices[i].color[1][2] = c->vertices[i].color[1][3] =
+                    1.0f;
+            }
+            c->vertices[0].tex[0][0] = u0;
+            c->vertices[0].tex[0][1] = v0;
+            c->vertices[1].tex[0][0] = u1;
+            c->vertices[1].tex[0][1] = v0;
+            c->vertices[2].tex[0][0] = u1;
+            c->vertices[2].tex[0][1] = v1;
+            c->vertices[3].tex[0][0] = u0;
+            c->vertices[3].tex[0][1] = v1;
+            memcpy(c->indices, quad_indices, sizeof(quad_indices));
+        }
+    }
+}
+
+void melee_vita_gxm_queue_copy_clear(f32 x, f32 y, f32 width, f32 height)
+{
+    RqCopyClear* clear = melee_vita_rq_push(exec_copy_clear,
+                                            sizeof(RqCopyClear));
+    if (clear == NULL) return;
+    clear->x = x;
+    clear->y = y;
+    clear->width = width;
+    clear->height = height;
 }
 
 /* ---- legacy vita2d draws ---- */
@@ -1180,21 +1318,6 @@ static void exec_present(const void* payload)
         vita2d_draw_rectangle(0.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
         vita2d_draw_rectangle(960.0f - p->bar - 1.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
     }
-#ifdef MELEE_VITA_DEBUG_COPIES
-    {
-        u32 c, shown = 0;
-        ++g_melee_vita_gxm_state_epoch;
-        rt_default_depth();
-        vita2d_set_blend_mode_add(0);
-        for (c = 0; c < VITA_COPY_TEXTURES && shown < 4u; ++c) {
-            if (s_copy_textures[c].texture == NULL || s_copy_textures[c].key == NULL) continue;
-            vita2d_draw_texture_scale(s_copy_textures[c].texture, 4.0f + shown * 104.0f, 4.0f,
-                                      100.0f / (f32) s_copy_textures[c].width,
-                                      100.0f / (f32) s_copy_textures[c].height);
-            ++shown;
-        }
-    }
-#endif
     vita2d_end_drawing();
     vita2d_swap_buffers();
 }

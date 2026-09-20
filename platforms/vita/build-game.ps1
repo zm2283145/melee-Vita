@@ -6,7 +6,10 @@ param(
     [string]$Configuration = 'Release',
     [ValidateRange(1, 64)]
     [int]$Jobs = 8,
-    [switch]$EnableDebugMenu
+    [switch]$EnableDebugMenu,
+    [switch]$EnableModernDebugMenu,
+    [switch]$EnableDirectSnag,
+    [switch]$EnableRenderTrace
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,7 +18,12 @@ if (-not $VitaSdk) {
 }
 
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$variant = if ($EnableDebugMenu) { "$Configuration-DebugMenu" } else { $Configuration }
+$variantParts = @($Configuration)
+if ($EnableDebugMenu) { $variantParts += 'DebugMenu' }
+if ($EnableModernDebugMenu) { $variantParts += 'ModernDebugMenu' }
+if ($EnableDirectSnag) { $variantParts += 'DirectSnag' }
+if ($EnableRenderTrace) { $variantParts += 'RenderTrace' }
+$variant = $variantParts -join '-'
 $build = Join-Path ($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BuildDirectory)) $variant
 $objects = Join-Path $build 'obj'
 New-Item -ItemType Directory -Force -Path $objects | Out-Null
@@ -57,6 +65,21 @@ $common = @(
 ) + $configurationFlags
 if ($EnableDebugMenu) {
     $common += '-DMELEE_VITA_ENABLE_DEBUG_MENU=1'
+}
+if ($EnableModernDebugMenu) {
+    if (-not $EnableDebugMenu) {
+        throw '-EnableModernDebugMenu requires -EnableDebugMenu.'
+    }
+    $common += '-DMELEE_VITA_MODERN_DEBUG_MENU=1'
+}
+if ($EnableDirectSnag) {
+    if (-not $EnableDebugMenu) {
+        throw '-EnableDirectSnag requires -EnableDebugMenu.'
+    }
+    $common += '-DMELEE_VITA_DIRECT_SNAG=1'
+}
+if ($EnableRenderTrace) {
+    $common += '-DMELEE_VITA_RENDER_TRACE=1'
 }
 
 $sjisTool = Join-Path $PSScriptRoot 'sjis_literals.py'

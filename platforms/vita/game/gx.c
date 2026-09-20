@@ -21,6 +21,8 @@
 #include "gx_render.h"
 #include "../vita_log.h"
 
+extern unsigned int aurora_draw_tag;
+
 typedef struct VitaTexObj {
     const void* data;
     void* user_data;
@@ -186,6 +188,16 @@ typedef struct VitaGXState {
     GXBool depth_compare;
     GXBool depth_update;
     GXCompare depth_function;
+    GXBool z_comp_before_texture;
+    GXZTexOp z_texture_operation;
+    GXTexFmt z_texture_format;
+    u32 z_texture_bias;
+    GXFogType fog_type;
+    GXColor fog_color;
+    f32 fog_a;
+    f32 fog_b;
+    f32 fog_c;
+    f32 fog_inv_range;
     GXTevMode tev_modes[GX_MAX_TEVSTAGE];
     GXTexCoordID tev_coordinates[GX_MAX_TEVSTAGE];
     GXTexMapID tev_maps[GX_MAX_TEVSTAGE];
@@ -1008,6 +1020,7 @@ static void build_gxr_vertex(const GxrXform* x, const VitaDecodedVertex* input, 
 static void fill_gxr_draw(GxrDraw* draw)
 {
     u32 i;
+    bool ztex_active;
     memset(&draw->key, 0, sizeof(draw->key));
     draw->key.stage_count = s_gx.tev_stage_count == 0 ? 1u :
         (u8) (s_gx.tev_stage_count > GXR_MAX_STAGES ? GXR_MAX_STAGES : s_gx.tev_stage_count);
@@ -1017,7 +1030,21 @@ static void fill_gxr_draw(GxrDraw* draw)
     draw->key.alpha_ref[1] = s_gx.alpha_ref[1];
     draw->key.alpha_op = s_gx.alpha_op;
     memcpy(draw->key.swap, s_gx.tev_swap_table, sizeof(draw->key.swap));
+    draw->key.z_tex_op =
+        s_gx.fog_type == GX_FOG_NONE
+            ? 0u
+            : (u8) (4u | (((u32) s_gx.fog_type & 0x0fu) << 4));
+    draw->z_tex_bias = 0;
+    gxcolor_to_float(s_gx.fog_color, draw->fog_color);
+    draw->fog_params[0] = s_gx.fog_a;
+    draw->fog_params[1] = s_gx.fog_b;
+    draw->fog_params[2] = s_gx.fog_c;
+    draw->fog_params[3] = s_gx.fog_inv_range;
     memset(draw->texture_valid, 0, sizeof(draw->texture_valid));
+    ztex_active =
+        s_gx.z_texture_operation != GX_ZT_DISABLE &&
+        !s_gx.z_comp_before_texture &&
+        s_gx.z_texture_format == GX_TF_Z24X8;
     for (i = 0; i < draw->key.stage_count; ++i) {
         GxrStage* st = &draw->key.stages[i];
         const u32 map = (u32) s_gx.tev_maps[i];
@@ -1047,6 +1074,8 @@ static void fill_gxr_draw(GxrDraw* draw)
                     st->alpha_in[j] == GX_CA_TEXA)
                     samples = true;
             }
+            if (ztex_active && i + 1u == draw->key.stage_count)
+                samples = true;
             if (!samples) st->tex_map = 0xffu;
         }
         st->tex_coord = (u32) s_gx.tev_coordinates[i] < GXR_MAX_TEXCOORDS ? (u8) s_gx.tev_coordinates[i] : 0xffu;
@@ -1061,6 +1090,16 @@ static void fill_gxr_draw(GxrDraw* draw)
         if (st->tex_map < GXR_MAX_TEXMAPS && draw->texture_valid[st->tex_map]) {
             st->mirror = (u8) ((draw->textures[st->tex_map].wrap_s == GX_MIRROR ? 1u : 0u) |
                                (draw->textures[st->tex_map].wrap_t == GX_MIRROR ? 2u : 0u));
+        }
+    }
+    if (ztex_active) {
+        const GxrStage* last = &draw->key.stages[draw->key.stage_count - 1u];
+        if (last->tex_map < GXR_MAX_TEXMAPS &&
+            last->tex_coord < GXR_MAX_TEXCOORDS &&
+            draw->texture_valid[last->tex_map]) {
+            draw->key.z_tex_op |= (u8) s_gx.z_texture_operation & 3u;
+            draw->key.z_tex_format = (u8) s_gx.z_texture_format;
+            draw->z_tex_bias = s_gx.z_texture_bias & 0x00ffffffu;
         }
     }
     draw->blend_mode = (u8) s_gx.blend_mode;
@@ -1091,6 +1130,7 @@ static void fill_gxr_draw(GxrDraw* draw)
         u32 hash = 2166136261u;
 #define TRACE_HASH(value) do { hash ^= (u32) (value); hash *= 16777619u; } while (0)
         TRACE_HASH(draw->key.stage_count);
+        TRACE_HASH(aurora_draw_tag);
         TRACE_HASH(s_gx.texture_generator_count);
         TRACE_HASH(s_gx.cull_mode);
         TRACE_HASH(draw->primitive);
@@ -1102,6 +1142,9 @@ static void fill_gxr_draw(GxrDraw* draw)
         TRACE_HASH(draw->key.alpha_op);
         TRACE_HASH(draw->key.alpha_comp[1]);
         TRACE_HASH(draw->key.alpha_ref[1]);
+        TRACE_HASH(draw->key.z_tex_op);
+        TRACE_HASH(draw->key.z_tex_format);
+        TRACE_HASH(draw->z_tex_bias);
         for (i = 0; i < draw->key.stage_count; ++i) {
             const GxrStage* stage = &draw->key.stages[i];
             TRACE_HASH(stage->tex_map);
@@ -1145,15 +1188,27 @@ static void fill_gxr_draw(GxrDraw* draw)
         if (!seen && signature_count < 4096u) {
             signatures[signature_count++] = hash;
             melee_vita_log_info(
-                "[RTRACE] sig=%08x frame=%u stages=%u texgen=%u cull=%u "
-                "primitive=%u blend=%u,%u,%u alpha=%u,%u,%u,%u,%u",
-                hash, s_gx.copied_frames, draw->key.stage_count,
+                "[RTRACE] sig=%08x frame=%u tag=%04x stages=%u texgen=%u cull=%u "
+                "primitive=%u blend=%u,%u,%u logic=%u update=%u,%u "
+                "alpha=%u,%u,%u,%u,%u z=%u,%u,%u "
+                "ztex=%u,%u,%u fog=%u,%.6f,%.6f,%.6f,%.6f,%u,%u,%u "
+                "chans=%u",
+                hash, s_gx.copied_frames, aurora_draw_tag, draw->key.stage_count,
                 s_gx.texture_generator_count, s_gx.cull_mode,
                 draw->primitive,
                 draw->blend_mode, draw->blend_src, draw->blend_dst,
+                draw->logic_op, draw->color_update, draw->alpha_update,
                 draw->key.alpha_comp[0], draw->key.alpha_ref[0],
                 draw->key.alpha_op, draw->key.alpha_comp[1],
-                draw->key.alpha_ref[1]);
+                draw->key.alpha_ref[1], s_gx.depth_compare,
+                s_gx.depth_function, s_gx.depth_update,
+                draw->key.z_tex_op & 3u, draw->key.z_tex_format,
+                draw->z_tex_bias,
+                (u32) s_gx.fog_type, s_gx.fog_a, s_gx.fog_b, s_gx.fog_c,
+                s_gx.fog_inv_range,
+                (u32) s_gx.fog_color.r, (u32) s_gx.fog_color.g,
+                (u32) s_gx.fog_color.b,
+                s_gx.channel_count);
             for (i = 0; i < draw->key.stage_count; ++i) {
                 const GxrStage* stage = &draw->key.stages[i];
                 const MeleeVitaTextureSource* texture =
@@ -1201,6 +1256,40 @@ static void fill_gxr_draw(GxrDraw* draw)
                     "[RTRACE] sig=%08x texgen=%u type=%u source=%u",
                     hash, i, s_gx.texture_generators[i].type,
                     s_gx.texture_generators[i].source);
+            }
+            {
+                u32 light_mask = 0;
+                for (i = 0; i < 4u; ++i) {
+                    const VitaChanCtrl* channel = &s_gx.channels[i];
+                    const GXColor material = s_gx.material_colors[i & 1u];
+                    const GXColor ambient = s_gx.ambient_colors[i & 1u];
+                    light_mask |= channel->lights;
+                    melee_vita_log_info(
+                        "[RTRACE] sig=%08x chan=%u enabled=%u src=%u,%u "
+                        "lights=%02x diffuse=%u atten=%u mat=%u,%u,%u,%u "
+                        "amb=%u,%u,%u,%u",
+                        hash, i, channel->enabled, channel->ambient_source,
+                        channel->material_source, channel->lights,
+                        channel->diffuse, channel->attenuation,
+                        material.r, material.g, material.b, material.a,
+                        ambient.r, ambient.g, ambient.b, ambient.a);
+                }
+                for (i = 0; i < 8u; ++i) {
+                    const VitaLightObj* light = &s_gx.lights[i];
+                    if ((light_mask & (1u << i)) == 0u) {
+                        continue;
+                    }
+                    melee_vita_log_info(
+                        "[RTRACE] sig=%08x light=%u color=%u,%u,%u,%u "
+                        "pos=%.5f,%.5f,%.5f dir=%.5f,%.5f,%.5f "
+                        "attn=%.5f,%.5f,%.5f,%.5f,%.5f,%.5f",
+                        hash, i, light->color.r, light->color.g,
+                        light->color.b, light->color.a,
+                        light->px, light->py, light->pz,
+                        light->nx, light->ny, light->nz,
+                        light->a0, light->a1, light->a2,
+                        light->k0, light->k1, light->k2);
+                }
             }
         }
 #undef TRACE_HASH
@@ -3144,10 +3233,9 @@ void GXSetTexCopyDst(u16 width, u16 height, GXTexFmt format, GXBool mipmap)
 }
 
 /* GXCopyTex: like aurora, the copy becomes a GPU texture keyed by the
- * destination pointer.  The scene is flushed, the requested EFB rectangle is
- * sampled from the Vita back buffer into that texture, and the scene resumes.
- * HSD shadow maps (GX_CTF_R4) stay fully lit because the shadow pass itself is
- * skipped on Vita. */
+ * destination pointer.  Color formats sample the Vita back buffer; Z24X8
+ * samples and repacks the tiled depth surface.  HSD shadow maps (GX_CTF_R4)
+ * stay fully lit because the shadow pass itself is skipped on Vita. */
 static void copy_tex_impl(void* destination, GXBool clear);
 /* Shadow maps: HSD draws silhouettes and copies them out of the frame.  Here
  * the pass is given its own render target, so the map never depends on what
@@ -3190,21 +3278,36 @@ static void copy_tex_impl(void* destination, GXBool clear)
     dst_w = s_tex_copy_dst.width;
     dst_h = s_tex_copy_dst.height;
     g_melee_vita_last_copy_dst = destination;
+#ifdef MELEE_VITA_RENDER_TRACE
     {
         static u32 logged;
         static u32 window;
         if (window != s_gx.copied_frames / 600u) { window = s_gx.copied_frames / 600u; logged = 0; }
         if (logged++ < 4u)
-            melee_vita_log_info("[GXCOPY] dst=%p %ux%u fmt=0x%x mip=%u src=%u,%u %ux%u clear=%u",
-                                destination, dst_w, dst_h, (unsigned) s_tex_copy_dst.format,
-                                (unsigned) s_tex_copy_dst.mipmap, s_tex_copy_src[0], s_tex_copy_src[1],
-                                s_tex_copy_src[2], s_tex_copy_src[3], (unsigned) clear);
+            melee_vita_log_info(
+                "[GXCOPY] frame=%u tag=%04x dst=%p %ux%u fmt=0x%x "
+                "mip=%u src=%u,%u %ux%u clear=%u",
+                s_gx.copied_frames, aurora_draw_tag, destination,
+                dst_w, dst_h, (unsigned) s_tex_copy_dst.format,
+                (unsigned) s_tex_copy_dst.mipmap, s_tex_copy_src[0],
+                s_tex_copy_src[1], s_tex_copy_src[2], s_tex_copy_src[3],
+                (unsigned) clear);
     }
+#endif
     /* GX_CTF_R4 is an HSD shadow map; with the shadow pass off, leave it
-     * fully lit. */
+     * fully lit.  GXCopyTex(clear) must still clear the source EFB region. */
     if (s_tex_copy_dst.format == 0x20u) {
         u32 size = GXGetTexBufferSize(dst_w, dst_h, GX_TF_I4, GX_FALSE, 0);
         if (size != 0 && size <= 4u * 1024u * 1024u) memset(destination, 0xff, size);
+        if (clear) {
+            f32 scale, offset, yscale;
+            screen_mapping(&scale, &offset, &yscale);
+            melee_vita_gxm_queue_copy_clear(
+                offset + s_tex_copy_src[0] * scale,
+                s_tex_copy_src[1] * yscale,
+                s_tex_copy_src[2] * scale,
+                s_tex_copy_src[3] * yscale);
+        }
         return;
     }
     if (dst_w > 1024u || dst_h > 1024u) return;
@@ -3221,13 +3324,11 @@ static void copy_tex_impl(void* destination, GXBool clear)
             if (recent[i].key == destination) { slot = i; break; }
             if (recent[i].frame < recent[slot].frame) slot = i;
         }
-        bool throttle =
-            !clear ||
-            (dst_w == 640u && dst_h == 480u &&
-             s_tex_copy_dst.format == GX_TF_RGB5A3 &&
-             s_tex_copy_src[0] == 0u && s_tex_copy_src[1] == 0u &&
-             s_tex_copy_src[2] == 640u && s_tex_copy_src[3] == 480u);
-        if (throttle && !target_created && i < 8u &&
+        /* A clear copy is part of the frame's rendering, not just a texture
+         * refresh.  Skipping it leaves stale color/depth behind the next
+         * frame; the Stage Clear feedback compositor then flickers and its
+         * live text appears to jump against the stale capture. */
+        if (!clear && !target_created && i < 8u &&
             s_gx.copied_frames - recent[slot].frame <
                 MELEE_VITA_COPY_INTERVAL)
             return;
@@ -3244,7 +3345,8 @@ static void copy_tex_impl(void* destination, GXBool clear)
         melee_vita_gxm_queue_copy(target, dst_w, dst_h,
                                   offset + s_tex_copy_src[0] * scale, s_tex_copy_src[1] * yscale,
                                   s_tex_copy_src[2] * scale / (f32) dst_w,
-                                  s_tex_copy_src[3] * yscale / (f32) dst_h, clear_region);
+                                  s_tex_copy_src[3] * yscale / (f32) dst_h,
+                                  s_tex_copy_dst.format, clear_region);
     }
 }
 
@@ -3498,7 +3600,13 @@ void GXSetNumChans(u8 count) { s_gx.channel_count = count; }
 void GXSetChanCtrl(GXChannelID channel, GXBool enabled, GXColorSrc ambient, GXColorSrc material,
                    u32 lights, GXDiffuseFn diffuse, GXAttnFn attenuation)
 {
-    const VitaChanCtrl control = { enabled, (u8) ambient, (u8) material, lights, (u8) diffuse, (u8) attenuation };
+    /* GX encodes specular attenuation with the diffuse field forced to NONE. */
+    const GXDiffuseFn effective_diffuse =
+        attenuation == GX_AF_SPEC ? GX_DF_NONE : diffuse;
+    const VitaChanCtrl control = {
+        enabled, (u8) ambient, (u8) material, lights,
+        (u8) effective_diffuse, (u8) attenuation
+    };
     switch (channel) {
     case GX_COLOR0: s_gx.channels[0] = control; break;
     case GX_COLOR1: s_gx.channels[1] = control; break;
@@ -3516,18 +3624,44 @@ void GXSetColorUpdate(GXBool enabled) { s_gx.color_update = enabled; }
 void GXSetAlphaUpdate(GXBool enabled) { s_gx.alpha_update = enabled; }
 void GXSetZMode(GXBool compare, GXCompare function, GXBool update)
 { s_gx.depth_compare = compare; s_gx.depth_function = function; s_gx.depth_update = update; }
-void GXSetZCompLoc(GXBool before_texture) { (void) before_texture; }
+void GXSetZCompLoc(GXBool before_texture)
+{ s_gx.z_comp_before_texture = before_texture; }
 void GXSetDither(GXBool enabled) { (void) enabled; }
 void GXSetDstAlpha(GXBool enabled, u8 alpha) { (void) enabled; (void) alpha; }
 void GXSetFieldMode(GXBool field, GXBool half_aspect) { (void) field; (void) half_aspect; }
 void GXSetFog(GXFogType type, f32 start, f32 end, f32 near_z, f32 far_z, GXColor color)
 {
+    const bool orthographic = ((u32) type & 8u) != 0u;
+    s_gx.fog_type = type;
+    s_gx.fog_color = color;
+    if (far_z == near_z || end == start) {
+        s_gx.fog_a = 0.0f;
+        s_gx.fog_b = orthographic ? 0.0f : 0.5f;
+        s_gx.fog_c = 0.0f;
+        s_gx.fog_inv_range = 0.0f;
+    } else if (orthographic) {
+        const f32 scale = 1.0f / (end - start);
+        s_gx.fog_a = scale * (far_z - near_z);
+        s_gx.fog_b = 0.0f;
+        s_gx.fog_c = scale * (start - near_z);
+        s_gx.fog_inv_range = scale;
+    } else {
+        s_gx.fog_inv_range = 1.0f / (end - start);
+        s_gx.fog_a =
+            (far_z * near_z) / ((far_z - near_z) * (end - start));
+        s_gx.fog_b = far_z / (far_z - near_z);
+        s_gx.fog_c = start / (end - start);
+    }
     static u32 logged, window;
     if (window != s_gx.copied_frames / 600u) { window = s_gx.copied_frames / 600u; logged = 0; }
     if (logged++ < 3u)
         melee_vita_log_info("[FOG] type=%u start=%.1f end=%.1f near=%.1f far=%.1f color=%u,%u,%u,%u",
                             (unsigned) type, start, end, near_z, far_z,
                             (unsigned) color.r, (unsigned) color.g, (unsigned) color.b, (unsigned) color.a);
+}
+void GXSetFogColor(GXColor color)
+{
+    s_gx.fog_color = color;
 }
 void GXSetFogRangeAdj(GXBool enabled, u16 center, GXFogAdjTable* table)
 { (void) enabled; (void) center; (void) table; }
@@ -3635,7 +3769,12 @@ void GXSetTevSwapModeTable(GXTevSwapSel table, GXTevColorChan r, GXTevColorChan 
 void GXSetTevClampMode(GXTevStageID stage, GXTevClampMode mode) { (void) stage; (void) mode; }
 void GXSetAlphaCompare(GXCompare c0, u8 r0, GXAlphaOp op, GXCompare c1, u8 r1)
 { s_gx.alpha_comp[0] = (u8) c0; s_gx.alpha_ref[0] = r0; s_gx.alpha_op = (u8) op; s_gx.alpha_comp[1] = (u8) c1; s_gx.alpha_ref[1] = r1; }
-void GXSetZTexture(GXZTexOp operation, GXTexFmt format, u32 bias) { (void) operation; (void) format; (void) bias; }
+void GXSetZTexture(GXZTexOp operation, GXTexFmt format, u32 bias)
+{
+    s_gx.z_texture_operation = operation;
+    s_gx.z_texture_format = format;
+    s_gx.z_texture_bias = bias & 0x00ffffffu;
+}
 void GXSetTevOrder(GXTevStageID stage, GXTexCoordID coordinate, GXTexMapID map, GXChannelID color)
 {
     if ((unsigned) stage < GX_MAX_TEVSTAGE) {

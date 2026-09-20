@@ -13,6 +13,7 @@
 #define MELEE_VITA_GX_RENDER_H
 
 #include <dolphin/types.h>
+#include <psp2/gxm.h>
 #include <stdbool.h>
 
 #include "gxm_game.h"
@@ -38,7 +39,10 @@ typedef struct GxrShaderKey {
     u8 alpha_ref[2];
     u8 alpha_op;
     u8 swap[4][4];
-    u8 reserved[2];
+    /* low 2 bits: GXZTexOp; bit 2: stable-W fog shader revision;
+     * high 4 bits: GXFogType */
+    u8 z_tex_op;
+    u8 z_tex_format;
     GxrStage stages[GXR_MAX_STAGES];
 } GxrShaderKey;
 
@@ -61,6 +65,9 @@ typedef struct GxrDraw {
     u8 depth_compare, depth_function, depth_write;
     u8 primitive;
     f32 line_width;       /* in Vita pixels */
+    u32 z_tex_bias;
+    f32 fog_color[4];
+    f32 fog_params[4];    /* A, B, C, unused */
     f32 registers[4][4];  /* GX_TEVPREV..GX_TEVREG2 */
     f32 konst[4][4];
     MeleeVitaTextureSource textures[GXR_MAX_TEXMAPS];
@@ -130,6 +137,10 @@ u16* gxr_alloc_indices(u32 count);
  * otherwise count indices into vertices are drawn. */
 bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
               u32 count);
+bool gxr_copy_color(const SceGxmTexture* texture,
+                    const GxrVertex* vertices, const u16* indices);
+bool gxr_copy_depth(const SceGxmTexture* texture,
+                    const GxrVertex* vertices, const u16* indices);
 void gxr_log_stats(void);
 void gxr_flush_warm_cache(void);
 

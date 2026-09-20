@@ -105,8 +105,13 @@ void lbMthp8001FAA0(const char* filename, int width, int height)
     lbl_804335B8.x68 = HSD_MemAlloc(uv_size);
     DCInvalidateRange(lbl_804335B8.x68, (u32) uv_size);
 #if defined(TARGET_PC) || defined(TARGET_VITA)
+#ifdef TARGET_VITA
+    pc_thp_decode_frame_sync(lbl_804335B8.unk94, lbl_804335B8.x20,
+                            lbl_804335B8.x44, lbl_804335B8.x68);
+#else
     pc_thp_decode_frame(lbl_804335B8.unk94, lbl_804335B8.x20,
                         lbl_804335B8.x44, lbl_804335B8.x68);
+#endif
 #else
     context = HSD_MemAlloc(0xC);
     memset(&header, 0, sizeof(header));

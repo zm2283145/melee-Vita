@@ -1039,6 +1039,7 @@ static struct {
     SceGxmDepthFunc depth_function;
     SceGxmDepthWriteMode depth_write;
     u32 line_width;
+    u32 polygon_mode;
     u8 cull;
 } s_rt_state;
 
@@ -1582,6 +1583,7 @@ static void exec_draw(const void* payload)
         s_rt_state.fragment = NULL;
         s_rt_state.vertex = NULL;
         s_rt_state.cull = 0xff;
+        s_rt_state.polygon_mode = UINT32_MAX;
     }
     if (s_rt_state.vertex != d->vertex) {
         sceGxmSetVertexProgram(context, d->vertex);
@@ -1594,6 +1596,19 @@ static void exec_draw(const void* payload)
     if (s_rt_state.cull != (u8) d->cull + 1u) {
         sceGxmSetCullMode(context, d->cull);
         s_rt_state.cull = (u8) d->cull + 1u;
+    }
+    {
+        const SceGxmPolygonMode mode =
+            d->primitive == SCE_GXM_PRIMITIVE_LINES
+                ? SCE_GXM_POLYGON_MODE_LINE
+                : d->primitive == SCE_GXM_PRIMITIVE_POINTS
+                ? SCE_GXM_POLYGON_MODE_POINT
+                : SCE_GXM_POLYGON_MODE_TRIANGLE_FILL;
+        if (s_rt_state.polygon_mode != (u32) mode) {
+            sceGxmSetFrontPolygonMode(context, mode);
+            sceGxmSetBackPolygonMode(context, mode);
+            s_rt_state.polygon_mode = (u32) mode;
+        }
     }
     if (!s_rt_state.valid || s_rt_state.depth_function != d->depth_function) {
         sceGxmSetFrontDepthFunc(context, d->depth_function);

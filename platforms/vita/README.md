@@ -46,6 +46,22 @@ Fatal panics still terminate with an error. VitaDebugger and kubridge are not
 linked into the Release executable. The runtime shader compiler and persistent
 shader cache are gameplay features and are not disabled.
 
+Hardware test builds can merge shaders learned by the Vita into the built-in
+cache before packaging:
+
+```powershell
+.\platforms\vita\build-full.ps1 -Configuration Release -Jobs 8 `
+  -WarmCacheVita 10.1.1.93 -WarmCacheFtpPort 1337
+```
+
+This downloads `ux0:data/melee/shadercache/warm5.bin`, validates every record,
+deduplicates it with `platforms/vita/shadercache/warm5.bin`, and packages the
+merged cache. The option fails the build if the requested device cache cannot
+be retrieved or validated. It is opt-in so offline and CI builds remain
+reproducible and never require a networked Vita. This cache stores compiled
+shader programs only; decoded trophy textures and archive data remain
+session-local and are still released during scene teardown.
+
 No game image or proprietary shader compiler module is needed at build time.
 Neither belongs in source control, CI artifacts, or the VPK.
 
@@ -100,6 +116,38 @@ the historical local-machine defaults.
 Game archives use separate `Release` and `Debug` subdirectories so configuration
 changes cannot accidentally reuse the other build's game objects. For a fully
 clean build after toolchain/header changes, use a fresh `-BuildDirectory`.
+
+### Opt-in original developer menus
+
+The translated game still contains Melee's original debug scenes. They normally
+require `/develop.ini` in the disc filesystem. Vita development builds can make
+that gate available without changing the disc image:
+
+```powershell
+.\platforms\vita\build-full.ps1 -Configuration Release -EnableDebugMenu
+```
+
+The option is disabled by default and uses a separate game-object directory, so
+ordinary Release builds retain retail behavior. An enabled Vita build selects
+`DebugRom` automatically; no boot-time button hold is required. At the title
+screen, **Cross** enters Debug VS, **Square** enters the sound test,
+**Triangle** enters the main debug menu, and **Start** follows the normal menu
+path.
+
+The debug setup loads `DbCo.dat` and other original debug-scene resources from
+the game filesystem. The build option cannot supply missing proprietary assets;
+use it only with a game image that contains those files. Debug menus can alter
+game state and are intended only for development/navigation testing.
+
+For targeted renderer diagnosis without VitaDebugger, add
+`-EnableRenderTrace`. This keeps Release optimization and writes unique GX
+draw-state signatures to `ux0:data/melee/render-trace.log`. It is disabled by
+default; use it only for a controlled capture because each line is flushed to
+storage immediately.
+
+`-UseCpuVertexPath` disables the cached display-list vertex shader path for an
+A/B rendering diagnostic while retaining the same texture and TEV backend.
+This option is also disabled by default and is not intended for release use.
 
 ## Source layout and older diagnostics
 

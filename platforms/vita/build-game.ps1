@@ -5,7 +5,8 @@ param(
     [ValidateSet('Release', 'Debug')]
     [string]$Configuration = 'Release',
     [ValidateRange(1, 64)]
-    [int]$Jobs = 8
+    [int]$Jobs = 8,
+    [switch]$EnableDebugMenu
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,7 +15,8 @@ if (-not $VitaSdk) {
 }
 
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$build = Join-Path ($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BuildDirectory)) $Configuration
+$variant = if ($EnableDebugMenu) { "$Configuration-DebugMenu" } else { $Configuration }
+$build = Join-Path ($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BuildDirectory)) $variant
 $objects = Join-Path $build 'obj'
 New-Item -ItemType Directory -Force -Path $objects | Out-Null
 
@@ -53,6 +55,9 @@ $common = @(
     '-ffp-contract=off', '-Wno-scalar-storage-order',
     '-include', $compat, '-c'
 ) + $configurationFlags
+if ($EnableDebugMenu) {
+    $common += '-DMELEE_VITA_ENABLE_DEBUG_MENU=1'
+}
 
 $sjisTool = Join-Path $PSScriptRoot 'sjis_literals.py'
 $sjisDir = Join-Path $build 'sjis'

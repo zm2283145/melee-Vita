@@ -65,7 +65,13 @@ static void gmMain_8015FDA0(u32 arg) {}
 /// set debug level
 static void gmMain_8015FDA4(void)
 {
-    if (DVDConvertPathToEntrynum("/develop.ini") != -1) {
+#if defined(TARGET_VITA) && defined(MELEE_VITA_ENABLE_DEBUG_MENU)
+    db_804D6B20 = true;
+    DbLevel = DbLKind_DebugRom;
+#else
+    bool development_mode_available =
+        DVDConvertPathToEntrynum("/develop.ini") != -1;
+    if (development_mode_available) {
         db_804D6B20 = true;
         if (db_gameLaunchButtonState & HSD_PAD_X) {
             enum_t level = DbLevel;
@@ -106,6 +112,7 @@ static void gmMain_8015FDA4(void)
         HSD_ASSERT(210, DbLevel == DbLKind_NoDebugRom);
         DbLevel = DbLKind_Master;
     }
+#endif
 }
 
 /// @remarks Can safely be ignored when building with GCC

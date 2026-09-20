@@ -12,7 +12,13 @@ param(
     [string]$LogHost = '10.1.1.146',
     [ValidateRange(1, 65535)]
     [int]$DebugNetPort = 18197,
-    [switch]$EnableDebugger
+    [string]$WarmCacheVita = $env:MELEE_VITA_WARM_CACHE_HOST,
+    [ValidateRange(1, 65535)]
+    [int]$WarmCacheFtpPort = 1337,
+    [switch]$EnableDebugger,
+    [switch]$EnableDebugMenu,
+    [switch]$EnableRenderTrace,
+    [switch]$UseCpuVertexPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,6 +27,73 @@ if (-not $VitaSdk) {
 }
 
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+
+function Merge-WarmShaderCache([string]$Vita, [int]$Port) {
+    $cachePath = Join-Path $PSScriptRoot 'shadercache/warm5.bin'
+    $downloadPath = Join-Path ([IO.Path]::GetTempPath()) "melee-vita-warm5-$PID.bin"
+    try {
+        $uri = [Uri] "ftp://${Vita}:$Port/ux0:/data/melee/shadercache/warm5.bin"
+        $request = [Net.FtpWebRequest]::Create($uri)
+        $request.Method = [Net.WebRequestMethods+Ftp]::DownloadFile
+        $request.UseBinary = $true
+        $request.KeepAlive = $false
+        $response = $request.GetResponse()
+        try {
+            $input = $response.GetResponseStream()
+            $output = [IO.File]::Create($downloadPath)
+            try { $input.CopyTo($output) } finally { $output.Dispose(); $input.Dispose() }
+        } finally {
+            $response.Dispose()
+        }
+
+        $records = [Collections.Generic.Dictionary[string, byte[]]]::new()
+        foreach ($path in @($cachePath, $downloadPath)) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+            $bytes = [IO.File]::ReadAllBytes($path)
+            $offset = 0
+            while ($offset + 24 -le $bytes.Length) {
+                $start = $offset
+                $magic = [BitConverter]::ToUInt32($bytes, $offset)
+                $kind = [BitConverter]::ToUInt32($bytes, $offset + 4)
+                $size = [BitConverter]::ToUInt32($bytes, $offset + 8)
+                $hash = [BitConverter]::ToUInt64($bytes, $offset + 16)
+                $padded = ($size + 3) -band (-bnot 3)
+                $offset += 24
+                if ($magic -ne 0x35525847 -or $size -eq 0 -or
+                    $size -gt 1MB -or $offset + $padded -gt $bytes.Length) {
+                    throw "Invalid warm shader cache record in $path at offset $start."
+                }
+                $record = [byte[]]::new(24 + $padded)
+                [Array]::Copy($bytes, $start, $record, 0, $record.Length)
+                $key = "$kind`:$hash"
+                if (-not $records.ContainsKey($key)) { $records.Add($key, $record) }
+                $offset += $padded
+            }
+            if ($offset -ne $bytes.Length) {
+                throw "Trailing bytes in warm shader cache $path at offset $offset."
+            }
+        }
+
+        $mergedPath = "$cachePath.tmp"
+        $stream = [IO.File]::Create($mergedPath)
+        try {
+            foreach ($record in $records.Values) {
+                $stream.Write($record, 0, $record.Length)
+            }
+        } finally {
+            $stream.Dispose()
+        }
+        Move-Item -Force -LiteralPath $mergedPath -Destination $cachePath
+        Write-Output "Merged $($records.Count) warm shader programs from $Vita into $cachePath"
+    } finally {
+        Remove-Item -Force -LiteralPath $downloadPath -ErrorAction SilentlyContinue
+    }
+}
+
+if ($WarmCacheVita) {
+    Merge-WarmShaderCache -Vita $WarmCacheVita -Port $WarmCacheFtpPort
+}
+
 $version = Get-Content -Raw (Join-Path $PSScriptRoot 'version.json') | ConvertFrom-Json
 if ($version.release -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or
     $version.app -notmatch '^[0-9]{2}\.[0-9]{2}$') {
@@ -62,7 +135,8 @@ function Invoke-VitaTool([string]$Name, [string[]]$Arguments) {
 
 $gameArchive = & (Join-Path $PSScriptRoot 'build-game.ps1') `
     -VitaSdk $VitaSdk -BuildDirectory (Join-Path $build 'game') `
-    -Configuration $Configuration -Jobs $Jobs |
+    -Configuration $Configuration -Jobs $Jobs `
+    -EnableDebugMenu:$EnableDebugMenu |
     Select-Object -Last 1
 
 $platformSources = @(
@@ -113,6 +187,12 @@ if ($Configuration -eq 'Debug') {
         "-DMELEE_VITA_DEBUGNET_PORT=$DebugNetPort"
     )
 }
+if ($EnableRenderTrace) {
+    $common += '-DMELEE_VITA_RENDER_TRACE=1'
+}
+if ($UseCpuVertexPath) {
+    $common += '-DMELEE_VITA_GX_CPU_VERTEX=1'
+}
 
 $commonCpp = @(
     '-std=c++20',
@@ -152,7 +232,8 @@ $vpk = Join-Path $build 'SmashMeleevita.vpk'
 
 $link = @(
     '-fno-short-enums', '-Wl,-q', '-Wl,-z,nocopyreloc',
-    '-Wl,--defsym=__sce_headroom=0x1000', '-Wl,--gc-sections'
+    '-Wl,--defsym=__sce_headroom=0x1000', '-Wl,--gc-sections',
+    '-Wl,--wrap=sceGxmBeginScene'
 ) + $platformObjects + @(
     '-Wl,--start-group', $gameArchive, '-Wl,--end-group'
 )

@@ -1,6 +1,39 @@
 #include "vita_log.h"
 
-#ifndef MELEE_VITA_RELEASE
+#if defined(MELEE_VITA_RENDER_TRACE)
+#include <stdarg.h>
+#include <stdio.h>
+
+static FILE* s_trace;
+
+int melee_vita_log_start(void)
+{
+    s_trace = fopen("ux0:data/melee/render-trace.log", "wb");
+    return s_trace != NULL ? 0 : -1;
+}
+
+void melee_vita_log_info(const char* format, ...)
+{
+    if (s_trace == NULL) return;
+    va_list args;
+    va_start(args, format);
+    vfprintf(s_trace, format, args);
+    va_end(args);
+    fputc('\n', s_trace);
+    fflush(s_trace);
+}
+
+int melee_vita_debugger_wait(void)
+{
+    return -1;
+}
+
+void melee_vita_log_stop(void)
+{
+    if (s_trace != NULL) fclose(s_trace);
+    s_trace = NULL;
+}
+#elif !defined(MELEE_VITA_RELEASE)
 #include <uvdb.h>
 #include <psp2/net/net.h>
 #include <psp2/net/netctl.h>

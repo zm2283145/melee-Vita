@@ -44,6 +44,9 @@ uint32_t pc_vtx_array_size(const void* data);
 /* Decode one THP-JPEG frame into GX I8-tiled Y/U/V planes (src/pc/thp.c). */
 void pc_thp_decode_frame(const void* jpeg, void* tile_y, void* tile_u, void* tile_v);
 #ifdef TARGET_VITA
+/* Decode a one-shot THP frame before returning. */
+void pc_thp_decode_frame_sync(const void* jpeg, void* tile_y, void* tile_u,
+                              void* tile_v);
 /* The packed size of a movie frame, recorded as lbMthp reads it into a ring
  * slot.  The frame does not carry its own size - its header describes the frame
  * that follows - and without the real size the end of the picture has to be

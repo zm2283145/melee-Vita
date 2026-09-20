@@ -510,3 +510,30 @@ void pc_thp_decode_frame(const void* jpeg, void* tile_y, void* tile_u,
         melee_vita_gxm_mark_texture_data_dirty();
     }
 }
+
+void pc_thp_decode_frame_sync(const void* jpeg, void* tile_y, void* tile_u,
+                              void* tile_v)
+{
+    const size_t payload = frame_window(jpeg);
+    int result = 0;
+
+    if (s_pending) {
+        sceKernelWaitSema(s_done_sema, 1, NULL);
+        s_pending = 0;
+    }
+
+    if (payload != 0u && s_hw_ready != 0 &&
+        prime_codec(jpeg, payload))
+    {
+        result = decode_with_codec(jpeg, payload, tile_y, tile_u, tile_v);
+    }
+    if (!result) {
+        result = THPVideoDecode(jpeg, tile_y, tile_u, tile_v, NULL) == 0;
+    }
+    if (result) {
+        melee_vita_log_info("[THP] decoded one-shot frame synchronously");
+        melee_vita_gxm_mark_texture_data_dirty();
+    } else {
+        melee_vita_log_info("[THP] one-shot frame decode failed");
+    }
+}

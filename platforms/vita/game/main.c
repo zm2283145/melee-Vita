@@ -17,7 +17,7 @@ int melee_main(void);
 
 int main(void)
 {
-#ifndef MELEE_VITA_RELEASE
+#if !defined(MELEE_VITA_RELEASE) || defined(MELEE_VITA_RENDER_TRACE)
     int log_result = melee_vita_log_start();
     printf("Melee Vita: logger startup %s\n", log_result == 0 ? "passed" : "failed");
 #endif

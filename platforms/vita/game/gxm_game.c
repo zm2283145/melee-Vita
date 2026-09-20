@@ -17,6 +17,37 @@
 static int s_initialized;
 static int s_texture_invalidation_pending;
 static u32 s_texture_content_generation = 1;
+static void* s_main_color_data;
+static u32 s_main_color_stride;
+
+int __real_sceGxmBeginScene(
+    SceGxmContext* context, unsigned int flags,
+    const SceGxmRenderTarget* render_target,
+    const SceGxmValidRegion* valid_region,
+    SceGxmSyncObject* vertex_sync_object,
+    SceGxmSyncObject* fragment_sync_object,
+    const SceGxmColorSurface* color_surface,
+    const SceGxmDepthStencilSurface* depth_stencil);
+
+int __wrap_sceGxmBeginScene(
+    SceGxmContext* context, unsigned int flags,
+    const SceGxmRenderTarget* render_target,
+    const SceGxmValidRegion* valid_region,
+    SceGxmSyncObject* vertex_sync_object,
+    SceGxmSyncObject* fragment_sync_object,
+    const SceGxmColorSurface* color_surface,
+    const SceGxmDepthStencilSurface* depth_stencil)
+{
+    const int result = __real_sceGxmBeginScene(
+        context, flags, render_target, valid_region, vertex_sync_object,
+        fragment_sync_object, color_surface, depth_stencil);
+    if (result >= 0 && color_surface != NULL && depth_stencil != NULL) {
+        s_main_color_data = sceGxmColorSurfaceGetData(color_surface);
+        s_main_color_stride =
+            sceGxmColorSurfaceGetStrideInPixels(color_surface);
+    }
+    return result;
+}
 
 typedef struct VitaTextureCacheEntry {
     MeleeVitaTextureSource source;
@@ -231,6 +262,38 @@ static int refresh_texture_impl(VitaTextureCacheEntry* entry,
         memcpy(destination + (size_t) y * stride,
                pixels + (size_t) y * source->width,
                (size_t) source->width * sizeof(*pixels));
+#ifdef MELEE_VITA_RENDER_TRACE
+    {
+        u32 min_r = 255u, min_g = 255u, min_b = 255u, min_a = 255u;
+        u32 max_r = 0u, max_g = 0u, max_b = 0u, max_a = 0u;
+        u32 alpha_zero = 0u, alpha_full = 0u;
+        const u32 count = (u32) source->width * source->height;
+        for (u32 i = 0; i < count; ++i) {
+            const u32 pixel = pixels[i];
+            const u32 r = pixel & 0xffu;
+            const u32 g = pixel >> 8 & 0xffu;
+            const u32 b = pixel >> 16 & 0xffu;
+            const u32 a = pixel >> 24;
+            if (r < min_r) min_r = r;
+            if (g < min_g) min_g = g;
+            if (b < min_b) min_b = b;
+            if (a < min_a) min_a = a;
+            if (r > max_r) max_r = r;
+            if (g > max_g) max_g = g;
+            if (b > max_b) max_b = b;
+            if (a > max_a) max_a = a;
+            if (a == 0u) ++alpha_zero;
+            if (a == 255u) ++alpha_full;
+        }
+        melee_vita_log_info(
+            "[TEXSTAT] data=%p fmt=%u size=%ux%u pal=%p palfmt=%u "
+            "entries=%u rgba=%u-%u,%u-%u,%u-%u,%u-%u a0=%u a255=%u",
+            source->data, source->format, source->width, source->height,
+            source->palette, source->palette_format, source->palette_entries,
+            min_r, max_r, min_g, max_g, min_b, max_b, min_a, max_a,
+            alpha_zero, alpha_full);
+    }
+#endif
     free(pixels);
     entry->content_generation = s_texture_content_generation;
     return 0;
@@ -278,6 +341,14 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
             sample = texture_sample_hash(source);
             if (entry->content_generation != s_texture_content_generation ||
                 entry->sample_hash != sample) {
+#ifdef MELEE_VITA_RENDER_TRACE
+                melee_vita_log_info(
+                    "[TEXREFRESH] data=%p fmt=%u size=%ux%u pal=%p "
+                    "old=%08x new=%08x generation=%u,%u",
+                    source->data, source->format, source->width, source->height,
+                    source->palette, entry->sample_hash, sample,
+                    entry->content_generation, s_texture_content_generation);
+#endif
                 ++s_texture_uploads;
                 entry->sample_hash = sample;
                 if (refresh_texture(entry, source) != 0) { ++s_texture_failures; return NULL; }
@@ -774,32 +845,9 @@ typedef struct RqCopy {
     u32 clear;
 } RqCopy;
 
-/* vita2d_get_current_fb() returns the buffer most recently queued for display,
- * not the one this frame renders into.  The render buffer is found from the
- * swap history: vita2d cycles its display buffers, so the buffer being drawn
- * is the one that was presented one full cycle ago. */
-#define FB_HISTORY 8u
-static void* s_fb_history[FB_HISTORY];
-static u32 s_fb_history_count;
-
-static void note_presented_fb(void)
-{
-    memmove(s_fb_history + 1, s_fb_history, sizeof(s_fb_history[0]) * (FB_HISTORY - 1u));
-    s_fb_history[0] = vita2d_get_current_fb();
-    if (s_fb_history_count < FB_HISTORY) ++s_fb_history_count;
-}
-
 static void* render_fb(void)
 {
-    /* s_fb_history[0] is the last presented buffer; with a cycle of N buffers
-     * the current back buffer was presented N-1 swaps before that. */
-    for (u32 period = 2; period <= 4u; ++period) {
-        bool ok = s_fb_history_count >= period * 2u;
-        for (u32 i = 0; ok && i + period < s_fb_history_count; ++i)
-            if (s_fb_history[i] != s_fb_history[i + period]) ok = false;
-        if (ok) return s_fb_history[period - 1u];
-    }
-    return NULL;
+    return s_main_color_data;
 }
 
 static void exec_copy(const void* payload)
@@ -816,13 +864,15 @@ static void exec_copy(const void* payload)
                                 c->x0, c->y0, c->sx, c->sy, c->target ? (void*) c->target->gxm_rtgt : NULL);
     }
     if (fb != NULL && c->target != NULL && c->target->gxm_rtgt != NULL) {
-        /* GPU copy: sample the partially rendered back buffer (alpha forced to
-         * one) into the render-target texture.  GXM runs scenes in submission
-         * order, so no wait for the GPU is needed. */
+        /* GPU copy: sample the partially rendered back buffer, including its
+         * alpha, into the render-target texture.  Results portraits and Snag
+         * a Trophy composite these captures over another scene. */
         static vita2d_texture source;
         const f32 tex_w = (f32) c->width * c->sx;
         const f32 tex_h = (f32) c->height * c->sy;
-        sceGxmTextureInitLinear(&source.gxm_tex, fb, SCE_GXM_TEXTURE_FORMAT_X8U8U8U8_1BGR, 960, 544, 0);
+        sceGxmTextureInitLinearStrided(
+            &source.gxm_tex, fb, SCE_GXM_TEXTURE_FORMAT_A8B8G8R8,
+            960, 544, s_main_color_stride * sizeof(u32));
         sceGxmTextureSetMinFilter(&source.gxm_tex, SCE_GXM_TEXTURE_FILTER_LINEAR);
         sceGxmTextureSetMagFilter(&source.gxm_tex, SCE_GXM_TEXTURE_FILTER_LINEAR);
         {
@@ -1147,7 +1197,6 @@ static void exec_present(const void* payload)
 #endif
     vita2d_end_drawing();
     vita2d_swap_buffers();
-    note_presented_fb();
 }
 
 void melee_vita_gxm_present(u32 clear_color)

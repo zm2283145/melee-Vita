@@ -108,6 +108,8 @@ typedef struct VitaImmediateState {
 typedef struct VitaDecodedVertex {
     f32 position[3];
     f32 normal[3];
+    f32 binormal[3];
+    f32 tangent[3];
     f32 texture[2];
     u32 color;
     u32 color1;
@@ -115,6 +117,7 @@ typedef struct VitaDecodedVertex {
     u8 position_matrix;
     u8 has_position_matrix;
     u8 has_color[2];
+    u8 has_nbt;
 } VitaDecodedVertex;
 
 typedef struct VitaChanCtrl {
@@ -363,6 +366,11 @@ static bool valid_attr(GXAttr attr)
     return (unsigned) attr < GX_VA_MAX_ATTR;
 }
 
+static GXAttr canonical_vertex_attr(GXAttr attr)
+{
+    return attr == GX_VA_NBT ? GX_VA_NRM : attr;
+}
+
 static u32 packed_color(GXColor color)
 {
     return (u32) color.r | (u32) color.g << 8 |
@@ -377,6 +385,18 @@ static bool valid_format(GXVtxFmt format)
 static unsigned matrix_slot(u32 id)
 {
     return (id / 3u) % 10u;
+}
+
+static void decode_normal_vector(f32 out[3], const VitaVtxFormat* format,
+                                 const u8* source, bool little_endian)
+{
+    const u32 step = component_bytes(format->type);
+    out[0] = read_component(source, format->type, format->fraction,
+                            little_endian);
+    out[1] = read_component(source + step, format->type, format->fraction,
+                            little_endian);
+    out[2] = read_component(source + step * 2u, format->type,
+                            format->fraction, little_endian);
 }
 
 static void decode_attribute(VitaDecodedVertex* vertex, GXAttr attr,
@@ -394,9 +414,14 @@ static void decode_attribute(VitaDecodedVertex* vertex, GXAttr attr,
         vertex->position[2] = components >= 3
             ? read_component(source + step * 2u, format->type, format->fraction, little_endian) : 0.0f;
     } else if (attr == GX_VA_NRM || attr == GX_VA_NBT) {
-        vertex->normal[0] = read_component(source, format->type, format->fraction, little_endian);
-        vertex->normal[1] = read_component(source + step, format->type, format->fraction, little_endian);
-        vertex->normal[2] = read_component(source + step * 2u, format->type, format->fraction, little_endian);
+        decode_normal_vector(vertex->normal, format, source, little_endian);
+        if (format->count != GX_NRM_XYZ) {
+            decode_normal_vector(vertex->binormal, format, source + step * 3u,
+                                 little_endian);
+            decode_normal_vector(vertex->tangent, format, source + step * 6u,
+                                 little_endian);
+            vertex->has_nbt = 1;
+        }
     } else if (attr == GX_VA_CLR0) {
         vertex->color = decode_color(source, format->type, little_endian);
         vertex->has_color[0] = 1;
@@ -772,6 +797,7 @@ typedef struct GxrXform {
     f32 p[7];
     f32 ax, bx, ay, by, z_far, z_range;
     bool need_normal;
+    bool need_nbt;
     u32 channel_count;
     bool lit[4];
     f32 material[2][4];
@@ -805,8 +831,15 @@ static void prepare_xform(GxrXform* x)
     }
     x->texgen_count = s_gx.texture_generator_count > GXR_MAX_TEXCOORDS
         ? GXR_MAX_TEXCOORDS : s_gx.texture_generator_count;
-    for (i = 0; i < x->texgen_count; ++i)
+    x->need_nbt = false;
+    for (i = 0; i < x->texgen_count; ++i) {
         if (s_gx.texture_generators[i].source == GX_TG_NRM) x->need_normal = true;
+        if (s_gx.texture_generators[i].type >= GX_TG_BUMP0 &&
+            s_gx.texture_generators[i].type <= GX_TG_BUMP7) {
+            x->need_normal = true;
+            x->need_nbt = true;
+        }
+    }
 }
 
 static void build_gxr_vertex(const GxrXform* x, const VitaDecodedVertex* input, GxrVertex* out)
@@ -815,7 +848,10 @@ static void build_gxr_vertex(const GxrXform* x, const VitaDecodedVertex* input, 
         ? input->position_matrix : s_gx.current_matrix;
     const unsigned slot = matrix_slot(matrix_id);
     const f32* p = x->p;
-    f32 eye[3], normal[3] = { 0.0f, 0.0f, 1.0f }, xc, yc, zc, wc;
+    f32 eye[3], normal[3] = { 0.0f, 0.0f, 1.0f };
+    f32 binormal[3] = { 0.0f, 0.0f, 0.0f };
+    f32 tangent[3] = { 0.0f, 0.0f, 0.0f };
+    f32 xc, yc, zc, wc;
     u32 i;
 
     apply_3x4(s_gx.position_matrices[slot], input->position, 1.0f, eye);
@@ -826,6 +862,12 @@ static void build_gxr_vertex(const GxrXform* x, const VitaDecodedVertex* input, 
             const f32 inv = 1.0f / sqrtf(len2);
             normal[0] *= inv; normal[1] *= inv; normal[2] *= inv;
         }
+    }
+    if (x->need_nbt && input->has_nbt) {
+        apply_3x4(s_gx.normal_matrices[slot], input->binormal, 0.0f,
+                  binormal);
+        apply_3x4(s_gx.normal_matrices[slot], input->tangent, 0.0f,
+                  tangent);
     }
 
     if (x->perspective) {
@@ -887,6 +929,31 @@ static void build_gxr_vertex(const GxrXform* x, const VitaDecodedVertex* input, 
     for (i = 0; i < x->texgen_count; ++i) {
         f32 tex[3] = { 0.0f, 0.0f, 1.0f };
         const VitaTexGenState* generator = &s_gx.texture_generators[i];
+        if (generator->type >= GX_TG_BUMP0 &&
+            generator->type <= GX_TG_BUMP7) {
+            const u32 source = (u32) generator->source -
+                               (u32) GX_TG_TEXCOORD0;
+            const u32 light = (u32) generator->type - (u32) GX_TG_BUMP0;
+            f32 ldir[3] = {
+                s_gx.lights[light].px - eye[0],
+                s_gx.lights[light].py - eye[1],
+                s_gx.lights[light].pz - eye[2],
+            };
+            const f32 len2 = dot3(ldir, ldir);
+            if (source < i) {
+                tex[0] = out->tex[source][0];
+                tex[1] = out->tex[source][1];
+            }
+            if (len2 > 1.0e-16f && input->has_nbt) {
+                const f32 inv = 1.0f / sqrtf(len2);
+                ldir[0] *= inv; ldir[1] *= inv; ldir[2] *= inv;
+                tex[0] += dot3(ldir, tangent);
+                tex[1] += dot3(ldir, binormal);
+            }
+            out->tex[i][0] = tex[0];
+            out->tex[i][1] = tex[1];
+            continue;
+        }
         if (generator->source >= GX_TG_TEX0 && generator->source <= GX_TG_TEX7) {
             const u32 k = (u32) (generator->source - GX_TG_TEX0);
             tex[0] = input->tex[k][0]; tex[1] = input->tex[k][1];
@@ -1017,6 +1084,128 @@ static void fill_gxr_draw(GxrDraw* draw)
     }
     memcpy(draw->registers, s_gx.tev_registers_f, sizeof(draw->registers));
     for (i = 0; i < 4u; ++i) gxcolor_to_float(s_gx.tev_kcolors[i], draw->konst[i]);
+#ifdef MELEE_VITA_RENDER_TRACE
+    {
+        static u32 signatures[4096];
+        static u32 signature_count;
+        u32 hash = 2166136261u;
+#define TRACE_HASH(value) do { hash ^= (u32) (value); hash *= 16777619u; } while (0)
+        TRACE_HASH(draw->key.stage_count);
+        TRACE_HASH(s_gx.texture_generator_count);
+        TRACE_HASH(s_gx.cull_mode);
+        TRACE_HASH(draw->primitive);
+        TRACE_HASH(draw->blend_mode);
+        TRACE_HASH(draw->blend_src);
+        TRACE_HASH(draw->blend_dst);
+        TRACE_HASH(draw->key.alpha_comp[0]);
+        TRACE_HASH(draw->key.alpha_ref[0]);
+        TRACE_HASH(draw->key.alpha_op);
+        TRACE_HASH(draw->key.alpha_comp[1]);
+        TRACE_HASH(draw->key.alpha_ref[1]);
+        for (i = 0; i < draw->key.stage_count; ++i) {
+            const GxrStage* stage = &draw->key.stages[i];
+            TRACE_HASH(stage->tex_map);
+            TRACE_HASH(stage->tex_coord);
+            TRACE_HASH(stage->color_in[0] | stage->color_in[1] << 8 |
+                       stage->color_in[2] << 16 | stage->color_in[3] << 24);
+            TRACE_HASH(stage->alpha_in[0] | stage->alpha_in[1] << 8 |
+                       stage->alpha_in[2] << 16 | stage->alpha_in[3] << 24);
+            TRACE_HASH(stage->color_op | stage->color_bias << 8 |
+                       stage->color_scale << 16 | stage->color_clamp << 24);
+            TRACE_HASH(stage->color_out | stage->alpha_op << 8 |
+                       stage->alpha_bias << 16 | stage->alpha_scale << 24);
+            TRACE_HASH(stage->alpha_clamp | stage->alpha_out << 8 |
+                       stage->channel << 16 | stage->kcsel << 24);
+            TRACE_HASH(stage->kasel | stage->swap_ras << 8 |
+                       stage->swap_tex << 16 | stage->mirror << 24);
+            if (stage->tex_map < GXR_MAX_TEXMAPS &&
+                draw->texture_valid[stage->tex_map]) {
+                const MeleeVitaTextureSource* texture =
+                    &draw->textures[stage->tex_map];
+                TRACE_HASH((uintptr_t) texture->data);
+                TRACE_HASH(texture->width | texture->height << 16);
+                TRACE_HASH(texture->format);
+                TRACE_HASH((uintptr_t) texture->palette);
+                TRACE_HASH(texture->palette_format);
+                TRACE_HASH(texture->palette_entries);
+            }
+        }
+        for (i = 0; i < s_gx.texture_generator_count &&
+                    i < GXR_MAX_TEXCOORDS; ++i) {
+            TRACE_HASH(s_gx.texture_generators[i].type);
+            TRACE_HASH(s_gx.texture_generators[i].source);
+        }
+        bool seen = false;
+        for (i = 0; i < signature_count; ++i) {
+            if (signatures[i] == hash) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen && signature_count < 4096u) {
+            signatures[signature_count++] = hash;
+            melee_vita_log_info(
+                "[RTRACE] sig=%08x frame=%u stages=%u texgen=%u cull=%u "
+                "primitive=%u blend=%u,%u,%u alpha=%u,%u,%u,%u,%u",
+                hash, s_gx.copied_frames, draw->key.stage_count,
+                s_gx.texture_generator_count, s_gx.cull_mode,
+                draw->primitive,
+                draw->blend_mode, draw->blend_src, draw->blend_dst,
+                draw->key.alpha_comp[0], draw->key.alpha_ref[0],
+                draw->key.alpha_op, draw->key.alpha_comp[1],
+                draw->key.alpha_ref[1]);
+            for (i = 0; i < draw->key.stage_count; ++i) {
+                const GxrStage* stage = &draw->key.stages[i];
+                const MeleeVitaTextureSource* texture =
+                    stage->tex_map < GXR_MAX_TEXMAPS
+                        ? &draw->textures[stage->tex_map] : NULL;
+                melee_vita_log_info(
+                    "[RTRACE] sig=%08x stage=%u map=%u coord=%u valid=%u "
+                    "data=%p fmt=%u size=%ux%u pal=%p palfmt=%u entries=%u "
+                    "cin=%u,%u,%u,%u cop=%u,%u,%u,%u,%u "
+                    "ain=%u,%u,%u,%u aop=%u,%u,%u,%u,%u "
+                    "chan=%u k=%u,%u swap=%u,%u mirror=%u",
+                    hash, i, stage->tex_map, stage->tex_coord,
+                    stage->tex_map < GXR_MAX_TEXMAPS
+                        ? draw->texture_valid[stage->tex_map] : 0u,
+                    texture != NULL ? texture->data : NULL,
+                    texture != NULL ? texture->format : 0xffu,
+                    texture != NULL ? texture->width : 0u,
+                    texture != NULL ? texture->height : 0u,
+                    texture != NULL ? texture->palette : NULL,
+                    texture != NULL ? texture->palette_format : 0xffu,
+                    texture != NULL ? texture->palette_entries : 0u,
+                    stage->color_in[0], stage->color_in[1],
+                    stage->color_in[2], stage->color_in[3],
+                    stage->color_op, stage->color_bias, stage->color_scale,
+                    stage->color_clamp, stage->color_out,
+                    stage->alpha_in[0], stage->alpha_in[1],
+                    stage->alpha_in[2], stage->alpha_in[3],
+                    stage->alpha_op, stage->alpha_bias, stage->alpha_scale,
+                    stage->alpha_clamp, stage->alpha_out, stage->channel,
+                    stage->kcsel, stage->kasel, stage->swap_ras,
+                    stage->swap_tex, stage->mirror);
+            }
+            for (i = 0; i < 4u; ++i) {
+                melee_vita_log_info(
+                    "[RTRACE] sig=%08x reg=%u value=%.5f,%.5f,%.5f,%.5f "
+                    "konst=%.5f,%.5f,%.5f,%.5f",
+                    hash, i, draw->registers[i][0], draw->registers[i][1],
+                    draw->registers[i][2], draw->registers[i][3],
+                    draw->konst[i][0], draw->konst[i][1],
+                    draw->konst[i][2], draw->konst[i][3]);
+            }
+            for (i = 0; i < s_gx.texture_generator_count &&
+                        i < GXR_MAX_TEXCOORDS; ++i) {
+                melee_vita_log_info(
+                    "[RTRACE] sig=%08x texgen=%u type=%u source=%u",
+                    hash, i, s_gx.texture_generators[i].type,
+                    s_gx.texture_generators[i].source);
+            }
+        }
+#undef TRACE_HASH
+    }
+#endif
 }
 
 static u64 s_prof_vertex_us, s_prof_draw_us;
@@ -1170,17 +1359,17 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
     s_prof_vertices += count;
     if (output == 0) return true;
 
-    {
-        const u64 fill_start = sceKernelGetProcessTimeWide();
-        fill_gxr_draw(draw);
-        s_prof_fill_us += sceKernelGetProcessTimeWide() - fill_start;
-    }
     if (primitive == GX_LINES || primitive == GX_LINESTRIP) {
         draw->primitive = GXR_PRIM_LINES;
         draw->line_width = (s_gx.line_width / 6.0f) * (544.0f / 480.0f);
     } else {
         draw->primitive = GXR_PRIM_TRIANGLES;
         draw->line_width = 1.0f;
+    }
+    {
+        const u64 fill_start = sceKernelGetProcessTimeWide();
+        fill_gxr_draw(draw);
+        s_prof_fill_us += sceKernelGetProcessTimeWide() - fill_start;
     }
     {
         const u64 draw_start = sceKernelGetProcessTimeWide();
@@ -1625,6 +1814,7 @@ void GXClearVtxDesc(void) { memset(s_gx.descriptors, 0, sizeof(s_gx.descriptors)
 
 void GXSetVtxDesc(GXAttr attr, GXAttrType type)
 {
+    attr = canonical_vertex_attr(attr);
     if (valid_attr(attr) && s_gx.descriptors[attr] != type) { s_gx.descriptors[attr] = type; ++s_vtx_state_gen; }
 }
 
@@ -1639,6 +1829,7 @@ void GXSetVtxDescv(GXVtxDescList* list)
 
 void GXGetVtxDesc(GXAttr attr, GXAttrType* type)
 {
+    attr = canonical_vertex_attr(attr);
     if (type != NULL) *type = valid_attr(attr) ? s_gx.descriptors[attr] : GX_NONE;
 }
 
@@ -1657,6 +1848,7 @@ void GXGetVtxDescv(GXVtxDescList* list)
 void GXSetVtxAttrFmt(GXVtxFmt format, GXAttr attr, GXCompCnt count,
                      GXCompType type, u8 fraction)
 {
+    attr = canonical_vertex_attr(attr);
     if (valid_format(format) && valid_attr(attr)) {
         VitaVtxFormat* out = &s_gx.formats[format][attr];
         if (out->count != count || out->type != type || out->fraction != fraction) ++s_vtx_state_gen;
@@ -1680,6 +1872,7 @@ void GXGetVtxAttrFmt(GXVtxFmt format, GXAttr attr, GXCompCnt* count,
 {
     VitaVtxFormat empty = { 0 };
     const VitaVtxFormat* value = &empty;
+    attr = canonical_vertex_attr(attr);
     if (valid_format(format) && valid_attr(attr)) value = &s_gx.formats[format][attr];
     if (count != NULL) *count = value->count;
     if (type != NULL) *type = value->type;
@@ -1699,6 +1892,7 @@ void GXGetVtxAttrFmtv(GXVtxFmt format, GXVtxAttrFmtList* list)
 
 void GXSetArray(GXAttr attr, const void* data, u32 size, u8 stride, bool little_endian)
 {
+    attr = canonical_vertex_attr(attr);
     if (valid_attr(attr)) {
         if (s_gx.arrays[attr].data != data || s_gx.arrays[attr].size != size ||
             s_gx.arrays[attr].stride != stride) ++s_vtx_state_gen;
@@ -1781,7 +1975,39 @@ typedef struct VitaAttrPlan {
     u32 direct_bytes;   /* bytes consumed in the stream for GX_DIRECT */
     u32 index_skip;     /* bytes consumed in the stream for indexed attrs */
     u32 source_bytes;   /* bytes read from the array for indexed attrs */
+    u8 index_bytes;
+    u8 nbt3;
 } VitaAttrPlan;
+
+static bool decode_indexed_nbt3(VitaDecodedVertex* vertex,
+                                const VitaAttrPlan* entry,
+                                const u8* stream, u32 bytes, u32* cursor_io,
+                                u32* max_end)
+{
+    f32* vectors[3] = {
+        vertex->normal, vertex->binormal, vertex->tangent,
+    };
+    u32 cursor = *cursor_io;
+    if (entry->index_skip > bytes - cursor) return false;
+    for (u32 slice = 0; slice < 3u; ++slice) {
+        const u8* encoded = stream + cursor + slice * entry->index_bytes;
+        const u32 index = entry->index_bytes == 1u
+            ? encoded[0] : (u32) encoded[0] << 8 | encoded[1];
+        const u32 offset = index * entry->array->stride;
+        if (entry->array->size != 0 &&
+            (offset > entry->array->size ||
+             entry->source_bytes > entry->array->size - offset))
+            return false;
+        decode_normal_vector(vectors[slice], entry->format,
+                             (const u8*) entry->array->data + offset,
+                             entry->array->little_endian);
+        if (max_end != NULL && offset + entry->source_bytes > *max_end)
+            *max_end = offset + entry->source_bytes;
+    }
+    vertex->has_nbt = 1;
+    *cursor_io = cursor + entry->index_skip;
+    return true;
+}
 
 /* ------------------------------------------------------------------------
  * GPU display-list cache.  A display list plus the vertex arrays it indexes
@@ -1992,16 +2218,15 @@ static bool decode_primitive_vertices(const u8* stream, u32 bytes, u32* cursor_i
                                       GXVtxFmt format, u32 count, u32* max_end,
                                       bool* has_mtxidx)
 {
-    typedef struct { GXAttr attr; GXAttrType descriptor; const VitaVtxFormat* format;
-                     const VitaArrayState* array; u32 direct_bytes, index_skip, source_bytes; } Plan;
-    Plan plan[GX_VA_MAX_ATTR];
+    VitaAttrPlan plan[GX_VA_MAX_ATTR];
     u32 plan_count = 0, cursor = *cursor_io;
     const u32 default_color = packed_color(s_gx.material_colors[0]);
     for (u32 attr_index = 0; attr_index < GX_VA_MAX_ATTR; ++attr_index) {
         const GXAttrType descriptor = s_gx.descriptors[attr_index];
-        Plan* e;
+        VitaAttrPlan* e;
         if (descriptor == GX_NONE) continue;
         e = &plan[plan_count++];
+        memset(e, 0, sizeof(*e));
         e->attr = (GXAttr) attr_index;
         e->descriptor = descriptor;
         e->format = &s_gx.formats[format][attr_index];
@@ -2013,6 +2238,8 @@ static bool decode_primitive_vertices(const u8* stream, u32 bytes, u32* cursor_i
             const u32 index_bytes = descriptor == GX_INDEX8 ? 1u : 2u;
             const bool nbt3 = (e->attr == GX_VA_NRM || e->attr == GX_VA_NBT) &&
                               e->format->count == GX_NRM_NBT3;
+            e->index_bytes = (u8) index_bytes;
+            e->nbt3 = nbt3 ? 1u : 0u;
             e->index_skip = (nbt3 ? 3u : 1u) * index_bytes;
             e->source_bytes = e->attr == GX_VA_CLR0 || e->attr == GX_VA_CLR1
                 ? color_bytes(e->format->type)
@@ -2027,7 +2254,7 @@ static bool decode_primitive_vertices(const u8* stream, u32 bytes, u32* cursor_i
         vertex->normal[2] = 1.0f;
         vertex->color = default_color;
         for (u32 pi = 0; pi < plan_count; ++pi) {
-            const Plan* e = &plan[pi];
+            const VitaAttrPlan* e = &plan[pi];
             const u8* source;
             bool little_endian = false;
             if (e->descriptor == GX_DIRECT) {
@@ -2037,6 +2264,12 @@ static bool decode_primitive_vertices(const u8* stream, u32 bytes, u32* cursor_i
             } else {
                 const VitaArrayState* array = e->array;
                 u32 array_index, offset;
+                if (e->nbt3) {
+                    if (!decode_indexed_nbt3(vertex, e, stream, bytes, &cursor,
+                                             &max_end[e->attr]))
+                        return false;
+                    continue;
+                }
                 if (e->index_skip > bytes - cursor) return false;
                 array_index = e->descriptor == GX_INDEX8 ? stream[cursor]
                     : (u32) stream[cursor] << 8 | stream[cursor + 1u];
@@ -2249,6 +2482,17 @@ static u8 current_cull(void)
     }
 }
 
+static bool uses_bump_texgen(void)
+{
+    const u32 count = s_gx.texture_generator_count < GX_MAX_TEXCOORD
+        ? s_gx.texture_generator_count : GX_MAX_TEXCOORD;
+    for (u32 i = 0; i < count; ++i) {
+        const GXTexGenType type = s_gx.texture_generators[i].type;
+        if (type >= GX_TG_BUMP0 && type <= GX_TG_BUMP7) return true;
+    }
+    return false;
+}
+
 static bool draw_display_list_gpu(const void* list, u32 bytes) __attribute__((unused));
 static bool draw_display_list_gpu(const void* list, u32 bytes)
 {
@@ -2256,7 +2500,9 @@ static bool draw_display_list_gpu(const void* list, u32 bytes)
     u32 state_hash;
     u32 bucket;
     DlCacheEntry* e;
-    if (!gxr_available() || is_movie_yuv_draw() || bytes < 3u) return false;
+    if (!gxr_available() || is_movie_yuv_draw() || uses_bump_texgen() ||
+        bytes < 3u)
+        return false;
     state_hash = current_state_hash();
     bucket = (u32) (((uintptr_t) list >> 3) ^ bytes ^ state_hash) & (DL_CACHE_BUCKETS - 1u);
     for (e = s_dl_cache[bucket]; e != NULL; e = e->next)
@@ -2304,6 +2550,8 @@ static bool draw_display_list_gpu(const void* list, u32 bytes)
         const u8 cull = current_cull();
         bool ok = true;
         fill_vertex_key_uniforms(&key, &uniforms, e->has_mtxidx != 0);
+        draw->primitive = e->tri_count ? GXR_PRIM_TRIANGLES
+            : e->line_count ? GXR_PRIM_LINES : GXR_PRIM_POINTS;
         fill_gxr_draw(draw);
         s_prof_fill_us += sceKernelGetProcessTimeWide() - fill_start;
         melee_vita_prof_add(VPZ_DRAW_SETUP, sceKernelGetProcessTimeWide() - fill_start);
@@ -2367,6 +2615,7 @@ void GXCallDisplayList(const void* list, u32 bytes)
             VitaAttrPlan* entry;
             if (descriptor == GX_NONE) continue;
             entry = &plan[plan_count++];
+            memset(entry, 0, sizeof(*entry));
             entry->attr = (GXAttr) attr_index;
             entry->descriptor = descriptor;
             entry->format = &s_gx.formats[format][attr_index];
@@ -2376,6 +2625,8 @@ void GXCallDisplayList(const void* list, u32 bytes)
                 const u32 index_bytes = descriptor == GX_INDEX8 ? 1u : 2u;
                 const bool nbt3 = (entry->attr == GX_VA_NRM || entry->attr == GX_VA_NBT) &&
                                   entry->format->count == GX_NRM_NBT3;
+                entry->index_bytes = (u8) index_bytes;
+                entry->nbt3 = nbt3 ? 1u : 0u;
                 entry->index_skip = (nbt3 ? 3u : 1u) * index_bytes;
                 entry->source_bytes = entry->attr == GX_VA_CLR0 || entry->attr == GX_VA_CLR1
                     ? color_bytes(entry->format->type)
@@ -2403,6 +2654,12 @@ void GXCallDisplayList(const void* list, u32 bytes)
                 } else {
                     const VitaArrayState* array = entry->array;
                     u32 array_index, offset;
+                    if (entry->nbt3) {
+                        if (!decode_indexed_nbt3(vertex, entry, stream, bytes,
+                                                 &cursor, NULL))
+                            return;
+                        continue;
+                    }
                     if (entry->index_skip > bytes - cursor) return;
                     array_index = entry->descriptor == GX_INDEX8
                         ? stream[cursor]
@@ -2468,7 +2725,8 @@ static u32 attribute_float_components(GXAttr attr)
 {
     const VitaVtxFormat* format = valid_attr(attr) ? &s_gx.formats[s_gx.immediate.format][attr] : NULL;
     if (attr == GX_VA_POS) return format != NULL ? attribute_components(attr, format->count) : 3u;
-    if (attr == GX_VA_NRM) return 3u;
+    if (attr == GX_VA_NRM)
+        return format != NULL ? attribute_components(attr, format->count) : 3u;
     if (attr == GX_VA_NBT) return 9u;
     if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7)
         return format != NULL ? attribute_components(attr, format->count) : 2u;
@@ -2500,6 +2758,11 @@ static void immediate_commit_components(GXAttr attr, const f32* v, u32 count)
         vertex->normal[0] = v[0];
         vertex->normal[1] = count > 1u ? v[1] : 0.0f;
         vertex->normal[2] = count > 2u ? v[2] : 0.0f;
+        if (count >= 9u) {
+            memcpy(vertex->binormal, v + 3u, sizeof(vertex->binormal));
+            memcpy(vertex->tangent, v + 6u, sizeof(vertex->tangent));
+            vertex->has_nbt = 1;
+        }
     } else if (attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7) {
         const u32 index = (u32) (attr - GX_VA_TEX0);
         vertex->tex[index][0] = v[0];
@@ -2590,11 +2853,19 @@ static void immediate_normal(f32 x, f32 y, f32 z)
 {
     VitaDecodedVertex* v = immediate_vertex();
     GXAttr attr = immediate_attribute();
-    if (v != NULL && s_gx.immediate.nbt_vectors == 0) {
-        v->normal[0] = x; v->normal[1] = y; v->normal[2] = z;
+    const VitaVtxFormat* format = valid_attr(attr)
+        ? &s_gx.formats[s_gx.immediate.format][attr] : NULL;
+    const bool nbt = attr == GX_VA_NBT ||
+                     (format != NULL && format->count != GX_NRM_XYZ);
+    if (v != NULL) {
+        f32* out = s_gx.immediate.nbt_vectors == 0 ? v->normal
+            : s_gx.immediate.nbt_vectors == 1 ? v->binormal : v->tangent;
+        out[0] = x; out[1] = y; out[2] = z;
+        if (nbt && s_gx.immediate.nbt_vectors == 2)
+            v->has_nbt = 1;
     }
     note_value();
-    if (attr == GX_VA_NBT && ++s_gx.immediate.nbt_vectors < 3) return;
+    if (nbt && ++s_gx.immediate.nbt_vectors < 3) return;
     s_gx.immediate.nbt_vectors = 0;
     immediate_advance();
 }
@@ -2612,8 +2883,22 @@ static void immediate_indexed_normal(u32 index)
     u32 offset = index * array->stride;
     if (array->size != 0 && offset >= array->size) { note_value(); immediate_advance(); return; }
     memset(&decoded, 0, sizeof(decoded));
-    decode_attribute(&decoded, attr, format, (const u8*) array->data + offset, array->little_endian);
+    if (format->count == GX_NRM_NBT3) {
+        decode_normal_vector(decoded.normal, format,
+                             (const u8*) array->data + offset,
+                             array->little_endian);
+    } else {
+        decode_attribute(&decoded, attr, format,
+                         (const u8*) array->data + offset,
+                         array->little_endian);
+    }
     immediate_normal(decoded.normal[0], decoded.normal[1], decoded.normal[2]);
+    if (format->count == GX_NRM_NBT && decoded.has_nbt) {
+        immediate_normal(decoded.binormal[0], decoded.binormal[1],
+                         decoded.binormal[2]);
+        immediate_normal(decoded.tangent[0], decoded.tangent[1],
+                         decoded.tangent[2]);
+    }
 }
 void GXNormal1x16(u16 index) { immediate_indexed_normal(index); }
 void GXNormal1x8(u8 index) { immediate_indexed_normal(index); }
@@ -2952,15 +3237,10 @@ static void copy_tex_impl(void* destination, GXBool clear)
     {
         f32 scale, offset, yscale;
         screen_mapping(&scale, &offset, &yscale);
-        /* Only the shadow pass needs its rectangle wiped afterwards (its
-         * silhouettes would otherwise show on screen).  Other copies are of
-         * scene content that is drawn again anyway, and blanking those
-         * rectangles punched holes in the frame. */
-        /* Nothing is cleared after a copy: the scene is drawn over these
-         * rectangles afterwards, and wiping them removed content other copies
-         * (the Pokemon Stadium screen) still needed. */
-        const int clear_region = 0;
-        (void) clear;
+        /* GXCopyTex(clear) clears the copied color and depth rectangle after
+         * the copy.  Snag a Trophy and the results capture depend on that far
+         * depth clear before compositing the captured image back into it. */
+        const int clear_region = clear != GX_FALSE;
         melee_vita_gxm_queue_copy(target, dst_w, dst_h,
                                   offset + s_tex_copy_src[0] * scale, s_tex_copy_src[1] * yscale,
                                   s_tex_copy_src[2] * scale / (f32) dst_w,
@@ -3140,8 +3420,44 @@ void GXInitLightSpot(GXLightObj* object, f32 cutoff, GXSpotFn function)
     f32 cosine;
     if (cutoff <= 0.0f || cutoff > 90.0f) function = GX_SP_OFF;
     cosine = cosf(cutoff * (f32) M_PI / 180.0f);
-    if (function == GX_SP_COS) { a0 = -cosine / (1.0f - cosine); a1 = 1.0f / (1.0f - cosine); }
-    else if (function == GX_SP_COS2) { a0 = 0.0f; a1 = -cosine / (1.0f - cosine); a2 = 1.0f / (1.0f - cosine); }
+    switch (function) {
+    case GX_SP_FLAT:
+        a0 = -1000.0f * cosine;
+        a1 = 1000.0f;
+        break;
+    case GX_SP_COS:
+        a0 = -cosine / (1.0f - cosine);
+        a1 = 1.0f / (1.0f - cosine);
+        break;
+    case GX_SP_COS2:
+        a0 = 0.0f;
+        a1 = -cosine / (1.0f - cosine);
+        a2 = 1.0f / (1.0f - cosine);
+        break;
+    case GX_SP_SHARP: {
+        const f32 d = (1.0f - cosine) * (1.0f - cosine);
+        a0 = cosine * (cosine - 2.0f);
+        a1 = 2.0f / d;
+        a2 = -1.0f / d;
+        break;
+    }
+    case GX_SP_RING1: {
+        const f32 d = (1.0f - cosine) * (1.0f - cosine);
+        a0 = 4.0f * cosine / d;
+        a1 = 4.0f * (1.0f + cosine) / d;
+        a2 = -4.0f / d;
+        break;
+    }
+    case GX_SP_RING2: {
+        const f32 d = (1.0f - cosine) * (1.0f - cosine);
+        a0 = 1.0f - 2.0f * cosine * cosine / d;
+        a1 = 4.0f * cosine / d;
+        a2 = -2.0f / d;
+        break;
+    }
+    default:
+        break;
+    }
     GXInitLightAttnA(object, a0, a1, a2);
 }
 

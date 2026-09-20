@@ -782,21 +782,30 @@ static void mn_80229A7C(MainMenuData* data, MenuKind menu_kind, int selection)
     }
     sis_idx = mn_803EB6B0[menu_kind].description_indices;
     if (sis_idx != 0) {
-        text = HSD_SisLib_803A5ACC(0, mn_804D6BB4, -9.5f, 9.1f, 17.0f,
-                                   364.68332f, 38.38772f);
-        data->description = text;
-        text->font_size.x = 0.0521f;
-        text->font_size.y = 0.0521f;
 #ifdef TARGET_VITA
         if (menu_kind == MENU_KIND_SETTINGS &&
             selection == SEL_SETTINGS_VITA_DEBUG)
         {
+            text = HSD_SisLib_803A6754(0, mn_804D6BB4);
+            text->pos_x = -9.5f;
+            text->pos_y = 9.1f;
+            text->pos_z = 17.0f;
+            text->box_size_x = 364.68332f;
+            text->box_size_y = 38.38772f;
+            data->description = text;
+            text->font_size.x = 0.0521f;
+            text->font_size.y = 0.0521f;
             HSD_SisLib_803A6B98(
                 text, 0.0f, 0.0f,
                 "Session-only developer tools. Unsafe operations are disabled.");
             return;
         }
 #endif
+        text = HSD_SisLib_803A5ACC(0, mn_804D6BB4, -9.5f, 9.1f, 17.0f,
+                                   364.68332f, 38.38772f);
+        data->description = text;
+        text->font_size.x = 0.0521f;
+        text->font_size.y = 0.0521f;
         HSD_SisLib_803A6368(text, sis_idx[selection]);
     }
 }

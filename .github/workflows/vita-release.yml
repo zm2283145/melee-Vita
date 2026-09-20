@@ -71,6 +71,7 @@ jobs:
           mkdir -p dist
           cp build-vita/full/SmashMeleevita.vpk dist/SmashMeleevita.vpk
           cp README.md dist/README-Vita.md
+          cp platforms/vita/DEBUG-TOOLS.md dist/DEBUG-TOOLS.md
           cp platforms/vita/version.json dist/version.json
           cp LICENSE.md COPYING dist/
           printf '%s\n' "$GITHUB_SHA" > dist/COMMIT.txt
@@ -95,7 +96,7 @@ jobs:
               with open("dist/version.json") as version_file:
                   assert fields["APP_VER"].decode("ascii") == json.load(version_file)["app"]
           PY
-          (cd dist && sha256sum SmashMeleevita.vpk README-Vita.md version.json LICENSE.md COPYING COMMIT.txt > SHA256SUMS.txt)
+          (cd dist && sha256sum SmashMeleevita.vpk README-Vita.md DEBUG-TOOLS.md version.json LICENSE.md COPYING COMMIT.txt > SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@v4
         with:
@@ -143,6 +144,20 @@ jobs:
           repeat compilation as you play, but performance and compatibility remain
           experimental. Back up saves before updating.
 
+          ## Hidden Debug Tools
+
+          This build includes Melee's original developer menus for testing matches,
+          items, cameras, collision displays, sound, and other internal features.
+          Nothing appears during normal play. To reveal **DEBUG TOOLS**, open Options
+          and enter **Up, Up, Down, Down, Left, Right, Left, Right, Select** on the
+          D-pad. The unlock lasts only until the application closes.
+
+          These menus were designed for developers, so some combinations may behave
+          strangely. Dangerous save, memory-card, and unsupported hardware actions
+          are disabled. Read the attached **DEBUG-TOOLS.md** before using them; it
+          explains the Vita controls, safe functions, camera, item spawner, and how
+          to leave a debug match.
+
           This is an optimized Release build with logging and debugger support
           disabled. Review and publish this draft manually when ready; this
           workflow never publishes releases automatically.
@@ -152,5 +167,5 @@ jobs:
             --title "Smash Melee Vita ${version} (experimental build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT})" \
             --notes-file release-notes.md \
             --draft --prerelease \
-            dist/SmashMeleevita.vpk dist/README-Vita.md dist/version.json \
+            dist/SmashMeleevita.vpk dist/README-Vita.md dist/DEBUG-TOOLS.md dist/version.json \
             dist/LICENSE.md dist/COPYING dist/COMMIT.txt dist/SHA256SUMS.txt

@@ -144,6 +144,9 @@ language/publicity changes, arbitrary global-data editing, and unsupported
 GameCube hardware operations remain visible but disabled before their
 initialization or callbacks can run.
 
+See [DEBUG-TOOLS.md](DEBUG-TOOLS.md) for complete Vita menu workflows,
+in-match shortcuts, item spawning, debug-camera controls, and limitations.
+
 The legacy `-EnableDebugMenu` switch remains available only as an explicit
 developer bypass:
 

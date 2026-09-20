@@ -38,6 +38,9 @@
 #include <melee/lb/lbaudio_ax.h>
 #include <melee/lb/lbrefract.h>
 #include <melee/lb/lbtime.h>
+#ifdef TARGET_VITA
+#include <melee/mn/mnvitadebug.h>
+#endif
 #include <melee/mn/types.h>
 #include <melee/mp/mpcoll.h>
 #include <melee/pl/player.h>
@@ -1347,6 +1350,7 @@ static inline void fn_8016CFE0_inline(void)
 void fn_8016CFE0(void)
 {
     VsSceneController* tmp = &controller;
+    bool allow_no_contest;
     int tmp_btns;
     s64 no_contest_buttons;
     int unpauser_slot;
@@ -1365,7 +1369,11 @@ void fn_8016CFE0(void)
                        PAD_BUTTON_START;
         }
         no_contest_buttons = tmp_btns;
-        if (tmp->start.x3_4 && tmp->state.pause_timer == 0 &&
+        allow_no_contest = tmp->start.x3_4;
+#ifdef TARGET_VITA
+        allow_no_contest |= mnVitaDebug_IsActive();
+#endif
+        if (allow_no_contest && tmp->state.pause_timer == 0 &&
             tmp->state.unk_3 == 0)
         {
             u64 buttons = gm_GetButtonsTriggered(tmp->state.pauser);

@@ -62,6 +62,7 @@ static HSD_GObj* mn_804D6BAC;
 static HSD_GObj* mn_804D6BB0;
 #ifdef TARGET_VITA
 static HSD_GObj* mn_vita_menu_gobj;
+static void mn_VitaMainMenuDataFree(void*);
 #endif
 MenuInputState mn_804D6BC8;
 HSD_CObjDesc* MenMain_cam;
@@ -1476,7 +1477,11 @@ HSD_GObj* mn_8022B3A0(u8 state)
     HSD_JObjReqAnimAll(root_jobj, 0.0F);
     user_data = HSD_MemAlloc(sizeof(MainMenuData));
     HSD_ASSERTREPORT(0x65D, user_data, "Can't get user_data.\n");
+#ifdef TARGET_VITA
+    GObj_InitUserData(gobj, 0, mn_VitaMainMenuDataFree, user_data);
+#else
     GObj_InitUserData(gobj, 0, mn_8022EB04, user_data);
+#endif
     user_data->menu_kind = mn_804A04F0.cur_menu;
     user_data->hovered_selection = mn_804A04F0.hovered_selection;
     user_data->state = state;
@@ -2402,9 +2407,14 @@ void mn_8022D104(HSD_GObj* gp)
     {
         HSD_GObj* old_menu = mn_vita_menu_gobj;
         HSD_GObj* new_menu;
+        MainMenuData* old_data = old_menu->user_data;
         sfxForward();
         mn_804A04F0.hovered_selection = SEL_SETTINGS_VITA_DEBUG;
         mn_vita_menu_gobj = NULL;
+        if (old_data->description != NULL) {
+            HSD_SisLib_803A5CC4(old_data->description);
+            old_data->description = NULL;
+        }
         HSD_GObjFree(old_menu);
         new_menu = mn_8022B3A0(MENU_STATE_IDLE);
         HSD_GObj_80390CD4(new_menu);
@@ -3212,14 +3222,22 @@ void mn_8022EAE0(HSD_GObj* gobj)
 
 void mn_8022EB04(void* user_data)
 {
+    HSD_Free(user_data);
+}
+
 #ifdef TARGET_VITA
+static void mn_VitaMainMenuDataFree(void* user_data)
+{
     MainMenuData* data = user_data;
+    if (data->description != NULL) {
+        HSD_SisLib_803A5CC4(data->description);
+    }
     if (data->vita_debug_label != NULL) {
         HSD_SisLib_803A5CC4(data->vita_debug_label);
     }
-#endif
     HSD_Free(user_data);
 }
+#endif
 
 s32 mn_GetDigitAt(s32 arg0, s32 arg1)
 {

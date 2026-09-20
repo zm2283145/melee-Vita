@@ -283,24 +283,25 @@ void fn_CheckCameraInfo(int player, int buttons_down, int buttons_pressed,
                         f32 cstick_x, f32 cstick_y)
 {
     if (gm_8018841C() == 0 && gm_GetCurrentGameMode() != GM_CAMERA_MODE) {
+#ifndef TARGET_VITA
         if (Camera_80030178() == 0 && Camera_80030154() == 0 &&
             (ABS(cstick_x) > 0.6F || ABS(cstick_y) > 0.6F))
         {
             fn_CheckCameraInfo_helper();
             Camera_8003006C();
-        } else {
-            if (buttons_pressed & HSD_PAD_DPADUP) {
-                fn_CheckCameraInfo_helper();
-                if ((buttons_down &
-                     (HSD_PAD_Y | HSD_PAD_X | HSD_PAD_L | HSD_PAD_R)) == 0)
-                {
-                    if (Camera_80030178() != 0) {
-                        Camera_8002FEEC(player);
-                    } else if (Camera_80030154() != 0) {
-                        Camera_800300F0();
-                    } else {
-                        Camera_8003006C();
-                    }
+        } else
+#endif
+        if (buttons_pressed & HSD_PAD_DPADUP) {
+            fn_CheckCameraInfo_helper();
+            if ((buttons_down &
+                 (HSD_PAD_Y | HSD_PAD_X | HSD_PAD_L | HSD_PAD_R)) == 0)
+            {
+                if (Camera_80030178() != 0) {
+                    Camera_8002FEEC(player);
+                } else if (Camera_80030154() != 0) {
+                    Camera_800300F0();
+                } else {
+                    Camera_8003006C();
                 }
             }
         }

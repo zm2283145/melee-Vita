@@ -124,6 +124,10 @@ Camera Mode uses the Vita controller rather than its original controller-port-4
 input. To leave a running debug match, press Start, then hold L and R and press
 Cross for the DebugRom no-contest shortcut.
 
+See the [PS Vita Debug Tools Guide](platforms/vita/DEBUG-TOOLS.md) for menu
+workflows, the item spawner, debug camera, collision overlays, match shortcuts,
+and blocked operations.
+
 ## Saves
 
 The port stores its virtual memory card in **`ux0:data/melee/save/`**.

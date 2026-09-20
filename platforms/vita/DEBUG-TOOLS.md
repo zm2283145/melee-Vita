@@ -192,7 +192,7 @@ temporary DebugRom state. They use player 1's Vita controls.
 | Hold Circle + D-pad Left | Toggle bonus-score information |
 | Hold Cross + D-pad Right | Toggle 5x game speed |
 | D-pad Up alone | Cycle normal, free, and fighter-follow debug cameras |
-| Start, then hold L + R and press Cross (bottom button) | End the match as No Contest |
+| Hold Square + tap D-pad Up | Open the normal pause menu |
 
 ### Item and Pokemon spawner
 
@@ -283,16 +283,15 @@ test if normal timing is needed.
 
 To leave a running debug match:
 
-1. Press Start to pause.
-2. Hold L and R.
-3. Press Cross, the bottom face button, while both shoulders remain held.
+1. Hold Square.
+2. Tap D-pad Up while continuing to hold Square.
+3. Release the buttons when the normal pause menu appears.
+4. Use the normal pause-menu exit option.
 
-In DebugRom, Melee's No Contest combination is GameCube L + R + A. Unlike the
-retail combination, Start is not part of the held chord after pausing. The Vita
-port permits this escape for every match launched through the hidden Debug
-Tools route by reading Vita controller port 1 directly. It does not depend on
-the scenario's No Contest permission, the legacy DebugRom unpause chord, or the
-pause debounce timer.
+DebugRom replaces the usual Start pause input with GameCube X + D-pad Up,
+which maps to Square + D-pad Up on Vita. Start and the paused L + R + Cross
+combination should not be relied on in a Debug Tools match; hardware testing
+confirmed that Square + D-pad Up followed by the normal pause-menu exit works.
 
 While paused, Select requests Retry in modes that support it.
 

@@ -10,6 +10,9 @@
 #if defined(TARGET_PC) || defined(TARGET_VITA)
 #include <pc/pc.h>
 #endif
+#ifdef TARGET_VITA
+#include "opening_movie.h"
+#endif
 #include <sysdolphin/baselib/debug.h>
 #include <sysdolphin/baselib/devcom.h>
 #include <sysdolphin/baselib/memory.h>
@@ -633,6 +636,9 @@ int lbMthp_8001F604(void)
 void lbMthp_8001F614(int arg0)
 {
     MoviePlayer.unk_148 = arg0;
+#ifdef TARGET_VITA
+    if (arg0 == 0) melee_vita_opening_movie_hide_active();
+#endif
 }
 
 /* 3BAFE8 */ static HSD_ImageDesc lbl_803BAFE8 = {

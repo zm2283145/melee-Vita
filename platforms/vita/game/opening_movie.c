@@ -1,5 +1,6 @@
 #include "opening_movie.h"
 #include "opening_audio.h"
+#include "opening_timeline.h"
 #include "gxm_game.h"
 #include "jpeg_hw.h"
 
@@ -46,8 +47,6 @@
 #define PACKET_SLOTS 64u              /* ~2 s of 30 fps video read ahead */
 #define READ_CHUNK_SIZE (512u * 1024u)
 #define TEXTURE_COUNT 4
-#define OPENING_FIRST_RATE_FRAMES 1250u
-#define OPENING_FAST_RATE_FRAMES 394u
 #define OPENING_AUDIO_RATE 32000u
 #define READER_THREAD_PRIORITY (0x10000100 - 10)
 #define DECODE_THREAD_PRIORITY 0x10000100
@@ -144,6 +143,7 @@ struct melee_vita_opening_movie {
     bool active;
     bool clock_started;
     bool audio_stopped;
+    MeleeVitaOpeningPresentation presentation;
 };
 
 static struct melee_vita_opening_movie* s_active_movie;
@@ -269,42 +269,6 @@ static int make_standard_jpeg(const unsigned char* source,
     destination[output++] = 0xd9u;
     *destination_size = output;
     return 1;
-}
-
-/* ---- Rate table (gmopening.c gm_803DBFB4: 1250x2, 394x1, rest x2). ---- */
-
-static uint64_t opening_total_ticks(uint32_t frame_count)
-{
-    const uint32_t first = frame_count < OPENING_FIRST_RATE_FRAMES
-        ? frame_count : OPENING_FIRST_RATE_FRAMES;
-    const uint32_t after_first = frame_count - first;
-    const uint32_t fast = after_first < OPENING_FAST_RATE_FRAMES
-        ? after_first : OPENING_FAST_RATE_FRAMES;
-    const uint32_t final = after_first - fast;
-    return (uint64_t) first * 2u + fast + (uint64_t) final * 2u;
-}
-
-static uint32_t frame_for_tick(uint64_t tick, uint32_t frame_count)
-{
-    if (frame_count == 0u) return 0u;
-    uint64_t frame;
-    const uint64_t first_ticks = (uint64_t) OPENING_FIRST_RATE_FRAMES * 2u;
-    if (tick < first_ticks) {
-        frame = tick / 2u;
-    } else if (tick - first_ticks < OPENING_FAST_RATE_FRAMES) {
-        frame = OPENING_FIRST_RATE_FRAMES + (tick - first_ticks);
-    } else {
-        frame = OPENING_FIRST_RATE_FRAMES + OPENING_FAST_RATE_FRAMES +
-                (tick - first_ticks - OPENING_FAST_RATE_FRAMES) / 2u;
-    }
-    return frame < frame_count ? (uint32_t) frame : frame_count - 1u;
-}
-
-static uint32_t frame_ticks(uint32_t frame)
-{
-    return frame >= OPENING_FIRST_RATE_FRAMES &&
-                   frame < OPENING_FIRST_RATE_FRAMES + OPENING_FAST_RATE_FRAMES
-        ? 1u : 2u;
 }
 
 /* ---- Reader thread. ---- */
@@ -875,6 +839,7 @@ void melee_vita_opening_movie_start(struct melee_vita_opening_movie* movie)
     movie->active = true;
     movie->previous_buttons = pad.buttons;
     movie->clock_started = false;
+    melee_vita_opening_presentation_start(&movie->presentation);
     s_active_movie = movie;
     melee_vita_log_info("FRONTEND movie start queue=%u",
                         movie->packet_write - movie->packet_read);
@@ -916,8 +881,10 @@ enum melee_vita_opening_movie_result melee_vita_opening_movie_update(
     const uint64_t elapsed_ticks =
         (now - movie->start_time) * UINT64_C(60) / UINT64_C(1000000);
     movie->elapsed_ticks = elapsed_ticks;
-    const uint64_t total_ticks = opening_total_ticks(movie->frame_count);
-    const uint32_t desired = frame_for_tick(elapsed_ticks, movie->frame_count);
+    const uint64_t total_ticks =
+        melee_vita_opening_total_ticks(movie->frame_count);
+    const uint32_t desired =
+        melee_vita_opening_frame_for_tick(elapsed_ticks, movie->frame_count);
     __atomic_store_n(&movie->clock_frame, desired, __ATOMIC_RELEASE);
     present_due_frame(movie, desired, now);
 
@@ -931,13 +898,14 @@ enum melee_vita_opening_movie_result melee_vita_opening_movie_update(
         __atomic_load_n(&movie->decoder_done, __ATOMIC_ACQUIRE) != 0;
     if (elapsed_ticks >= total_ticks && (last_shown || stream_exhausted)) {
         const uint64_t final_duration =
-            (uint64_t) frame_ticks(movie->current_frame) *
+            (uint64_t) melee_vita_opening_frame_ticks(movie->current_frame) *
             UINT64_C(1000000) / UINT64_C(60);
         if (now - movie->last_present_time >= final_duration) {
             log_stats(movie, "finished", desired);
             movie->active = false;
-            if (s_active_movie == movie) s_active_movie = NULL;
-            return MELEE_VITA_OPENING_MOVIE_FINISHED;
+            if (melee_vita_opening_presentation_finish(
+                    &movie->presentation))
+                return MELEE_VITA_OPENING_MOVIE_FINISHED;
         }
     }
     return MELEE_VITA_OPENING_MOVIE_PLAYING;
@@ -946,7 +914,7 @@ enum melee_vita_opening_movie_result melee_vita_opening_movie_update(
 void melee_vita_opening_movie_draw_active(void)
 {
     const struct melee_vita_opening_movie* movie = s_active_movie;
-    if (movie == NULL) return;
+    if (movie == NULL || !movie->presentation.visible) return;
     if (movie->current_texture < 0) {
         melee_vita_gxm_queue_overlay(NULL, movie->width, movie->height);
         return;
@@ -955,6 +923,27 @@ void melee_vita_opening_movie_draw_active(void)
         &movie->textures[movie->current_texture];
     melee_vita_gxm_queue_overlay(texture->texture, texture->width,
                                  texture->height);
+}
+
+void melee_vita_opening_movie_hide_active(void)
+{
+    if (s_active_movie == NULL) return;
+    melee_vita_opening_presentation_hide(&s_active_movie->presentation);
+}
+
+bool melee_vita_opening_movie_visible(
+    const struct melee_vita_opening_movie* movie)
+{
+    return movie != NULL && movie->presentation.visible;
+}
+
+uint32_t melee_vita_opening_movie_total_ticks(
+    const struct melee_vita_opening_movie* movie)
+{
+    if (movie == NULL) return 0u;
+    const uint64_t total_ticks =
+        melee_vita_opening_total_ticks(movie->frame_count);
+    return total_ticks <= UINT32_MAX ? (uint32_t) total_ticks : UINT32_MAX;
 }
 
 uint32_t melee_vita_opening_movie_elapsed_ticks(
@@ -980,6 +969,7 @@ void melee_vita_opening_movie_stop_preserved_audio(void)
 void melee_vita_opening_movie_free(struct melee_vita_opening_movie* movie)
 {
     if (movie == NULL) return;
+    melee_vita_opening_presentation_hide(&movie->presentation);
     if (s_active_movie == movie) s_active_movie = NULL;
     stop_opening_audio(movie, "free");
     __atomic_store_n(&movie->running, 0, __ATOMIC_RELEASE);

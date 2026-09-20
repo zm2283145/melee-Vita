@@ -1269,13 +1269,16 @@ typedef struct RqOverlay {
     vita2d_texture* texture;
     u32 width;
     u32 height;
+    bool fill_width;
 } RqOverlay;
 
 static void exec_overlay(const void* payload)
 {
     const RqOverlay* overlay = payload;
-    const f32 scale = 544.0f / (f32) overlay->height;
-    const f32 width = (f32) overlay->width * scale;
+    const f32 width = overlay->fill_width
+        ? 960.0f : 544.0f * (73.0f / 60.0f);
+    const f32 scale_y = 544.0f / (f32) overlay->height;
+    const f32 scale_x = width / (f32) overlay->width;
     ++g_melee_vita_gxm_state_epoch;
     rt_default_depth();
     vita2d_set_blend_mode_add(0);
@@ -1285,13 +1288,14 @@ static void exec_overlay(const void* payload)
         vita2d_draw_texture_part_scale(
             overlay->texture, (960.0f - width) * 0.5f, 0.0f,
             0.0f, 0.0f, (f32) overlay->width, (f32) overlay->height,
-            scale, scale);
+            scale_x, scale_y);
     }
 }
 
 void melee_vita_gxm_queue_overlay(vita2d_texture* texture,
                                   u32 width, u32 height)
 {
+    extern int melee_vita_widescreen_active(void);
     RqOverlay* overlay;
     if (!s_initialized || width == 0u || height == 0u)
         return;
@@ -1300,6 +1304,7 @@ void melee_vita_gxm_queue_overlay(vita2d_texture* texture,
     overlay->texture = texture;
     overlay->width = width;
     overlay->height = height;
+    overlay->fill_width = melee_vita_widescreen_active() != 0;
 }
 
 /* ---- present ---- */

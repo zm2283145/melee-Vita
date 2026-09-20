@@ -18,6 +18,11 @@ void melee_vita_opening_movie_start(struct melee_vita_opening_movie* movie);
 enum melee_vita_opening_movie_result melee_vita_opening_movie_update(
     struct melee_vita_opening_movie* movie);
 void melee_vita_opening_movie_draw_active(void);
+void melee_vita_opening_movie_hide_active(void);
+bool melee_vita_opening_movie_visible(
+    const struct melee_vita_opening_movie* movie);
+uint32_t melee_vita_opening_movie_total_ticks(
+    const struct melee_vita_opening_movie* movie);
 uint32_t melee_vita_opening_movie_elapsed_ticks(
     const struct melee_vita_opening_movie* movie);
 void melee_vita_opening_movie_preserve_audio(

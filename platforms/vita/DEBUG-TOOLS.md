@@ -290,8 +290,9 @@ To leave a running debug match:
 In DebugRom, Melee's No Contest combination is GameCube L + R + A. Unlike the
 retail combination, Start is not part of the held chord after pausing. The Vita
 port permits this escape for every match launched through the hidden Debug
-Tools route, even when the selected developer scenario does not set Melee's
-normal No Contest permission flag.
+Tools route by reading Vita controller port 1 directly. It does not depend on
+the scenario's No Contest permission, the legacy DebugRom unpause chord, or the
+pause debounce timer.
 
 While paused, Select requests Retry in modes that support it.
 

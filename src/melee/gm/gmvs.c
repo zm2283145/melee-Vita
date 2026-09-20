@@ -1362,6 +1362,19 @@ void fn_8016CFE0(void)
     fn_8016758C();
     if (gm_GetDbPauseFlag(1) != 0) {
         unpauser_slot = gm_GetPlayerPressingUnpause();
+#ifdef TARGET_VITA
+        if (mnVitaDebug_IsActive()) {
+            u64 const exit_buttons =
+                PAD_TRIGGER_L | PAD_TRIGGER_R | PAD_BUTTON_A;
+            u64 buttons = gm_GetButtonsPressed(0);
+            if ((gm_GetButtonsTriggered(0) & PAD_BUTTON_A) != 0 &&
+                (buttons & exit_buttons) == exit_buttons)
+            {
+                fn_8016CF4C_dontinline(0, OUTCOME_NO_CONTEST);
+                return;
+            }
+        }
+#endif
         if (DbLevel >= DbLKind_DebugRom) {
             tmp_btns = PAD_TRIGGER_L | PAD_TRIGGER_R | PAD_BUTTON_A;
         } else {

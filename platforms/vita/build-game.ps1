@@ -53,7 +53,8 @@ $configurationFlags = if ($Configuration -eq 'Release') {
 }
 $common = @(
     '-std=c11',
-    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1', 
+    '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
+    '-DMELEE_VITA_MODERN_DEBUG_MENU=1',
     "-I$includeAurora", "-I$includeSrc", "-I$includeSdk", "-I$includeVita",
     '-Wno-all', '-Wno-extra',
     '-Werror=int-conversion', '-Werror=implicit-function-declaration',
@@ -67,10 +68,7 @@ if ($EnableDebugMenu) {
     $common += '-DMELEE_VITA_ENABLE_DEBUG_MENU=1'
 }
 if ($EnableModernDebugMenu) {
-    if (-not $EnableDebugMenu) {
-        throw '-EnableModernDebugMenu requires -EnableDebugMenu.'
-    }
-    $common += '-DMELEE_VITA_MODERN_DEBUG_MENU=1'
+    Write-Warning '-EnableModernDebugMenu is deprecated; the modern hidden menu is always included on Vita.'
 }
 if ($EnableDirectSnag) {
     if (-not $EnableDebugMenu) {

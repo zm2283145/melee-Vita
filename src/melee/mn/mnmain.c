@@ -21,6 +21,7 @@
 #include "mnsnap.h"
 #include "mnsound.h"
 #include "mnsoundtest.h"
+#include "mnvitadebug.h"
 #include "mnvibration.h"
 #include "types.h"
 #if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
@@ -59,6 +60,9 @@
 static HSD_GObj* mn_804D6BA8;
 static HSD_GObj* mn_804D6BAC;
 static HSD_GObj* mn_804D6BB0;
+#ifdef TARGET_VITA
+static HSD_GObj* mn_vita_menu_gobj;
+#endif
 MenuInputState mn_804D6BC8;
 HSD_CObjDesc* MenMain_cam;
 HSD_FogDesc* MenMain_fog;
@@ -724,8 +728,14 @@ bool mn_80229938(MenuKind menu_kind, s32 selection)
         }
         return false;
     }
-    if (menu_kind == MENU_KIND_SETTINGS && selection == SEL_SETTINGS_3) {
+    if (menu_kind == MENU_KIND_SETTINGS &&
+        selection == SEL_SETTINGS_VITA_DEBUG)
+    {
+#ifdef TARGET_VITA
+        return mnVitaDebug_IsUnlocked();
+#else
         return false;
+#endif
     }
     if (menu_kind == MENU_KIND_1P && selection == SEL_1P_2) {
         return false;
@@ -777,6 +787,16 @@ static void mn_80229A7C(MainMenuData* data, MenuKind menu_kind, int selection)
         data->description = text;
         text->font_size.x = 0.0521f;
         text->font_size.y = 0.0521f;
+#ifdef TARGET_VITA
+        if (menu_kind == MENU_KIND_SETTINGS &&
+            selection == SEL_SETTINGS_VITA_DEBUG)
+        {
+            HSD_SisLib_803A6B98(
+                text, 0.0f, 0.0f,
+                "Session-only developer tools. Unsafe operations are disabled.");
+            return;
+        }
+#endif
         HSD_SisLib_803A6368(text, sis_idx[selection]);
     }
 }
@@ -1365,6 +1385,12 @@ void fn_8022AFEC(HSD_GObj* gp)
     if (var_r26 != 0) {
         data->menu_kind = mn_804A04F0.cur_menu;
     }
+#ifdef TARGET_VITA
+    if (final_data->vita_debug_label != NULL) {
+        final_data->vita_debug_label->hidden =
+            final_data->state != MENU_STATE_IDLE;
+    }
+#endif
     if ((u8) selection_changed != false) {
         data->hovered_selection = mn_804A04F0.hovered_selection;
     }
@@ -1440,6 +1466,9 @@ HSD_GObj* mn_8022B3A0(u8 state)
     user_data->hovered_selection = mn_804A04F0.hovered_selection;
     user_data->state = state;
     user_data->description = NULL;
+#ifdef TARGET_VITA
+    user_data->vita_debug_label = NULL;
+#endif
     for (idx = 0; idx < (int) ARRAY_SIZE(user_data->tree); idx++) {
         lb_80011E24(root_jobj, &user_data->tree[idx], idx, -1);
     }
@@ -1515,6 +1544,26 @@ HSD_GObj* mn_8022B3A0(u8 state)
             HSD_JObjAddChild(option_jobjs[unlocked_index], cursor_jobj);
         }
     }
+#ifdef TARGET_VITA
+    if (cur_menu == MENU_KIND_SETTINGS && mnVitaDebug_IsUnlocked()) {
+        static Vec3 const origin = { 0.0f, 0.0f, 0.0f };
+        Vec3 position;
+        HSD_Text* label = HSD_SisLib_803A6754(0, mn_804D6BB4);
+        unlocked_index =
+            mn_80229A04(MENU_KIND_SETTINGS, SEL_SETTINGS_VITA_DEBUG);
+        lb_8000B1CC(option_jobjs[unlocked_index], (Vec3*) &origin, &position);
+        label->font_size.x = 0.038f;
+        label->font_size.y = 0.05f;
+        label->pos_x = position.x - 1.9f;
+        label->pos_y = -position.y;
+        label->pos_z = position.z;
+        label->default_alignment = 0;
+        label->hidden = state != MENU_STATE_IDLE;
+        HSD_SisLib_803A6B98(label, 0.0f, 0.0f, "DEBUG TOOLS");
+        user_data->vita_debug_label = label;
+    }
+    mn_vita_menu_gobj = gobj;
+#endif
     hover_jobj = user_data->tree[14];
     if (user_data->menu_kind == MENU_KIND_MAIN &&
         user_data->hovered_selection == SEL_MAIN_DATA &&
@@ -2327,6 +2376,21 @@ void mn_8022D104(HSD_GObj* gp)
     selection_count = mn_803EB6B0[MENU_KIND_SETTINGS].selection_count & 0xFF;
     buttons = mn_80229624(4);
     mn_804A04F0.buttons = buttons;
+#ifdef TARGET_VITA
+    if (mnVitaDebug_FeedActivation(
+            gm_GetButtonsTriggered(PAD_MAX_CONTROLLERS)))
+    {
+        HSD_GObj* old_menu = mn_vita_menu_gobj;
+        HSD_GObj* new_menu;
+        sfxForward();
+        mn_804A04F0.hovered_selection = SEL_SETTINGS_VITA_DEBUG;
+        mn_vita_menu_gobj = NULL;
+        HSD_GObjFree(old_menu);
+        new_menu = mn_8022B3A0(MENU_STATE_IDLE);
+        HSD_GObj_80390CD4(new_menu);
+        return;
+    }
+#endif
     if (buttons & MenuInput_Confirm) {
         mn_804D6BC8.cooldown = 5;
         mn_804A04F0.entering_menu = 1;
@@ -2346,6 +2410,13 @@ void mn_8022D104(HSD_GObj* gp)
             mnDeflicker_8024A6C4(1);
             HSD_GObjFree(gp);
             break;
+#ifdef TARGET_VITA
+        case SEL_SETTINGS_VITA_DEBUG:
+            sfxForward();
+            mnVitaDebug_Begin();
+            mn_80229860(GM_DEBUG);
+            break;
+#endif
         case SEL_SETTINGS_LANG:
             sfxForward();
             mnLanguage_8024C5C0((HSD_GObj*) 1);
@@ -3121,6 +3192,12 @@ void mn_8022EAE0(HSD_GObj* gobj)
 
 void mn_8022EB04(void* user_data)
 {
+#ifdef TARGET_VITA
+    MainMenuData* data = user_data;
+    if (data->vita_debug_label != NULL) {
+        HSD_SisLib_803A5CC4(data->vita_debug_label);
+    }
+#endif
     HSD_Free(user_data);
 }
 

@@ -35,6 +35,13 @@ jobs:
       - name: Install pinned Vita toolchain and libraries
         run: bash tools/setup_vita_ci.sh
 
+      - name: Test hidden debug-menu activation
+        run: |
+          cc -std=c11 -Iplatforms/vita/game \
+            platforms/vita/tests/debug_menu_activation_test.c \
+            -o "$RUNNER_TEMP/debug-menu-activation-test"
+          "$RUNNER_TEMP/debug-menu-activation-test"
+
       - name: Build full game
         shell: pwsh
         run: |
@@ -52,6 +59,10 @@ jobs:
           fi
           if grep -Eq ' (uvdb_|melee_vita_(log_|debugger_))' build-vita/symbols.txt; then
             echo "::error::Release ELF still contains logging/debugger symbols"
+            exit 1
+          fi
+          if ! grep -Eq ' mnVitaDebug_FeedActivation$' build-vita/symbols.txt; then
+            echo "::error::Release ELF is missing the hidden debug-menu gate"
             exit 1
           fi
 

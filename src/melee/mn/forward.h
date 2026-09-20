@@ -183,7 +183,7 @@ typedef enum SettingsMenuSelection {
     SEL_SETTINGS_RUMBLE = 0,
     SEL_SETTINGS_SOUND = 1,
     SEL_SETTINGS_DISPLAY = 2,
-    SEL_SETTINGS_3 = 3, ///< hidden
+    SEL_SETTINGS_VITA_DEBUG = 3, ///< hidden outside Vita runtime activation
     SEL_SETTINGS_LANG = 4,
     SEL_SETTINGS_ERASE = 5,
 } SettingsMenuSelection;

@@ -12,6 +12,7 @@
 #include <melee/mn/mngallery.h>
 #include <melee/mn/mnsnap.h>
 #include <melee/mn/types.h>
+#include <melee/mn/mnvitadebug.h>
 #include <sysdolphin/baselib/memory.h>
 
 struct DebugSoundTestData {
@@ -75,6 +76,9 @@ void onEnter(GameModeState* scene)
     MenuEnterData* data;
     GameModeKind previous_mode;
 
+#ifdef TARGET_VITA
+    mnVitaDebug_End();
+#endif
     data = scene->info.enter_data;
     lbCardNew_AllocWorkArea();
     lbCardGame_LoadArchive(0);

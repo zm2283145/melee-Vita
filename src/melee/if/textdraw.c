@@ -1,4 +1,5 @@
 #include "textdraw.h"
+#include "textlib.h"
 
 #include <Runtime/platform.h>
 
@@ -275,13 +276,25 @@ void DevText_DrawAll(HSD_GObj* gobj, int pass)
             static GXColor const backdrop = { 0x08, 0x0C, 0x18, 0xFF };
             static GXColor const help = { 0xA0, 0xB8, 0xD0, 0xFF };
             static char const controls[] =
-                "D-PAD: MOVE/CHANGE   A: SELECT   B: BACK   START: RUN";
-            float x = 20.0f;
+                "D-PAD: MOVE/CHANGE   CROSS: SELECT   CIRCLE: BACK   START: RUN";
+            char const* breadcrumb = un_VitaDebug_GetBreadcrumb();
+            char const* selected_help = un_VitaDebug_GetHelp();
+            float x;
             int i;
 
             hsd_80391A04(8.0f, 12.0f, 8);
             DrawRectangle(-20.0f, -20.0f, 680.0f, 520.0f,
                           (GXColor*) &backdrop);
+            x = 20.0f;
+            for (i = 0; breadcrumb[i] != '\0'; i++) {
+                x += DrawASCII(breadcrumb[i], x, 18.0f, (GXColor*) &help);
+            }
+            x = 20.0f;
+            for (i = 0; selected_help[i] != '\0'; i++) {
+                x += DrawASCII(selected_help[i], x, 432.0f,
+                               (GXColor*) &help);
+            }
+            x = 20.0f;
             for (i = 0; controls[i] != '\0'; i++) {
                 x += DrawASCII(controls[i], x, 458.0f, (GXColor*) &help);
             }

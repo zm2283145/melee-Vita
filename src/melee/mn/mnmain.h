@@ -17,6 +17,9 @@ typedef struct _MainMenuData {
     /* 0x0003 */ u8 pad_3;
     /* 0x0004 */ HSD_JObj* tree[42]; // 42 * 4 = 0xA8 bytes
     /* 0x00AC */ HSD_Text* description;
+#ifdef TARGET_VITA
+    /* 0x00B0 */ HSD_Text* vita_debug_label;
+#endif
 } MainMenuData;
 
 typedef struct _MainMenuPanelData {

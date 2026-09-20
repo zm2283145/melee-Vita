@@ -65,9 +65,14 @@ static void gmMain_8015FDA0(u32 arg) {}
 /// set debug level
 static void gmMain_8015FDA4(void)
 {
-#if defined(TARGET_VITA) && defined(MELEE_VITA_ENABLE_DEBUG_MENU)
+#ifdef TARGET_VITA
+#ifdef MELEE_VITA_ENABLE_DEBUG_MENU
     db_804D6B20 = true;
     DbLevel = DbLKind_DebugRom;
+#else
+    db_804D6B20 = false;
+    DbLevel = DbLKind_Master;
+#endif
 #else
     bool development_mode_available =
         DVDConvertPathToEntrynum("/develop.ini") != -1;

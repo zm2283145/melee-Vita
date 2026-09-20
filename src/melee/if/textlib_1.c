@@ -6,6 +6,7 @@
 #include "textdraw.h"
 #include "textlib.h"
 #include "types.h"
+#include <melee/if/soundtest.h>
 #include <melee/mn/inlines.h>
 #include <sysdolphin/baselib/cobj.h>
 #include <sysdolphin/baselib/controller.h>
@@ -155,8 +156,120 @@ static char* devtext_friendly_name(char* text)
     }
     return text;
 }
+
+static char devtext_breadcrumb[96] = "Debug Tools";
+static char devtext_help[96] =
+    "Choose a tool. Unsafe or unsupported operations are disabled.";
+
+static void devtext_append(char* dst, int capacity, char const* src,
+                           bool strip_brackets)
+{
+    int i = strlen(dst);
+    while (*src != '\0' && i < capacity - 1) {
+        char c = *src++;
+        if (strip_brackets && (c == '<' || c == '>')) {
+            continue;
+        }
+        if (strip_brackets && c == ' ' &&
+            (i == 0 || dst[i - 1] == ' ' || dst[i - 1] == '>'))
+        {
+            continue;
+        }
+        dst[i++] = c;
+    }
+    while (i > 0 && dst[i - 1] == ' ') {
+        i--;
+    }
+    dst[i] = '\0';
+}
+
+static char const* devtext_entry_help(
+    struct un_80304138_objalloc_t_x8 const* entry)
+{
+    static struct DevTextAlias const help[] = {
+        { "Versus Mode    >", "Configure fighters, rules, stage, and items." },
+        { "Result Test", "Configure and launch the results-screen viewer." },
+        { "Mode Team Test >", "Open the original developer test categories." },
+        { "Reg:Normal  >", "Choose a stage, then Cross starts Adventure." },
+        { "Reg:Easy    >", "Choose a stage, then Cross starts Classic." },
+        { "Reg:Allstar >", "Choose a stage, then Cross starts All-Star." },
+        { "Visual-Scene Start", "Play the selected visual scene." },
+        { "Opening Start", "Play the opening movie." },
+        { "Omake15 Start", "Play bonus movie 15." },
+        { "RegularEnding Real >", "Play the configured ending sequence." },
+        { "FixCamera Start >", "Start the selected fixed-camera event." },
+        { "STAFFROLL START >", "Play the credits sequence." },
+        { "-----------EXIT", "Start the configured match." },
+    };
+    char const* disabled = un_VitaDebug_GetDisabledReason(entry);
+    int i;
+
+    if (disabled != NULL) {
+        return disabled;
+    }
+    for (i = 0; i < ARRAY_SIZE(help); i++) {
+        if (strcmp(entry->x8, help[i].original) == 0) {
+            return help[i].friendly;
+        }
+    }
+    if (entry->x0 == 1) {
+        return "Cross: open or run this tool. Circle: return.";
+    }
+    if (entry->x0 >= 2 && entry->x0 <= 8) {
+        return "D-pad Left/Right: change value. Cross: apply.";
+    }
+    return "D-pad Up/Down: choose an entry. Circle: return.";
+}
+
+static void devtext_update_context(struct un_80304138_objalloc_t* active)
+{
+    struct un_80304138_objalloc_t* pages[6];
+    struct un_80304138_objalloc_t* page = active;
+    int count = 0;
+    int i;
+
+    while (page != NULL && count < ARRAY_SIZE(pages)) {
+        pages[count++] = page;
+        page = page->next;
+    }
+    devtext_breadcrumb[0] = '\0';
+    for (i = count - 1; i >= 0; i--) {
+        char const* name = pages[i]->x8 == un_803FA4E0
+                               ? "Debug Tools"
+                               : devtext_friendly_name(pages[i]->x8[0].x8);
+        if (devtext_breadcrumb[0] != '\0') {
+            devtext_append(devtext_breadcrumb,
+                           ARRAY_SIZE(devtext_breadcrumb), " > ", false);
+        }
+        devtext_append(devtext_breadcrumb, ARRAY_SIZE(devtext_breadcrumb),
+                       name, true);
+    }
+    devtext_help[0] = '\0';
+    devtext_append(devtext_help, ARRAY_SIZE(devtext_help),
+                   devtext_entry_help(&active->x8[active->x0]), false);
+}
+
+char const* un_VitaDebug_GetBreadcrumb(void)
+{
+    return devtext_breadcrumb;
+}
+
+char const* un_VitaDebug_GetHelp(void)
+{
+    return devtext_help;
+}
 #else
 #define devtext_friendly_name(text) (text)
+
+char const* un_VitaDebug_GetBreadcrumb(void)
+{
+    return "";
+}
+
+char const* un_VitaDebug_GetHelp(void)
+{
+    return "";
+}
 #endif
 
 #ifdef MUST_MATCH
@@ -194,6 +307,9 @@ int un_80302EA4(struct un_80304138_objalloc_t_x8* arg0)
             int len = DevText_StrLen(devtext_friendly_name(arg0->x8)) + 1;
 #ifdef MELEE_VITA_MODERN_DEBUG_MENU
             len += 2;
+            if (un_VitaDebug_GetDisabledReason(arg0) != NULL) {
+                len += 11;
+            }
 #endif
             if (len > z) {
                 z = len;
@@ -202,6 +318,9 @@ int un_80302EA4(struct un_80304138_objalloc_t_x8* arg0)
             int len = DevText_StrLen(devtext_friendly_name(arg0->x8)) + 1;
 #ifdef MELEE_VITA_MODERN_DEBUG_MENU
             len += 2;
+            if (un_VitaDebug_GetDisabledReason(arg0) != NULL) {
+                len += 11;
+            }
 #endif
             if (len > x) {
                 x = len;
@@ -263,6 +382,9 @@ static inline int un_80302FFC_maxlen(struct un_80304138_objalloc_t_x8* thing)
             int len = DevText_StrLen(devtext_friendly_name(thing->x8));
 #ifdef MELEE_VITA_MODERN_DEBUG_MENU
             len += 2;
+            if (un_VitaDebug_GetDisabledReason(thing) != NULL) {
+                len += 11;
+            }
 #endif
             if (len + 1 > cursor_x) {
                 cursor_x = len + 1;
@@ -276,6 +398,9 @@ GXColor un_804D5A08 = { 0x40, 0x50, 0x80, 0x80 };
 GXColor un_804D5A0C = { 0xE2, 0xE2, 0xE2, 0xFF };
 GXColor un_804D5A10 = { 0xFF, 0x80, 0x20, 0xFF };
 GXColor un_804D5A14 = { 0xA0, 0xA0, 0xFF, 0xFF };
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+static GXColor devtext_disabled_color = { 0x78, 0x80, 0x90, 0xFF };
+#endif
 
 void un_80302FFC(struct un_80304138_objalloc_t* arg0)
 {
@@ -298,6 +423,10 @@ void un_80302FFC(struct un_80304138_objalloc_t* arg0)
         DevText_StoreColorIndex(arg0->x4, 2);
         DevText_SetTextColor(arg0->x4, un_804D5A14);
 #ifdef MELEE_VITA_MODERN_DEBUG_MENU
+        DevText_StoreColorIndex(arg0->x4, 3);
+        DevText_SetTextColor(arg0->x4, devtext_disabled_color);
+#endif
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
         {
             GXColor bg = un_804D5A08;
             bg.a = 0xF0;
@@ -308,7 +437,9 @@ void un_80302FFC(struct un_80304138_objalloc_t* arg0)
 #endif
     }
     for (cursor_y = 0; cursor_y < arg0->x4->h; cursor_y++) {
-        if (x8->x0 == 0) {
+        if (un_VitaDebug_GetDisabledReason(x8) != NULL) {
+            DevText_StoreColorIndex(arg0->x4, 3);
+        } else if (x8->x0 == 0) {
             DevText_StoreColorIndex(arg0->x4, 2);
         } else if (arg0->x0 == cursor_y) {
             DevText_StoreColorIndex(arg0->x4, 1);
@@ -323,7 +454,19 @@ void un_80302FFC(struct un_80304138_objalloc_t* arg0)
             DevText_Print(arg0->x4, "  ");
         }
 #endif
-        DevText_Print(arg0->x4, devtext_friendly_name(x8->x8));
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+        if (arg0->x8 == un_803FA4E0 && x8 == arg0->x8) {
+            DevText_Print(arg0->x4, "< Debug Tools >");
+        } else
+#endif
+        {
+            DevText_Print(arg0->x4, devtext_friendly_name(x8->x8));
+        }
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+        if (un_VitaDebug_GetDisabledReason(x8) != NULL) {
+            DevText_Print(arg0->x4, " [DISABLED]");
+        }
+#endif
         DevText_SetCursorXY(arg0->x4, cursor_x, cursor_y);
         switch (x8->x0) {
         case 2:
@@ -551,6 +694,15 @@ void un_80303AC4(struct un_80304138_objalloc_t* arg0)
     int stick = un_803039A4(0);
     int buttons = stick | trigger;
     PAD_STACK(8);
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+    if (un_VitaDebug_GetDisabledReason(&arg0->x8[arg0->x0]) != NULL &&
+        (buttons & (HSD_PAD_START | HSD_PAD_DPADLEFT | HSD_PAD_DPADRIGHT |
+                    HSD_PAD_A | 0x40000000 | 0x80000000)))
+    {
+        sfxBack();
+        return;
+    }
+#endif
     if (buttons & HSD_PAD_START) {
         struct un_80304138_objalloc_t_x8* x8 = &arg0->x8[arg0->x0];
         if (x8->x4 != NULL) {
@@ -563,7 +715,11 @@ void un_80303AC4(struct un_80304138_objalloc_t* arg0)
         } else if (un_804D6E44 != NULL && un_804D6E44->xC) {
             un_804D6E44->xC(6);
         }
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+    } else if (buttons & (0x10000000 | HSD_PAD_DPADUP)) { // up
+#else
     } else if (buttons & (0x10000000 | HSD_PAD_Y)) { // up
+#endif
         u8 j = arg0->x0;
         int i = j;
         (void) j;
@@ -580,7 +736,11 @@ void un_80303AC4(struct un_80304138_objalloc_t* arg0)
             arg0->x1 = arg0->x1 | 1;
             sfxMove();
         }
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+    } else if (buttons & (0x20000000 | HSD_PAD_DPADDOWN)) { // down
+#else
     } else if (buttons & (0x20000000 | HSD_PAD_X)) { // down
+#endif
         u8 j = arg0->x0;
         int i = j;
         (void) j;
@@ -597,7 +757,11 @@ void un_80303AC4(struct un_80304138_objalloc_t* arg0)
             arg0->x1 = arg0->x1 | 1;
             sfxMove();
         }
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+    } else if (buttons & (0x80000000 | HSD_PAD_DPADRIGHT)) { // right
+#else
     } else if (buttons & (0x80000000 | HSD_PAD_R)) { // right
+#endif
         if (un_80303444(arg0)) {
             struct un_80304138_objalloc_t_x8* x8 = &arg0->x8[arg0->x0];
             if (x8->x4 != NULL) {
@@ -611,7 +775,11 @@ void un_80303AC4(struct un_80304138_objalloc_t* arg0)
                 un_804D6E44->xC(3);
             }
         }
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+    } else if (buttons & (0x40000000 | HSD_PAD_DPADLEFT)) { // left
+#else
     } else if (buttons & (0x40000000 | HSD_PAD_L)) { // left
+#endif
         if (un_80303720(arg0)) {
             struct un_80304138_objalloc_t_x8* x8 = &arg0->x8[arg0->x0];
             if (x8->x4 != NULL) {
@@ -639,7 +807,11 @@ void un_80303AC4(struct un_80304138_objalloc_t* arg0)
         }
     } else if (buttons & HSD_PAD_B) {
         struct un_80304138_objalloc_t_x8* x8 = &arg0->x8[arg0->x0];
-        if (x8->x4 != NULL) {
+        if (un_VitaDebug_GetDisabledReason(x8) != NULL) {
+            if (un_804D6E44 != NULL && un_804D6E44->xC) {
+                un_804D6E44->xC(0);
+            }
+        } else if (x8->x4 != NULL) {
             un_804D6E48 = x8;
             if (x8->x4(0) == 0) {
                 if (un_804D6E44 != NULL && un_804D6E44->xC) {
@@ -668,6 +840,9 @@ void fn_80303EF4(HSD_GObj* gobj)
         } else {
             DevText_ShowText(q->x4);
             DevText_ShowBackground(q->x4);
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+            devtext_update_context(q);
+#endif
             if (q->x1 & 1) {
                 DevText_Erase(q->x4);
                 un_80302FFC(q);
@@ -755,7 +930,9 @@ void un_80303FD4(HSD_GObj* arg0, struct un_80304138_objalloc_t* arg1,
             un_804D6E48 = NULL;
             p2 = arg1->x8;
             while (p2->x0 != 9) {
-                un_80302E00(p2, 4);
+                if (un_VitaDebug_GetDisabledReason(p2) == NULL) {
+                    un_80302E00(p2, 4);
+                }
                 p2++;
             }
         }
@@ -778,7 +955,11 @@ HSD_GObj* un_80304168(void* arg0, int arg1, int arg2, int arg3)
         if (gobj2 != NULL) {
             userdata = HSD_ObjAlloc(&un_804A2688);
             un_804D6E40 = userdata;
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+            un_80303FD4(gobj2, userdata, arg0, arg1, 20, 48);
+#else
             un_80303FD4(gobj2, userdata, arg0, arg1, arg2, arg3);
+#endif
             userdata->x14 = HSD_GObj_SetupProc(gobj2, fn_80303EF4, 0);
         }
     }
@@ -791,6 +972,9 @@ struct un_80304138_objalloc_t* un_80304210(struct un_80304138_objalloc_t* arg0,
 {
     struct un_80304138_objalloc_t* obj = HSD_ObjAlloc(&un_804A2688);
     if (obj != NULL) {
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+        un_80303FD4(arg0->x10, obj, arg1, arg2, 20, 48);
+#else
         DevText* text = arg0->x4;
         f32 x = text->scale_x * (f32) text->w;
         {
@@ -799,6 +983,7 @@ struct un_80304138_objalloc_t* un_80304210(struct un_80304138_objalloc_t* arg0,
             un_80303FD4(arg0->x10, obj, arg1, arg2, text->x + x_pos,
                         text->y + y_pos);
         }
+#endif
         arg0->x1 = arg0->x1 | 0x10;
         arg0->prev = obj;
         obj->next = arg0;
@@ -828,7 +1013,7 @@ void un_80304344(struct un_80304138_objalloc_t* arg0)
         while (r4->x0 != 9) {
             r4++;
         }
-        if (r4->x4) {
+        if (r4->x4 && un_VitaDebug_GetDisabledReason(r4) == NULL) {
             un_804D6E48 = r4;
             if (r4->x4(5) == 0 && un_804D6E44 != NULL) {
                 if ((q = un_804D6E44->xC)) {

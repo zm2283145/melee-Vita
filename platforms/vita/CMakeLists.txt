@@ -36,6 +36,7 @@ target_compile_definitions(melee_vita_game PUBLIC
     TARGET_PC=1
     TARGET_VITA=1
     MELEE_PC=1
+    MELEE_VITA_MODERN_DEBUG_MENU=1
 )
 target_compile_options(melee_vita_game PRIVATE
     -Wno-all

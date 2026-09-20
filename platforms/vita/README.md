@@ -117,31 +117,41 @@ Game archives use separate `Release` and `Debug` subdirectories so configuration
 changes cannot accidentally reuse the other build's game objects. For a fully
 clean build after toolchain/header changes, use a fresh `-BuildDirectory`.
 
-### Opt-in original developer menus
+### Hidden developer tools
 
-The translated game still contains Melee's original debug scenes. They normally
-require `/develop.ini` in the disc filesystem. Vita development builds can make
-that gate available without changing the disc image:
+The optimized normal Vita build contains a modernized presentation of Melee's
+original developer scenes. It remains dormant at boot. In the normal Melee
+**Options** screen, enter **Up, Up, Down, Down, Left, Right, Left, Right,
+Select** on the D-pad to reveal **DEBUG TOOLS** for the current process.
+
+The unlock is never written to the virtual memory card or another file and is
+cleared by fully closing the game. Entering the hidden menu temporarily enables
+the original DebugRom state for developer-menu routes; returning to the normal
+title or menu restores Master behavior. The old title-screen Cross/Square/
+Triangle shortcuts are not enabled in normal Release builds.
+
+The menu retains the original descriptors and safe scene callbacks while using
+an opaque backdrop, one fixed-position active page, a visible selection marker,
+breadcrumbs, selected-entry help, and functional names. Use D-pad Up/Down to
+navigate, D-pad Left/Right to change values, Cross to select, Circle to return,
+and Start only where a page supports running a configured test.
+
+Memory-card formatting/deletion/snapshot tools, saved unlock/record mutations,
+language/publicity changes, arbitrary global-data editing, and unsupported
+GameCube hardware operations remain visible but disabled before their
+initialization or callbacks can run.
+
+The legacy `-EnableDebugMenu` switch remains available only as an explicit
+developer bypass:
 
 ```powershell
 .\platforms\vita\build-full.ps1 -Configuration Release -EnableDebugMenu
 ```
 
-The option is disabled by default and uses a separate game-object directory, so
-ordinary Release builds retain retail behavior. An enabled Vita build selects
-`DebugRom` automatically; no boot-time button hold is required. At the title
-screen, **Cross** enters Debug VS, **Square** enters the sound test,
-**Triangle** enters the main debug menu, and **Start** follows the normal menu
-path.
-
-Add `-EnableModernDebugMenu` to retain the original menu descriptors and
-callbacks while using a Vita-friendly presentation with an opaque backdrop,
-one active submenu, a visible selection marker, a controls legend, and clearer
-English display aliases:
-
-```powershell
-.\platforms\vita\build-full.ps1 -Configuration Release -EnableDebugMenu -EnableModernDebugMenu
-```
+That non-default variant forces DebugRom at boot and restores the historical
+title-screen developer shortcuts. It is not used by release CI.
+`-EnableModernDebugMenu` is accepted as a deprecated compatibility no-op
+because the modern presentation is now always compiled for Vita.
 
 For direct Snag the Trophies renderer testing without navigating the legacy
 debug-menu overlay, add `-EnableDirectSnag`. Triangle on the title screen then
@@ -152,10 +162,10 @@ route enters Snag the Trophies with normal Classic initialization:
 .\platforms\vita\build-full.ps1 -Configuration Release -EnableDebugMenu -EnableDirectSnag
 ```
 
-The debug setup loads `DbCo.dat` and other original debug-scene resources from
-the game filesystem. The build option cannot supply missing proprietary assets;
-use it only with a game image that contains those files. Debug menus can alter
-game state and are intended only for development/navigation testing.
+Debug matches load `DbCo.dat` and other original debug-scene resources from the
+game filesystem. The port cannot supply missing proprietary assets. Debug Tools
+remains intended for development/navigation testing even though dangerous
+operations are blocked.
 
 For targeted renderer diagnosis without VitaDebugger, add
 `-EnableRenderTrace`. This keeps Release optimization and writes unique GX

@@ -2201,6 +2201,18 @@ bool un_80301E08(enum soundtest_callback_arg0 update_scene)
     return false;
 }
 
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+static bool vita_debug_open_sound_test(enum soundtest_callback_arg0 update_scene)
+{
+    if (update_scene == true) {
+        sfxForward();
+        gm_ChangeGameModeAfterCurrentScene(GM_DEBUG_SOUND_TEST);
+        gm_801A4B60();
+    }
+    return false;
+}
+#endif
+
 /// .data
 /* 803F9EF0 */ char lbl_803F9EF0[0x20] = "Remove Target %x (n %x) Id %d\n";
 /* 803F9F10 */ char lbl_803F9F10[0x18] = "Remove All Over\n";
@@ -2308,7 +2320,10 @@ bool un_80301E08(enum soundtest_callback_arg0 update_scene)
 /* 803FA4A8 */ char un_803FA4A8[] = "New DefCalc :";
 /* 803FA4B8 */ char un_803FA4B8[] = "Global Data Edit >";
 /* 803FA4CC */ char un_803FA4CC[] = "Mode Team Test >";
-/* 803FA4E0 */ struct un_80304138_objalloc_t_x8 un_803FA4E0[11] = {
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+static char vita_debug_sound_test[] = "Sound Test";
+#endif
+/* 803FA4E0 */ struct un_80304138_objalloc_t_x8 un_803FA4E0[] = {
     { 0, NULL, db_build_timestamp, NULL, NULL, 0.0f, 0.0f, 0.0f },
     { 1, un_803001DC, un_803FA454, NULL, NULL, 0.0f, 0.0f, 0.0f },
     { 1, un_80301420, un_803FA468, NULL, NULL, 0.0f, 0.0f, 0.0f },
@@ -2321,6 +2336,10 @@ bool un_80301E08(enum soundtest_callback_arg0 update_scene)
     { 3, NULL, un_803FA4A8, NULL, &db_804D6B88, 0.0f, 1.0f, 1.0f },
     { 1, un_80300290, un_803FA4B8, NULL, NULL, 0.0f, 0.0f, 0.0f },
     { 1, un_803002FC, un_803FA4CC, NULL, NULL, 0.0f, 0.0f, 0.0f },
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+    { 1, vita_debug_open_sound_test, vita_debug_sound_test, NULL, NULL, 0.0f,
+      0.0f, 0.0f },
+#endif
     { 9, NULL, NULL, NULL, NULL, 0.0f, 0.0f, 0.0f },
 };
 /* 803FA640 */ char un_803FA640[] = "< Global Data Edit >";
@@ -3101,3 +3120,47 @@ bool un_80301E08(enum soundtest_callback_arg0 update_scene)
     { 1, un_80301E08, un_803FDB88, NULL, NULL, 0.0f, 0.0f, 0.0f },
     { 9, NULL, NULL, NULL, NULL, 0.0f, 0.0f, 0.0f },
 };
+
+char const* un_VitaDebug_GetDisabledReason(
+    struct un_80304138_objalloc_t_x8 const* entry)
+{
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+    if (entry == &un_803FA4E0[3] || entry == &un_803FA4E0[4]) {
+        return "Disabled: persistent language/publicity changes are unsafe.";
+    }
+    if (entry == &un_803FA4E0[5] || entry == &un_803FA4E0[8]) {
+        return "Disabled: arbitrary debug/global-state editing is unsafe.";
+    }
+    if (entry == &un_803FC70C[1] || entry == &un_803FC70C[2] ||
+        entry == &un_803FC70C[3] || entry == &un_803FC70C[4] ||
+        entry == &un_803FC70C[5] || entry == &un_803FC828[1] ||
+        entry == &un_803FC828[2] || entry == &un_803FC828[3] ||
+        entry == &un_803FC8C8[1] || entry == &un_803FC8C8[2] ||
+        entry == &un_803FC8C8[3])
+    {
+        return "Disabled: this operation modifies saved match records.";
+    }
+    if (entry == &un_803FCA40[1] || entry == &un_803FCA40[2] ||
+        entry == &un_803FCA40[3] || entry == &un_803FCA40[4] ||
+        entry == &un_803FCA40[5] || entry == &un_803FCA40[6] ||
+        entry == &un_803FCA40[7] || entry == &un_803FCA40[8])
+    {
+        return "Disabled: this operation modifies saved unlocks or records.";
+    }
+    if (entry == &un_803FD064[2] || entry == &un_803FD064[3] ||
+        entry == &un_803FD064[11])
+    {
+        return "Disabled: this GameCube hardware path is unsupported on Vita.";
+    }
+    if (entry == &un_803FD310[1] || entry == &un_803FD310[2] ||
+        entry == &un_803FD310[3] || entry == &un_803FD310[4] ||
+        entry == &un_803FD310[5] || entry == &un_803FD310[6] ||
+        entry == &un_803FD310[7] || entry == &un_803FD310[8] ||
+        entry == &un_803FD310[9] || entry == &un_803FD310[10] ||
+        entry == &un_803FD310[11])
+    {
+        return "Disabled: memory-card and snapshot tools are unsafe on Vita.";
+    }
+#endif
+    return NULL;
+}

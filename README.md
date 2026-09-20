@@ -107,6 +107,20 @@ light-shield pressure. Touch controls, rumble, external controllers, and
 multiple human controller ports are not implemented by the current Vita input
 backend. CPU opponents use the game's normal controls.
 
+### Hidden Debug Tools
+
+The optimized Release includes a hidden, session-only version of Melee's
+original developer tools. In **Options**, enter **Up, Up, Down, Down, Left,
+Right, Left, Right, Select** on the D-pad to reveal **DEBUG TOOLS**. It becomes
+hidden again when the game process is closed and never writes an unlock setting
+to the memory card.
+
+Inside Debug Tools, use the D-pad to navigate/change values, Cross to select,
+Circle to return, and Start only where a page explicitly supports running a
+test. Destructive save-data, memory-card, arbitrary global-data, and unsupported
+GameCube hardware operations remain visible but disabled with an explanation.
+The hidden menu does not enable DebugNet, GDB, render tracing, or debug symbols.
+
 ## Saves
 
 The port stores its virtual memory card in **`ux0:data/melee/save/`**.
@@ -140,8 +154,9 @@ and dependency setup. The normal build uses **Release** configuration:
 The result is `build-vita/full/SmashMeleevita.vpk`, also distributed by CI as
 `SmashMeleevita.vpk`.
 Release builds use optimization, disable diagnostic logging and debugger
-support, and do not include debug symbols. Runtime shader compilation and its
-disk cache remain enabled; those are needed for normal gameplay.
+support, and do not include debug symbols. The dormant hidden Debug Tools UI
+does not change those guarantees. Runtime shader compilation and its disk cache
+remain enabled; those are needed for normal gameplay.
 
 ## Credits and licensing
 

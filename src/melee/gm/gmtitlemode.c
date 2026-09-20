@@ -8,6 +8,7 @@
 #include "types.h"
 #include <melee/db/db.h>
 #include <melee/lb/lbdvd.h>
+#include <melee/mn/mnvitadebug.h>
 #include <sysdolphin/baselib/controller.h>
 
 struct exitData {
@@ -36,12 +37,27 @@ struct exitData {
 
 void gmTitleMode_OnEnter(UNUSED GameModeState* state)
 {
+#ifdef TARGET_VITA
+    mnVitaDebug_End();
+#endif
     lbDvd_SetupVsPreloadCache();
 }
 
 void onExit(GameModeState* scene)
 {
     int* buttons = gm_GetGameModeStateExitData(scene);
+#if defined(TARGET_VITA) && !defined(MELEE_VITA_ENABLE_DEBUG_MENU)
+    if (*buttons & HSD_PAD_START) {
+        gm_80173EEC();
+        gm_80172898(0x100);
+        if (!gm_80173754(1, 0)) {
+            gm_SetPendingGameMode(GM_MENU);
+        }
+    } else {
+        gm_801BF708(1);
+        gm_SetPendingGameMode(GM_OPENING_MV);
+    }
+#else
     if (DbLevel >= DbLKind_DebugRom) {
         if (*buttons & HSD_PAD_A) {
             gm_SetPendingGameMode(GM_DEBUG_VS);
@@ -75,5 +91,6 @@ void onExit(GameModeState* scene)
         gm_801BF708(1);
         gm_SetPendingGameMode(GM_OPENING_MV);
     }
+#endif
     gm_SetNewGameModePending();
 }

@@ -108,9 +108,6 @@ if ($EnableDebugger -and $Configuration -ne 'Debug') {
 if ($EnableDirectSnag -and -not $EnableDebugMenu) {
     throw '-EnableDirectSnag requires -EnableDebugMenu.'
 }
-if ($EnableModernDebugMenu -and -not $EnableDebugMenu) {
-    throw '-EnableModernDebugMenu requires -EnableDebugMenu.'
-}
 if ($Configuration -eq 'Debug') {
     $VitaDebuggerDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($VitaDebuggerDirectory)
     $KuBridgeLibrary = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($KuBridgeLibrary)

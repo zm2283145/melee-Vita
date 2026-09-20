@@ -135,6 +135,9 @@ an opaque backdrop, one fixed-position active page, a visible selection marker,
 breadcrumbs, selected-entry help, and functional names. Use D-pad Up/Down to
 navigate, D-pad Left/Right to change values, Cross to select, Circle to return,
 and Start only where a page supports running a configured test.
+Camera Mode uses the Vita controls instead of the original controller-port-4
+input. To leave a running debug match, press Start, then hold L and R and press
+Cross for Melee's DebugRom no-contest shortcut.
 
 Memory-card formatting/deletion/snapshot tools, saved unlock/record mutations,
 language/publicity changes, arbitrary global-data editing, and unsupported

@@ -120,6 +120,9 @@ Circle to return, and Start only where a page explicitly supports running a
 test. Destructive save-data, memory-card, arbitrary global-data, and unsupported
 GameCube hardware operations remain visible but disabled with an explanation.
 The hidden menu does not enable DebugNet, GDB, render tracing, or debug symbols.
+Camera Mode uses the Vita controller rather than its original controller-port-4
+input. To leave a running debug match, press Start, then hold L and R and press
+Cross for the DebugRom no-contest shortcut.
 
 ## Saves
 

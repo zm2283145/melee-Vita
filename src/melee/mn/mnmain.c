@@ -793,8 +793,9 @@ static void mn_80229A7C(MainMenuData* data, MenuKind menu_kind, int selection)
             text->box_size_x = 364.68332f;
             text->box_size_y = 38.38772f;
             data->description = text;
-            text->font_size.x = 0.0521f;
-            text->font_size.y = 0.0521f;
+            text->font_size.x = 0.018f;
+            text->font_size.y = 0.026f;
+            text->text_color = (GXColor){ 0xE8, 0xDC, 0xB8, 0xFF };
             HSD_SisLib_803A6B98(
                 text, 0.0f, 0.0f,
                 "Session-only developer tools. Unsafe operations are disabled.");
@@ -1396,6 +1397,11 @@ void fn_8022AFEC(HSD_GObj* gp)
     }
 #ifdef TARGET_VITA
     if (final_data->vita_debug_label != NULL) {
+        GXColor label_color = { 0xE0, 0xB8, 0x60, 0xFF };
+        if (hovered_selection == SEL_SETTINGS_VITA_DEBUG) {
+            label_color = (GXColor){ 0x18, 0x12, 0x08, 0xFF };
+        }
+        HSD_SisLib_803A74F0(final_data->vita_debug_label, 0, &label_color);
         final_data->vita_debug_label->hidden =
             final_data->state != MENU_STATE_IDLE;
     }
@@ -1561,12 +1567,17 @@ HSD_GObj* mn_8022B3A0(u8 state)
         unlocked_index =
             mn_80229A04(MENU_KIND_SETTINGS, SEL_SETTINGS_VITA_DEBUG);
         lb_8000B1CC(option_jobjs[unlocked_index], (Vec3*) &origin, &position);
-        label->font_size.x = 0.038f;
-        label->font_size.y = 0.05f;
-        label->pos_x = position.x - 1.9f;
-        label->pos_y = -position.y;
+        label->font_size.x = 0.023f;
+        label->font_size.y = 0.045f;
+        label->pos_x = position.x - 4.0f;
+        label->pos_y = -position.y - 0.5f;
         label->pos_z = position.z;
         label->default_alignment = 0;
+        if (hovered_selection == SEL_SETTINGS_VITA_DEBUG) {
+            label->text_color = (GXColor){ 0x18, 0x12, 0x08, 0xFF };
+        } else {
+            label->text_color = (GXColor){ 0xE0, 0xB8, 0x60, 0xFF };
+        }
         label->hidden = state != MENU_STATE_IDLE;
         HSD_SisLib_803A6B98(label, 0.0f, 0.0f, "DEBUG TOOLS");
         user_data->vita_debug_label = label;

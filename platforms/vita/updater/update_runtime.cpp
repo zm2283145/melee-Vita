@@ -795,6 +795,25 @@ extern "C" int melee_vita_updater_init(void) {
     g_apputil_initialized = true;
     SceCommonDialogConfigParam dialog_config;
     sceCommonDialogConfigParamInit(&dialog_config);
+    int system_language = 0;
+    int enter_button = 0;
+    int system_param_result = sceAppUtilSystemParamGetInt(
+        SCE_SYSTEM_PARAM_ID_LANG, &system_language);
+    if (system_param_result < 0) {
+        set_error(error_code_text(
+            "Reading the system language", system_param_result));
+        return system_param_result;
+    }
+    system_param_result = sceAppUtilSystemParamGetInt(
+        SCE_SYSTEM_PARAM_ID_ENTER_BUTTON, &enter_button);
+    if (system_param_result < 0) {
+        set_error(error_code_text(
+            "Reading the system confirm button", system_param_result));
+        return system_param_result;
+    }
+    dialog_config.language = static_cast<SceSystemParamLang>(system_language);
+    dialog_config.enterButtonAssign =
+        static_cast<SceSystemParamEnterButtonAssign>(enter_button);
     const int dialog_result = sceCommonDialogSetConfigParam(&dialog_config);
     if (dialog_result < 0) {
         set_error(error_code_text(

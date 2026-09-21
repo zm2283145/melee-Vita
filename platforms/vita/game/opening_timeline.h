@@ -2,6 +2,7 @@
 #define MELEE_VITA_OPENING_TIMELINE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define MELEE_VITA_OPENING_FIRST_RATE_FRAMES 1250u

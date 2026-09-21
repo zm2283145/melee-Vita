@@ -8,6 +8,16 @@
 
 #include <melee/ty/types.h>
 
+#ifdef TARGET_VITA
+typedef enum ToySaveDataStatus {
+    ToySaveData_Native,
+    ToySaveData_Normalized,
+    ToySaveData_Malformed,
+} ToySaveDataStatus;
+
+ToySaveDataStatus Toy_NormalizeImportedSaveData(void);
+#endif
+
 /* 304870 */ int Toy_GetTrophyTotal(void);
 /* 3048C0 */ s32 Toy_803048C0(int);
 /* 304924 */ bool Toy_80304924(int);

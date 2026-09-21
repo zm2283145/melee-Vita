@@ -8,6 +8,9 @@
 #include <melee/lb/lbcardnew.h>
 #include <melee/lb/lblanguage.h>
 #include <melee/mn/inlines.h>
+#ifdef TARGET_VITA
+#include <melee/ty/toy.h>
+#endif
 #include <sysdolphin/baselib/controller.h>
 
 typedef struct {
@@ -294,6 +297,11 @@ void gm_Scene_MemCard_OnFrame(void)
     switch (enter_data.decision) {
     case 0:
         temp_r29 = lb_8001CBBC();
+#ifdef TARGET_VITA
+        if ((temp_r29 == 0 || temp_r29 == 2) && lb_8001B6E0(1) == 0) {
+            Toy_NormalizeImportedSaveData();
+        }
+#endif
         gmMainLib_8015FA34(temp_r29);
         if (temp_r29 == 0 || temp_r29 == 2) {
             enter_data.unk8.unk0 = 1;

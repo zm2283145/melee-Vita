@@ -57,6 +57,10 @@
 #include <sysdolphin/baselib/tobj.h>
 #include <sysdolphin/baselib/wobj.h>
 
+#ifdef TARGET_VITA
+#include <melee_save_compat.h>
+#endif
+
 typedef struct ToyUnkJObjData {
     /* 0x00 */ u8 pad_00[0x10];
     /* 0x10 */ HSD_JObj* jobj;
@@ -541,35 +545,40 @@ static inline s32 toy_bounded_trophy_count(s32 count)
 }
 
 #ifdef TARGET_VITA
-static inline u16 toy_swap_u16(u16 value)
+ToySaveDataStatus Toy_NormalizeImportedSaveData(void)
 {
-    return (u16) ((value << 8) | (value >> 8));
-}
+    GmSaveData* save = gmMainLib_GetSaveData();
+    MeleeVitaTrophyLotteryFields fields = {
+        (u16) save->trophy_count,
+        save->trophy_category_flags,
+        save->x1A48,
+        (u32) save->x1A4C,
+        save->unk_30.x14,
+    };
+    MeleeVitaSaveByteOrder byte_order =
+        melee_vita_normalize_trophy_lottery_fields(
+            &fields, save->trophy_flags, TY_TROPHY_COUNT);
 
-static void toy_normalize_imported_trophy_data(void)
-{
-    s16* count = gmMainLib_GetTrophyCount();
-    u16 swapped_count;
-    u16* flags;
-    u16* categories;
-    s32 i;
-
-    if (*count >= 0 && *count <= TY_TROPHY_COUNT) {
-        return;
+    if (byte_order == MELEE_VITA_SAVE_NATIVE ||
+        byte_order == MELEE_VITA_SAVE_AMBIGUOUS)
+    {
+        return ToySaveData_Native;
     }
-    swapped_count = toy_swap_u16((u16) *count);
-    if (swapped_count > TY_TROPHY_COUNT) {
-        return;
+    if (byte_order == MELEE_VITA_SAVE_INVALID) {
+        OSReport("[TOY] rejected malformed trophy/lottery save data: "
+                 "trophies=%d categories=0x%04X coins=%u\n",
+                 save->trophy_count, save->trophy_category_flags,
+                 save->x1A48);
+        return ToySaveData_Malformed;
     }
 
-    flags = gmMainLib_GetTrophyFlags();
-    categories = gmMainLib_GetTrophyCategoryFlags();
-    for (i = 0; i < TY_TROPHY_COUNT; i++) {
-        flags[i] = toy_swap_u16(flags[i]);
-    }
-    *categories = toy_swap_u16(*categories);
-    *count = (s16) swapped_count;
-    OSReport("[TOY] normalized big-endian trophy save data\n");
+    save->trophy_count = (s16) fields.trophy_count;
+    save->trophy_category_flags = fields.trophy_categories;
+    save->x1A48 = fields.current_coins;
+    save->x1A4C = (s32) fields.lifetime_coins;
+    save->unk_30.x14 = fields.session_coins;
+    OSReport("[TOY] normalized imported trophy/lottery save data\n");
+    return ToySaveData_Normalized;
 }
 #endif
 
@@ -6191,7 +6200,7 @@ void Toy_Scene_OnEnter(void* arg0)
     base = &Toy_804A26B8;
     s_trophy_list_count = -1;
 #ifdef TARGET_VITA
-    toy_normalize_imported_trophy_data();
+    Toy_NormalizeImportedSaveData();
 #endif
     _Toy_sbss_804D6EA2 = 0;
     _Toy_sbss_804D6E50 = 0;

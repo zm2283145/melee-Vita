@@ -7,6 +7,7 @@
 
 #include "inlines.h"
 #include "toy.h"
+#include "tyfigupon_utils.h"
 #include "types.h"
 #include <dolphin/mtx.h>
 #include <dolphin/os.h>
@@ -68,6 +69,20 @@
 /* 4D6F00 */ static s32 _tyFigupon_804D6F00;
 /* 4D6F04 */ static HSD_CObjDesc* _tyFigupon_804D6F04;
 /* 4D6F08 */ static HSD_CameraDescPerspective* _tyFigupon_804D6F08;
+static bool s_tyFigupon_save_valid = true;
+
+static inline u32 tyFigupon_GetCoinTotal(void)
+{
+    if (!s_tyFigupon_save_valid) {
+        return 0;
+    }
+    return tyFigupon_ValidatedCoinTotal((u32) gm_801623D8());
+}
+
+static inline s32 tyFigupon_GetCoinCount(void)
+{
+    return tyFigupon_GetCoinTotal() / 10U;
+}
 
 /// @todo .data order hack
 #ifdef MUST_MATCH
@@ -319,25 +334,15 @@ static const TyFiguponDigitInit _tyFigupon_803B8958 = { { 0, 0, 0, 0 } };
 void _tyFigupon_803153EC(s32 arg0, s32 arg1, s32 arg2, s32 arg3,
                          intptr_t arg4)
 {
-    s32 count;
     TyFiguponDigitInit digits_s = _tyFigupon_803B8958;
     struct un_804D6EF4_t* temp_r30;
     HSD_JObj** jobj_ptr;
-    s32 num;
     s32 i;
     s32 digit;
 
-    num = arg0;
     temp_r30 = _tyFigupon_804D6EF4;
-    digits_s.s.x0 = digits_s.s.x4 = digits_s.s.x8 = (count =
-#ifdef MUST_MATCH
-                                                         count =
-#endif
-                                                             0);
-    do {
-        digits_s.digits[count++] = num % 10;
-        num /= 10;
-    } while (num > 0);
+    tyFigupon_StoreDigits(digits_s.digits, ARRAY_SIZE(digits_s.digits),
+                          (u32) arg0);
 
     for (i = 0; i < arg2; i++) {
         digit = digits_s.digits[i];
@@ -575,7 +580,7 @@ void _tyFigupon_803155C8(void)
         }
         break;
     case 9:
-        if ((gm_801623D8() / 10u) != 0) {
+        if (tyFigupon_GetCoinCount() != 0) {
             setupBetAnim(ef4);
         }
         setupPercentDisplay(ef4);
@@ -596,11 +601,6 @@ static void order_data_108(void)
 }
 #endif
 
-static inline s32 tyFigupon_GetCoinCount(void)
-{
-    return gm_801623D8() / 10u;
-}
-
 static inline void tyFigupon_CreateCoin(struct un_804D6EF4_t* ef4)
 {
     HSD_GObj* gobj = GObj_Create(9, 9, 0);
@@ -619,16 +619,6 @@ static inline void tyFigupon_CreateCoin(struct un_804D6EF4_t* ef4)
     HSD_GObj_80390CD4(gobj);
 }
 
-static inline void tyFigupon_StoreDigits(s32* digits, s32 value)
-{
-    s32 i = 0;
-
-    do {
-        digits[i++] = value % 10;
-        value /= 10;
-    } while (value > 0);
-}
-
 static inline s32 tyFigupon_GetBetCount(struct un_804D6EF4_t* ef4)
 {
     return ef4->x5E;
@@ -642,7 +632,7 @@ static inline void tyFigupon_FinishCoinDrop(HSD_GObj* gobj, TyFiguponUD* ud,
 
     ud->x8 = 0;
     ef4->x5E = 0;
-    _tyFigupon_803153EC(gm_801623D8() / 10u, 3, 3, 1, 0);
+    _tyFigupon_803153EC(tyFigupon_GetCoinCount(), 3, 3, 1, 0);
     _tyFigupon_803153EC((u32) ef4->x5E, 6, 2, 0, 0);
     ef4_2 = _tyFigupon_804D6EF4;
     if (ef4_2->x5E == 0x14) {
@@ -689,22 +679,25 @@ void _tyFigupon_80315C44(HSD_GObj* arg0)
             HSD_JObjAnimAll(ef4->jobjs[3]);
             ud->x8 = ud->x8 - 1;
             if (ud->x8 % 2 == 0) {
+                u32 coin_total = tyFigupon_GetCoinTotal();
+
                 tyFigupon_CreateCoin(_tyFigupon_804D6EF4);
-                gm_801623FC(gm_801623D8() - 0xA);
+                gm_801623FC(
+                    coin_total >= 0xAU ? (s32) (coin_total - 0xAU) : 0);
                 ef4->x5E = ef4->x5E - 1;
                 total = tyFigupon_GetCoinCount();
                 i = 0;
                 ud->x18 = i;
                 ud->x14 = i;
                 ud->x10 = i;
-                tyFigupon_StoreDigits(&ud->x10, total);
+                tyFigupon_StoreDigits(&ud->x10, 3, (u32) total);
                 count = tyFigupon_GetBetCount(ef4);
                 i = 0;
                 ud->x30 = i;
                 ud->x2C = i;
                 ud->x28 = i;
-                tyFigupon_StoreDigits(&ud->x28, count);
-                _tyFigupon_803153EC(gm_801623D8() / 10u, 3, 3, 1, 0);
+                tyFigupon_StoreDigits(&ud->x28, 3, (u32) count);
+                _tyFigupon_803153EC(tyFigupon_GetCoinCount(), 3, 3, 1, 0);
                 _tyFigupon_803153EC((u32) ef4->x5E, 6, 2, 0, 0);
                 ef4 = _tyFigupon_804D6EF4;
                 anim = 2;
@@ -731,8 +724,8 @@ void _tyFigupon_80315C44(HSD_GObj* arg0)
             ud->x18 = i;
             ud->x14 = i;
             ud->x10 = i;
-            tyFigupon_StoreDigits(&ud->x10, total);
-            _tyFigupon_803153EC(gm_801623D8() / 10u, 3, 3, 1,
+            tyFigupon_StoreDigits(&ud->x10, 3, (u32) total);
+            _tyFigupon_803153EC(tyFigupon_GetCoinCount(), 3, 3, 1,
                                 (intptr_t) &ud->x10);
             HSD_AObjSetRate(ef4->jobjs[3]->child->u.dobj->mobj->tobj->aobj,
                             2.0f);
@@ -981,7 +974,7 @@ void _tyFigupon_80316C24(HSD_GObj* arg0)
     }
 
     if (Toy_80305B88() & 0x200) {
-        if (((u32) gm_801623D8() / 10u) == 0 || ef4->x5E <= 1) {
+        if (tyFigupon_GetCoinCount() == 0 || ef4->x5E <= 1) {
             sfxBack();
             ((TyModeState*) Toy_804A284C)->x4 = 1;
             return;
@@ -1036,17 +1029,17 @@ void _tyFigupon_80316C24(HSD_GObj* arg0)
         }
     }
 
-    if (((u32) gm_801623D8() / 10u) == 0 || ef4->x5E == 0) {
+    if (tyFigupon_GetCoinCount() == 0 || ef4->x5E == 0) {
         if (stick_scroll || (Toy_80305B88() & 0x1D7C)) {
             lbAudioAx_80024030(3);
             data->x28 = 0x1E;
         }
     } else {
         if (Toy_80305B88() & 0x10) {
-            if ((u32) gm_801623D8() / 10u > 0x14U) {
+            if ((u32) tyFigupon_GetCoinCount() > 0x14U) {
                 ef4->x5E = 0x14;
             } else {
-                ef4->x5E = gm_801623D8() / 10u;
+                ef4->x5E = tyFigupon_GetCoinCount();
             }
             _tyFigupon_803153EC(ef4->x5E, 6, 2, 0, 0);
             {
@@ -1157,7 +1150,7 @@ void _tyFigupon_80316C24(HSD_GObj* arg0)
                    (Toy_80305B88() & 8))
         {
             u8 temp;
-            u32 total = gm_801623D8() / 10u;
+            u32 total = tyFigupon_GetCoinCount();
             temp = ef4->x5E;
             if ((u32) (s8) temp < total && (s8) temp < 0x14) {
                 ef4->x5E = temp + 1;
@@ -1300,13 +1293,11 @@ void _tyFigupon_8031753C(void)
 
         digits_s = tyFigupon_DigitInit;
         count = 0;
-        total = (s32) (gm_801623D8() / 10u);
+        total = tyFigupon_GetCoinCount();
         joint = HSD_ArchiveGetPublicAddress(ef4->archive,
                                             "ToyFigurePonNm_Top_joint");
-        do {
-            digits_s.digits[count++] = total % 10;
-            total /= 10;
-        } while (total > 0);
+        tyFigupon_StoreDigits(digits_s.digits, ARRAY_SIZE(digits_s.digits),
+                              (u32) total);
 
         for (i = 0; i < 3; i++) {
             jobj = HSD_JObjLoadJoint(joint);
@@ -1559,6 +1550,12 @@ void tyFigupon_Scene_OnEnter(void* arg0)
     u8 kind;
     PAD_STACK(16);
 
+    s_tyFigupon_save_valid = true;
+#ifdef TARGET_VITA
+    if (Toy_NormalizeImportedSaveData() == ToySaveData_Malformed) {
+        s_tyFigupon_save_valid = false;
+    }
+#endif
     _tyFigupon_804D6EF0 = HSD_MemAlloc(sizeof(*_tyFigupon_804D6EF0));
     _tyFigupon_804D6EF4 = HSD_MemAlloc(sizeof(*_tyFigupon_804D6EF4));
     _tyFigupon_804D6EF8 = HSD_MemAlloc(sizeof(ToyListEntry));
@@ -1619,7 +1616,7 @@ void tyFigupon_Scene_OnEnter(void* arg0)
     HSD_JObjSetFlagsAll(jobj, JOBJ_HIDDEN);
     {
         s32 has_coin_credit;
-        if (((u32) gm_801623D8() / 10u) != 0) {
+        if (tyFigupon_GetCoinCount() != 0) {
             has_coin_credit = 1;
         } else {
             has_coin_credit = 0;

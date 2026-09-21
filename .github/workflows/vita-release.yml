@@ -45,6 +45,11 @@ jobs:
             platforms/vita/tests/opening_timeline_test.c \
             -o "$RUNNER_TEMP/opening-timeline-test"
           "$RUNNER_TEMP/opening-timeline-test"
+          cc -std=c11 -Wall -Wextra -Werror \
+            -Iplatforms/vita/game -Isrc \
+            platforms/vita/tests/trophy_lottery_save_test.c \
+            -o "$RUNNER_TEMP/trophy-lottery-save-test"
+          "$RUNNER_TEMP/trophy-lottery-save-test"
 
       - name: Build full game
         shell: pwsh

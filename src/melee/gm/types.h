@@ -359,6 +359,12 @@ typedef struct {
     /* 0x06C4 */ struct FighterData x1F2C[SELKIND_COUNT];
 } GmSaveData;
 ASSERT_SIZE(GmSaveData, 0x1790);
+ASSERT_OFFSET(GmSaveData, unk_30.x14, 0x44);
+ASSERT_OFFSET(GmSaveData, x1A48, 0x1E0);
+ASSERT_OFFSET(GmSaveData, x1A4C, 0x1E4);
+ASSERT_OFFSET(GmSaveData, trophy_count, 0x468);
+ASSERT_OFFSET(GmSaveData, trophy_category_flags, 0x46A);
+ASSERT_OFFSET(GmSaveData, trophy_flags, 0x46C);
 
 typedef GmSaveData gmm_x1868;
 

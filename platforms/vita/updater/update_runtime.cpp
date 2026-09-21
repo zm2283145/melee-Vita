@@ -91,7 +91,6 @@ std::atomic_bool g_stop{false};
 bool g_apputil_initialized = false;
 DialogKind g_dialog_kind = DialogKind::None;
 std::string g_dialog_text;
-SceMsgDialogButtonsParam g_dialog_buttons{};
 SceMsgDialogUserMessageParam g_user_message{};
 SceMsgDialogProgressBarParam g_progress_bar{};
 alignas(64) std::array<std::uint8_t, 1024 * 1024> g_network_memory{};
@@ -682,17 +681,12 @@ void* cleanup_worker(void*) {
 bool initialize_user_dialog(
     std::string message, bool prompt, DialogKind kind) {
     g_dialog_text = std::move(message);
-    g_dialog_buttons = {};
-    g_dialog_buttons.msg1 = prompt ? "Update" : nullptr;
-    g_dialog_buttons.fontSize1 = SCE_MSG_DIALOG_FONT_SIZE_DEFAULT;
-    g_dialog_buttons.msg2 = prompt ? "Later" : nullptr;
-    g_dialog_buttons.fontSize2 = SCE_MSG_DIALOG_FONT_SIZE_DEFAULT;
     g_user_message = {};
     g_user_message.buttonType = prompt ?
         SCE_MSG_DIALOG_BUTTON_TYPE_YESNO : SCE_MSG_DIALOG_BUTTON_TYPE_OK;
     g_user_message.msg =
         reinterpret_cast<const SceChar8*>(g_dialog_text.c_str());
-    g_user_message.buttonParam = prompt ? &g_dialog_buttons : nullptr;
+    g_user_message.buttonParam = nullptr;
     SceMsgDialogParam parameters;
     sceMsgDialogParamInit(&parameters);
     parameters.mode = SCE_MSG_DIALOG_MODE_USER_MSG;
@@ -737,7 +731,7 @@ std::string update_prompt() {
     std::string message(prefix);
     message += g_state.release_notes.empty() ?
         "No release notes were provided." : g_state.release_notes;
-    message += "\n\nInstall this signed update?";
+    message += "\n\nInstall this signed update?\nYes = Update, No = Later";
     if (message.size() >= SCE_MSG_DIALOG_USER_MSG_SIZE) {
         message.resize(SCE_MSG_DIALOG_USER_MSG_SIZE - 1);
     }

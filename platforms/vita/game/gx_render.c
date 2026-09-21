@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "gx_render.h"
+#include "fragment_alpha_key.h"
 #include "../vita_log.h"
 
 #include <dolphin/gx/GXEnum.h>
@@ -42,6 +43,7 @@ typedef struct GxrProgram {
     const SceGxmProgram* program;
     const SceGxmProgramParameter* registers[4];
     const SceGxmProgramParameter* konst[4];
+    const SceGxmProgramParameter* alpha_ref[2];
     const SceGxmProgramParameter* z_bias;
     const SceGxmProgramParameter* fog_color;
     const SceGxmProgramParameter* fog_params;
@@ -469,12 +471,18 @@ static void op_expr(Source* s, u8 op, u8 bias, u8 scale, bool is_color,
     }
 }
 
-static void alpha_compare_expr(Source* s, u8 comp, u8 ref)
+static void alpha_compare_expr(Source* s, u8 comp, const char* ref)
 {
     const char* ops[] = { "", "<", "==", "<=", ">", "!=", ">=", "" };
     if (comp == GX_NEVER) { emit(s, "false"); return; }
     if (comp == GX_ALWAYS) { emit(s, "true"); return; }
-    emit(s, "(ac %s %u.0)", ops[comp & 7u], ref);
+    emit(s, "(ac %s %s)", ops[comp & 7u], ref);
+}
+
+static bool alpha_test_trivially_passes(const GxrShaderKey* key)
+{
+    return melee_vita_alpha_test_trivially_passes(
+        key->alpha_op, key->alpha_comp[0], key->alpha_comp[1]);
 }
 
 static bool build_fragment_source(const GxrShaderKey* key, Source* s)
@@ -497,6 +505,7 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         key->stage_count > 0u;
     const bool needs_position = fog_type != GX_FOG_NONE ||
                                 z_tex_op == GX_ZT_ADD;
+    const bool trivially_pass = alpha_test_trivially_passes(key);
     if (writes_depth)
         emit(s, "struct GxrFragmentOut { " TEVT "4 color : COLOR; float depth : DEPTH; };\n");
     emit(s, writes_depth ? "GxrFragmentOut main(\n" : TEVT "4 main(\n");
@@ -511,6 +520,10 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         emit(s, ",\n    float4 vPosition : WPOS");
     if (fog_type != GX_FOG_NONE)
         emit(s, ",\n    uniform float4 uFogColor, uniform float4 uFogParams");
+    for (u32 i = 0; i < 2u; ++i)
+        if (key->alpha_comp[i] != GX_NEVER &&
+            key->alpha_comp[i] != GX_ALWAYS)
+            emit(s, ",\n    uniform float uAlphaRef%u", i);
     if (writes_depth)
         emit(s, ",\n    uniform float uZBias)\n{\n");
     else
@@ -562,18 +575,13 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
             emit(s, "    prev.a = %s.a;\n", reg_names[last->alpha_out & 3u]);
     }
 
-    const bool trivially_pass =
-        (key->alpha_op == GX_AOP_AND && key->alpha_comp[0] == GX_ALWAYS &&
-         key->alpha_comp[1] == GX_ALWAYS) ||
-        (key->alpha_op == GX_AOP_OR &&
-         (key->alpha_comp[0] == GX_ALWAYS || key->alpha_comp[1] == GX_ALWAYS));
     if (!trivially_pass) {
         static const char* ops[] = { "&&", "||", "!=", "==" };
         emit(s, "    float ac = floor(clamp(prev.a, 0.0, 1.0) * 255.0 + 0.5);\n");
         emit(s, "    if (!(");
-        alpha_compare_expr(s, key->alpha_comp[0], key->alpha_ref[0]);
+        alpha_compare_expr(s, key->alpha_comp[0], "uAlphaRef0");
         emit(s, " %s ", ops[key->alpha_op & 3u]);
-        alpha_compare_expr(s, key->alpha_comp[1], key->alpha_ref[1]);
+        alpha_compare_expr(s, key->alpha_comp[1], "uAlphaRef1");
         emit(s, ")) discard;\n");
     }
     if (fog_type != GX_FOG_NONE) {
@@ -976,8 +984,10 @@ bool gxr_available(void) { return s_ready; }
 
 static GxrProgram* find_program(const GxrShaderKey* key)
 {
-    const u64 hash = fnv1a(key, sizeof(*key),
-                           UINT64_C(1469598103934665603) ^ GXR_CACHE_VERSION);
+    u64 hash_seed = UINT64_C(1469598103934665603) ^ GXR_CACHE_VERSION;
+    if (!alpha_test_trivially_passes(key))
+        hash_seed ^= UINT64_C(0xbbe8f48b562f9d7d);
+    const u64 hash = fnv1a(key, sizeof(*key), hash_seed);
     GxrProgram** bucket = &s_programs[hash % GXR_PROGRAM_BUCKETS];
     for (GxrProgram* p = *bucket; p != NULL; p = p->next)
         if (p->hash == hash && memcmp(&p->key, key, sizeof(*key)) == 0)
@@ -1034,6 +1044,10 @@ static GxrProgram* find_program(const GxrShaderKey* key)
         p->registers[i] = sceGxmProgramFindParameterByName(p->program, reg_names[i]);
         p->konst[i] = sceGxmProgramFindParameterByName(p->program, k_names[i]);
     }
+    p->alpha_ref[0] =
+        sceGxmProgramFindParameterByName(p->program, "uAlphaRef0");
+    p->alpha_ref[1] =
+        sceGxmProgramFindParameterByName(p->program, "uAlphaRef1");
     p->z_bias = sceGxmProgramFindParameterByName(p->program, "uZBias");
     p->fog_color =
         sceGxmProgramFindParameterByName(p->program, "uFogColor");
@@ -1167,6 +1181,7 @@ typedef struct RqDraw {
     SceGxmPrimitiveType primitive;
     u32 line_width;
     f32 point_size;
+    f32 alpha_ref[2];
     f32 z_bias;
     f32 fog_color[4];
     f32 fog_params[4];
@@ -1205,12 +1220,15 @@ static GxrProgram* s_last_program;
 
 static GxrProgram* lookup_program(const GxrShaderKey* key)
 {
+    GxrShaderKey normalized = *key;
     GxrProgram* program;
-    if (s_last_program != NULL && memcmp(&s_last_key, key, sizeof(*key)) == 0)
+    melee_vita_normalize_alpha_shader_refs(normalized.alpha_ref);
+    if (s_last_program != NULL &&
+        memcmp(&s_last_key, &normalized, sizeof(normalized)) == 0)
         return s_last_program;
-    program = find_program(key);
+    program = find_program(&normalized);
     if (program != NULL && !program->failed) {
-        s_last_key = *key;
+        s_last_key = normalized;
         s_last_program = program;
     }
     return program;
@@ -1275,6 +1293,8 @@ bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
     d->point_size = draw->line_width < 1.0f ? 1.0f : draw->line_width;
     memcpy(d->registers, draw->registers, sizeof(d->registers));
     memcpy(d->konst, draw->konst, sizeof(d->konst));
+    d->alpha_ref[0] = (f32) draw->key.alpha_ref[0];
+    d->alpha_ref[1] = (f32) draw->key.alpha_ref[1];
     d->z_bias = (f32) draw->z_tex_bias;
     memcpy(d->fog_color, draw->fog_color, sizeof(d->fog_color));
     memcpy(d->fog_params, draw->fog_params, sizeof(d->fog_params));
@@ -1698,6 +1718,8 @@ bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
     d->light_comps = (u16) light_comps;
     memcpy(d->registers, draw->registers, sizeof(d->registers));
     memcpy(d->konst, draw->konst, sizeof(d->konst));
+    d->alpha_ref[0] = (f32) draw->key.alpha_ref[0];
+    d->alpha_ref[1] = (f32) draw->key.alpha_ref[1];
     d->z_bias = (f32) draw->z_tex_bias;
     memcpy(d->fog_color, draw->fog_color, sizeof(d->fog_color));
     memcpy(d->fog_params, draw->fog_params, sizeof(d->fog_params));
@@ -1817,6 +1839,8 @@ static void exec_draw(const void* payload)
         bool any = false;
         for (u32 i = 0; i < 4u; ++i)
             if (program->registers[i] != NULL || program->konst[i] != NULL) any = true;
+        if (program->alpha_ref[0] != NULL ||
+            program->alpha_ref[1] != NULL) any = true;
         if (program->z_bias != NULL) any = true;
         if (program->fog_color != NULL || program->fog_params != NULL) any = true;
         if (any) {
@@ -1829,6 +1853,11 @@ static void exec_draw(const void* payload)
                     if (program->konst[i] != NULL)
                         sceGxmSetUniformDataF(fbuf, program->konst[i], 0, 4, d->konst[i]);
                 }
+                for (u32 i = 0; i < 2u; ++i)
+                    if (program->alpha_ref[i] != NULL)
+                        sceGxmSetUniformDataF(
+                            fbuf, program->alpha_ref[i], 0, 1,
+                            &d->alpha_ref[i]);
                 if (program->z_bias != NULL)
                     sceGxmSetUniformDataF(
                         fbuf, program->z_bias, 0, 1, &d->z_bias);

@@ -37,9 +37,9 @@ pwsh -NoProfile -File platforms/vita/build-full.ps1 -Configuration Release -Jobs
 
 The output is **`build-vita/full/SmashMeleevita.vpk`**, with the game title
 **Smash Melee Vita** and unchanged title ID `MLVITA002`.
-[`version.json`](version.json) sets release version **0.7.1** and Vita's
-two-part `APP_VER` value **00.71**. Update both entries for future releases.
-Release is the default even if `-Configuration` is omitted. It uses `-O2`,
+[`version.json`](version.json) sets release version **0.8.2** and Vita's
+two-part `APP_VER` value **00.82**. Update both entries for future releases.
+Release is the default even if `-Configuration` is omitted. It uses `-O3`,
 `NDEBUG`, and `MELEE_VITA_RELEASE`, with no `-g` flags. DebugNet logging,
 ordinary OS reports, and the shader diagnostic callback are disabled.
 Fatal panics still terminate with an error. VitaDebugger and kubridge are not

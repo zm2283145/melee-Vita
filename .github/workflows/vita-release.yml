@@ -69,6 +69,11 @@ jobs:
             platforms/vita/tests/results_backdrop_test.c \
             -o "$RUNNER_TEMP/results-backdrop-test"
           "$RUNNER_TEMP/results-backdrop-test"
+          cc -std=c11 -Wall -Wextra -Werror \
+            -Iplatforms/vita/game -Isrc -Isrc/sdk_include \
+            platforms/vita/tests/fragment_alpha_key_test.c \
+            -o "$RUNNER_TEMP/fragment-alpha-key-test"
+          "$RUNNER_TEMP/fragment-alpha-key-test"
 
       - name: Build full game
         shell: pwsh

@@ -78,10 +78,14 @@ HSD_Archive* lbl_804D65B8;
 #include <melee/pl/player.h>
 #include <melee/sc/types.h>
 #include <sysdolphin/baselib/dobj.h>
+#include <sysdolphin/baselib/displayfunc.h>
 #include <sysdolphin/baselib/gobj.h>
 #include <sysdolphin/baselib/gobjgxlink.h>
 #include <sysdolphin/baselib/gobjobject.h>
 #include <sysdolphin/baselib/gobjproc.h>
+#ifdef TARGET_VITA
+#include "results_backdrop.h"
+#endif
 #include <sysdolphin/baselib/jobj.h>
 
 MatchEnd* fn_80174274(void)
@@ -1464,10 +1468,53 @@ void fn_80175DC8(HSD_GObj* gobj)
     }
 }
 
+#ifdef TARGET_VITA
+static void gmResultDrawBackdrop(HSD_GObj* gobj, int code)
+{
+    HSD_CObj* cobj = GET_COBJ(gobj);
+    const MeleeVitaResultsBackdropState backdrop =
+        melee_vita_results_backdrop_state();
+
+    (void) code;
+    if (HSD_CObjSetCurrent(cobj)) {
+        HSD_SetEraseColor(backdrop.red, backdrop.green, backdrop.blue,
+                          backdrop.alpha);
+        HSD_CObjEraseScreen(cobj, backdrop.write_color, backdrop.write_alpha,
+                            backdrop.write_depth);
+        HSD_CObjEndCurrent();
+    }
+}
+#endif
+
 void fn_80176A6C(void)
 {
     HSD_GObj* gobj;
     HSD_CObj* cobj;
+
+#ifdef TARGET_VITA
+    {
+        const MeleeVitaResultsBackdropState backdrop =
+            melee_vita_results_backdrop_state();
+        HSD_GObj* backdrop_gobj =
+            GObj_Create(HSD_GOBJ_CLASS_CAMERA, 20, 0);
+        HSD_CObj* backdrop_cobj;
+
+        if (backdrop_gobj == NULL) {
+            OSReport("Error : gobj dont't get (gmResultAddBackdropCamera)\n");
+            HSD_ASSERT(1634, 0);
+        }
+        backdrop_cobj = HSD_CObjLoadDesc(
+            DP(HSD_CObjDesc, GM_SCENE_CAMERA(lbl_8046DBE8.pnlsce)->desc));
+        if (backdrop_cobj == NULL) {
+            OSReport("Error : cobj dont't get (gmResultAddBackdropCamera)\n");
+            HSD_ASSERT(1640, 0);
+        }
+        HSD_GObjObject_80390A70(backdrop_gobj, HSD_GObj_CameraKind,
+                               backdrop_cobj);
+        GObj_SetupGXLinkMax(backdrop_gobj, gmResultDrawBackdrop,
+                           backdrop.render_priority);
+    }
+#endif
 
     gobj = GObj_Create(HSD_GOBJ_CLASS_CAMERA, 20, 0);
     if (gobj == NULL) {

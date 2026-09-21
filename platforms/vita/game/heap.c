@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "heap.h"
+
 #define HEAP_ALIGNMENT 32u
 #define HEAP_CELL_HEADER 32u
 #define HEAP_MIN_CELL 64u
@@ -16,7 +18,8 @@ typedef struct HeapCell {
     struct HeapCell* next;
     s32 size;
     HeapDesc* owner;
-    u8 padding[16];
+    u32 generation;
+    u8 padding[12];
 } HeapCell;
 
 struct HeapDesc {
@@ -32,6 +35,7 @@ static HeapDesc* s_heaps;
 static s32 s_heap_count;
 static u8* s_heap_arena_start;
 static u8* s_heap_arena_end;
+static u32 s_allocation_generation;
 
 static uintptr_t round_up(uintptr_t value)
 {
@@ -168,6 +172,8 @@ void* OSAllocFromHeap(OSHeapHandle heap, u32 size)
         descriptor->free_list = insert_free(descriptor->free_list, remainder);
     }
     cell->owner = descriptor;
+    if (++s_allocation_generation == 0) ++s_allocation_generation;
+    cell->generation = s_allocation_generation;
     descriptor->allocated = list_push(descriptor->allocated, cell);
     return (u8*) cell + HEAP_CELL_HEADER;
 }
@@ -209,6 +215,26 @@ u32 OSReferentSize(void* pointer)
     if (pointer == NULL) return 0;
     cell = (HeapCell*) ((u8*) pointer - HEAP_CELL_HEADER);
     return cell->owner != NULL ? (u32) cell->size - HEAP_CELL_HEADER : 0;
+}
+
+u32 melee_vita_heap_allocation_generation(const void* pointer)
+{
+    s32 heap;
+    uintptr_t address = (uintptr_t) pointer;
+    if (pointer == NULL) return 0;
+    for (heap = 0; heap < s_heap_count; ++heap) {
+        HeapCell* cell;
+        if (!valid_heap(heap)) continue;
+        for (cell = s_heaps[heap].allocated; cell != NULL;
+             cell = cell->next) {
+            const uintptr_t first =
+                (uintptr_t) cell + HEAP_CELL_HEADER;
+            const uintptr_t last = (uintptr_t) cell + (u32) cell->size;
+            if (address >= first && address < last)
+                return cell->generation;
+        }
+    }
+    return 0;
 }
 
 void OSAddToHeap(OSHeapHandle heap, void* start, void* end)

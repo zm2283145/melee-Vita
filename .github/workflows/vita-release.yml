@@ -56,6 +56,14 @@ jobs:
             platforms/vita/texture_decoder.c \
             -o "$RUNNER_TEMP/poke-floats-texture-test"
           "$RUNNER_TEMP/poke-floats-texture-test"
+          cc -std=c11 -Wall -Wextra -Werror -Iplatforms/vita/game \
+            platforms/vita/tests/copy_texture_lifetime_test.c \
+            -o "$RUNNER_TEMP/copy-texture-lifetime-test"
+          "$RUNNER_TEMP/copy-texture-lifetime-test"
+          cc -std=c11 -Wall -Wextra -Werror -Iplatforms/vita/game \
+            platforms/vita/tests/results_backdrop_test.c \
+            -o "$RUNNER_TEMP/results-backdrop-test"
+          "$RUNNER_TEMP/results-backdrop-test"
 
       - name: Build full game
         shell: pwsh

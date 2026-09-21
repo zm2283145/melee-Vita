@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* GXM-backed frame sink used by the original game's GX compatibility layer. */
 #include "gxm_game.h"
+#include "copy_texture_lifetime.h"
+#include "heap.h"
 #include "../texture_decoder.h"
 #include "gx_render.h"
 #include "../vita_log.h"
@@ -94,10 +96,11 @@ static VitaTextureCacheEntry* s_textures;
  * the destination buffer address (as aurora does), so sampling that buffer
  * binds the copy directly instead of decoding CPU memory. */
 #define VITA_COPY_TEXTURES 16u
-static struct { const void* key; vita2d_texture* texture; u32 width, height, frame; } s_copy_textures[VITA_COPY_TEXTURES];
-/* A copy destination that has not been copied to recently is stale: HSD may
- * have freed that buffer and reused the address for an ordinary texture. */
-#define VITA_COPY_STALE_FRAMES 120u
+static struct {
+    MeleeVitaCopyTextureBinding binding;
+    vita2d_texture* texture;
+    u32 width, height, frame;
+} s_copy_textures[VITA_COPY_TEXTURES];
 static void retire_texture(struct vita2d_texture* texture);
 
 #define VITA_TEXTURE_HASH_SIZE 1024u
@@ -335,19 +338,26 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     if (source == NULL || source->data == NULL || source->width == 0 ||
         source->height == 0) return NULL;
     for (u32 c = 0; c < VITA_COPY_TEXTURES; ++c)
-        if (s_copy_textures[c].key == source->data && s_copy_textures[c].texture != NULL) {
-            if (s_frame_counter - s_copy_textures[c].frame <= VITA_COPY_STALE_FRAMES)
+        if (s_copy_textures[c].binding.key == source->data &&
+            s_copy_textures[c].texture != NULL) {
+            const u32 generation =
+                melee_vita_heap_allocation_generation(source->data);
+            if (melee_vita_copy_texture_binding_matches(
+                    &s_copy_textures[c].binding, source->data, generation))
                 return s_copy_textures[c].texture;
 #ifdef MELEE_VITA_RENDER_TRACE
             melee_vita_log_info(
-                "[COPYSTALE] key=%p age=%u copy=%ux%u sample=%ux%u fmt=%u",
-                source->data, s_frame_counter - s_copy_textures[c].frame,
+                "[COPYREUSE] key=%p owner=%u current=%u copy=%ux%u "
+                "sample=%ux%u fmt=%u",
+                source->data,
+                s_copy_textures[c].binding.allocation_generation, generation,
                 s_copy_textures[c].width, s_copy_textures[c].height,
                 source->width, source->height, source->format);
 #endif
             retire_texture(s_copy_textures[c].texture);
             s_copy_textures[c].texture = NULL;
-            s_copy_textures[c].key = NULL;
+            melee_vita_copy_texture_bind(
+                &s_copy_textures[c].binding, NULL, 0);
         }
     /* Only formats the decoder understands are hashed/uploaded; copy
      * textures and other special formats (e.g. 0x11) point at buffers that
@@ -836,9 +846,14 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width,
     u32 c, free_slot = VITA_COPY_TEXTURES;
     if (created != NULL) *created = false;
     for (c = 0; c < VITA_COPY_TEXTURES; ++c) {
-        if (s_copy_textures[c].key == key) {
-            if (s_copy_textures[c].width == width && s_copy_textures[c].height == height &&
-                s_copy_textures[c].texture != NULL) {
+        if (s_copy_textures[c].binding.key == key) {
+            const u32 generation =
+                melee_vita_heap_allocation_generation(key);
+            if (s_copy_textures[c].width == width &&
+                s_copy_textures[c].height == height &&
+                s_copy_textures[c].texture != NULL &&
+                melee_vita_copy_texture_binding_matches(
+                    &s_copy_textures[c].binding, key, generation)) {
                 s_copy_textures[c].frame = s_frame_counter;
                 return s_copy_textures[c].texture;
             }
@@ -847,7 +862,9 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width,
             free_slot = c;
             break;
         }
-        if (s_copy_textures[c].key == NULL && free_slot == VITA_COPY_TEXTURES) free_slot = c;
+        if (s_copy_textures[c].binding.key == NULL &&
+            free_slot == VITA_COPY_TEXTURES)
+            free_slot = c;
     }
     if (free_slot == VITA_COPY_TEXTURES) {
         /* Recycle the map that has gone longest without a copy, so a live one
@@ -858,7 +875,9 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width,
         retire_texture(s_copy_textures[free_slot].texture);
         s_copy_textures[free_slot].texture = NULL;
     }
-    s_copy_textures[free_slot].key = key;
+    melee_vita_copy_texture_bind(
+        &s_copy_textures[free_slot].binding, key,
+        melee_vita_heap_allocation_generation(key));
     s_copy_textures[free_slot].width = width;
     s_copy_textures[free_slot].height = height;
     s_copy_textures[free_slot].frame = s_frame_counter;
@@ -872,7 +891,8 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width,
         sceGxmTextureSetUAddrMode(&s_copy_textures[free_slot].texture->gxm_tex, SCE_GXM_TEXTURE_ADDR_CLAMP);
         sceGxmTextureSetVAddrMode(&s_copy_textures[free_slot].texture->gxm_tex, SCE_GXM_TEXTURE_ADDR_CLAMP);
     } else
-        s_copy_textures[free_slot].key = NULL;
+        melee_vita_copy_texture_bind(
+            &s_copy_textures[free_slot].binding, NULL, 0);
     return s_copy_textures[free_slot].texture;
 }
 

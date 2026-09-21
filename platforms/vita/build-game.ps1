@@ -47,9 +47,16 @@ $sources = @(
 $sources += Join-Path $root 'src/pc/vtxarray.c'
 
 $configurationFlags = if ($Configuration -eq 'Release') {
-    @('-O2', '-DNDEBUG', '-DMELEE_VITA_RELEASE=1')
+    @(
+        '-O3', '-ffunction-sections', '-fdata-sections',
+        '-march=armv7-a', '-mtune=cortex-a9', '-mfpu=neon', '-mfloat-abi=hard',
+        '-fsigned-char',
+        '-fno-math-errno', '-funsafe-math-optimizations', '-fno-signed-zeros',
+        '-ffp-contract=fast',
+        '-DNDEBUG', '-DMELEE_VITA_RELEASE=1'
+    )
 } else {
-    @('-Og', '-g3')
+    @('-Og', '-g3', '-ffp-contract=off')
 }
 $common = @(
     '-std=c11',
@@ -61,7 +68,7 @@ $common = @(
     '-Werror=incompatible-pointer-types',
     '-fno-strict-aliasing', '-fno-short-enums', '-fwrapv',
     '-fgnu89-inline',
-    '-ffp-contract=off', '-Wno-scalar-storage-order',
+    '-Wno-scalar-storage-order',
     '-include', $compat, '-c'
 ) + $configurationFlags
 if ($EnableDebugMenu) {
@@ -79,6 +86,7 @@ if ($EnableDirectSnag) {
 if ($EnableRenderTrace) {
     $common += '-DMELEE_VITA_RENDER_TRACE=1'
 }
+Write-Host "Melee Vita game C compiler flags: $($common -join ' ')"
 
 $sjisTool = Join-Path $PSScriptRoot 'sjis_literals.py'
 $sjisDir = Join-Path $build 'sjis'

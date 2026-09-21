@@ -122,7 +122,14 @@ if ($Configuration -eq 'Debug') {
     }
 }
 $configurationFlags = if ($Configuration -eq 'Release') {
-    @('-O2', '-DNDEBUG', '-DMELEE_VITA_RELEASE=1')
+    @(
+        '-O3', '-ffunction-sections', '-fdata-sections',
+        '-march=armv7-a', '-mtune=cortex-a9', '-mfpu=neon', '-mfloat-abi=hard',
+        '-fsigned-char',
+        '-fno-math-errno', '-funsafe-math-optimizations', '-fno-signed-zeros',
+        '-ffp-contract=fast',
+        '-DNDEBUG', '-DMELEE_VITA_RELEASE=1'
+    )
 } else {
     @('-Og', '-g3')
 }
@@ -213,6 +220,8 @@ $commonCpp = @(
 ) + $configurationFlags
 
 if ($EnableDebugger) { $common = @('-DMELEE_VITA_WAIT_FOR_DEBUGGER=1') + $common }
+Write-Host "Melee Vita platform C compiler flags: $($common -join ' ')"
+Write-Host "Melee Vita platform C++ compiler flags: $($commonCpp -join ' ')"
 $platformObjects = foreach ($relative in $platformSources) {
     $source = Join-Path $root $relative
     $name = ($relative -replace '[:\\/]', '__') -replace '\.(c|cpp)$', '.o'

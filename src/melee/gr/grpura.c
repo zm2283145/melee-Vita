@@ -17,6 +17,9 @@
 #include <melee/lb/lb_00F9.h>
 #include <melee/lb/lbspdisplay.h>
 #include <melee/mp/mplib.h>
+#ifdef TARGET_PC
+#include <pc/gx_texture_compat.h>
+#endif
 #include <sysdolphin/baselib/debug.h>
 #include <sysdolphin/baselib/dobj.h>
 #include <sysdolphin/baselib/gobj.h>
@@ -677,6 +680,17 @@ struct HSD_ImageDesc grPu_803E7620 = {
     32, 32, 4, 0, 0, 0
 };
 
+#ifdef TARGET_PC
+static void grPura_PrepareToonTexture(void)
+{
+    static bool normalized;
+
+    pc_normalize_gx_u16_texture(grPu_803E6E20,
+                                ARRAY_SIZE(grPu_803E6E20), &normalized);
+    DP_SET(grPu_803E7620.image_ptr, grPu_803E6E20);
+}
+#endif
+
 void stageGObj2_OnInit(Ground_GObj* arg0)
 {
     Ground* gp = GET_GROUND(arg0);
@@ -684,7 +698,7 @@ void stageGObj2_OnInit(Ground_GObj* arg0)
     PAD_STACK(8);
     arg0->render_cb = (GObj_RenderFunc) fn_802130D0;
 #ifdef TARGET_PC
-    DP_SET(grPu_803E7620.image_ptr, &grPu_803E6E20);
+    grPura_PrepareToonTexture();
 #endif
     HSD_MObjSetToonTextureImage(&grPu_803E7620);
     lb_80011C18(jobj, 0x1000);
@@ -897,7 +911,7 @@ void fn_802130D0(HSD_GObj* arg0, int arg1)
 {
     PAD_STACK(8);
 #ifdef TARGET_PC
-    DP_SET(grPu_803E7620.image_ptr, &grPu_803E6E20);
+    grPura_PrepareToonTexture();
 #endif
     HSD_MObjSetToonTextureImage(&grPu_803E7620);
     grDisplay_801C5DB0(arg0, arg1);

@@ -50,6 +50,12 @@ jobs:
             platforms/vita/tests/trophy_lottery_save_test.c \
             -o "$RUNNER_TEMP/trophy-lottery-save-test"
           "$RUNNER_TEMP/trophy-lottery-save-test"
+          cc -std=c11 -Wall -Wextra -Werror \
+            -Iplatforms/vita -Isrc \
+            platforms/vita/tests/poke_floats_texture_test.c \
+            platforms/vita/texture_decoder.c \
+            -o "$RUNNER_TEMP/poke-floats-texture-test"
+          "$RUNNER_TEMP/poke-floats-texture-test"
 
       - name: Build full game
         shell: pwsh

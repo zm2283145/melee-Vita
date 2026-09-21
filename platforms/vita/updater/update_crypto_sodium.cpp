@@ -12,7 +12,7 @@ int verify_ed25519_sodium(const std::uint8_t public_key[32],
     std::size_t message_size) {
 #if defined(MELEE_UPDATE_USE_SODIUM)
     if (public_key == nullptr || signature == nullptr ||
-        (message == nullptr && message_size != 0) || sodium_init() < 0)
+        (message == nullptr && message_size != 0))
     {
         return false;
     }

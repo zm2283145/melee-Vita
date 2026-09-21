@@ -41,6 +41,11 @@ jobs:
             platforms/vita/tests/debug_menu_activation_test.c \
             -o "$RUNNER_TEMP/debug-menu-activation-test"
           "$RUNNER_TEMP/debug-menu-activation-test"
+          cc -std=c11 -Wall -Wextra -Werror -DTARGET_PC \
+            -Isrc -Isrc/sdk_include \
+            platforms/vita/tests/allstar_return_selection_test.c \
+            -o "$RUNNER_TEMP/allstar-return-selection-test"
+          "$RUNNER_TEMP/allstar-return-selection-test"
           cc -std=c11 -Wall -Wextra -Werror -Iplatforms/vita/game \
             platforms/vita/tests/opening_timeline_test.c \
             -o "$RUNNER_TEMP/opening-timeline-test"

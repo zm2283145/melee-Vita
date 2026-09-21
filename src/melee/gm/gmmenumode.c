@@ -3,6 +3,7 @@
 #include "gm_1A3F.h"
 #include "gm_unsplit.h"
 #include "gmmain_lib.h"
+#include "gmmenumode_return.h"
 #include "types.h"
 #include <melee/if/soundtest.h>
 #include <melee/lb/lbcardgame.h>
@@ -117,10 +118,6 @@ void onEnter(GameModeState* scene)
         data->menu_kind = MENU_KIND_REG;
         data->hovered_selection = SEL_REG_ADVENTURE;
         return;
-    case GM_ALLSTAR:
-        data->menu_kind = MENU_KIND_REG;
-        data->hovered_selection = SEL_REG_ALLSTAR;
-        return;
     case GM_CLASSIC_GOVER:
         data->menu_kind = MENU_KIND_REG;
         data->hovered_selection = SEL_REG_CLASSIC;
@@ -129,9 +126,11 @@ void onEnter(GameModeState* scene)
         data->menu_kind = MENU_KIND_REG;
         data->hovered_selection = SEL_REG_ADVENTURE;
         return;
+    case GM_ALLSTAR:
     case GM_ALLSTAR_GOVER:
         data->menu_kind = MENU_KIND_REG;
-        data->hovered_selection = SEL_REG_ALLSTAR;
+        data->hovered_selection = gmMenuMode_AllStarReturnSelection(
+            previous_mode, gmMainLib_8015EDD4() != 0);
         return;
     case GM_EVENT:
         data->menu_kind = MENU_KIND_EVENT;

@@ -74,6 +74,12 @@ jobs:
             platforms/vita/tests/fragment_alpha_key_test.c \
             -o "$RUNNER_TEMP/fragment-alpha-key-test"
           "$RUNNER_TEMP/fragment-alpha-key-test"
+          cc -std=c11 -Wall -Wextra -Werror \
+            -Iplatforms/vita/game \
+            platforms/vita/tests/gx_bump_test.c \
+            platforms/vita/game/gx_bump.c -lm \
+            -o "$RUNNER_TEMP/gx-bump-test"
+          "$RUNNER_TEMP/gx-bump-test"
 
       - name: Build full game
         shell: pwsh

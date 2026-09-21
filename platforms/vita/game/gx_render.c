@@ -14,6 +14,7 @@
 #include <vitashark.h>
 
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +34,24 @@
 #define GXR_PROGRAM_BUCKETS 256u
 #define GXR_MAX_INDEX 63000u
 #define GXR_SOURCE_CAPACITY 32768u
+
+_Static_assert(
+    sizeof(GxrGpuVertex) == MELEE_VITA_GPU_VERTEX_BYTES,
+    "legacy GPU vertex layout changed");
+_Static_assert(
+    sizeof(GxrVtxKey) == MELEE_VITA_GXR_LEGACY_KEY_BYTES,
+    "legacy GPU vertex key layout changed");
+_Static_assert(
+    sizeof(GxrGpuBumpVertex) == MELEE_VITA_GPU_BUMP_VERTEX_BYTES,
+    "bump GPU vertex layout changed");
+_Static_assert(
+    offsetof(GxrGpuBumpVertex, binormal) ==
+        MELEE_VITA_GPU_BUMP_BINORMAL_OFFSET,
+    "bump binormal offset changed");
+_Static_assert(
+    offsetof(GxrGpuBumpVertex, tangent) ==
+        MELEE_VITA_GPU_BUMP_TANGENT_OFFSET,
+    "bump tangent offset changed");
 
 vita2d_texture* melee_vita_gxm_texture(const MeleeVitaTextureSource* source);
 
@@ -81,6 +100,12 @@ static struct {
     u32 draws, compiled, cache_loaded, compile_failed, fallback;
     u64 compile_us, cache_io_us, source_us, register_us, vertex_patch_us;
 } s_stats;
+
+static struct {
+    u32 draws, compiled, cache_loaded, compile_failed, fallback;
+    u32 program_limit, uniform_reject;
+    u64 compile_us, cache_io_us, source_us, register_us, vertex_patch_us;
+} s_bump_stats;
 
 typedef struct GxrWarmHeader {
     u32 magic;
@@ -780,6 +805,105 @@ static const SceGxmProgram* obtain_program(const char* source, bool vertex,
     return copy;
 }
 
+#define GXR_BUMP_CACHE_PREFIX "bv1-"
+
+static SceGxmProgram* load_bump_cached(u64 hash)
+{
+    static u32 invalid_logs;
+    const u64 started = sceKernelGetProcessTimeWide();
+    char path[128];
+    SceGxmProgram* program = NULL;
+    snprintf(path, sizeof(path), GXR_CACHE_DIR "/" GXR_BUMP_CACHE_PREFIX
+             "%016llx.gxp", (unsigned long long) hash);
+    SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+    if (fd >= 0) {
+        const SceOff size = sceIoLseek(fd, 0, SCE_SEEK_END);
+        sceIoLseek(fd, 0, SCE_SEEK_SET);
+        if (size > 0 && size < 1024 * 1024) {
+            program = malloc((size_t) size);
+            if (program != NULL &&
+                (sceIoRead(fd, program, (SceSize) size) != size ||
+                 sceGxmProgramCheck(program) < 0)) {
+                free(program);
+                program = NULL;
+                if (invalid_logs++ < 4u)
+                    melee_vita_log_info(
+                        "[GXR/BUMP] invalid disk cache hash=%016llx",
+                        (unsigned long long) hash);
+            }
+        }
+        sceIoClose(fd);
+    }
+    s_bump_stats.cache_io_us += sceKernelGetProcessTimeWide() - started;
+    return program;
+}
+
+static void store_bump_cached(
+    u64 hash, const SceGxmProgram* program, u32 size)
+{
+    static u32 write_logs;
+    char path[128];
+    snprintf(path, sizeof(path), GXR_CACHE_DIR "/" GXR_BUMP_CACHE_PREFIX
+             "%016llx.gxp", (unsigned long long) hash);
+    SceUID fd =
+        sceIoOpen(path, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+    if (fd < 0) {
+        if (write_logs++ < 4u)
+            melee_vita_log_info(
+                "[GXR/BUMP] disk cache open failed hash=%016llx code=%d",
+                (unsigned long long) hash, (int) fd);
+        return;
+    }
+    const SceSSize written = sceIoWrite(fd, program, size);
+    sceIoClose(fd);
+    if (written != (SceSSize) size && write_logs++ < 4u)
+        melee_vita_log_info(
+            "[GXR/BUMP] disk cache write failed hash=%016llx "
+            "wrote=%d expected=%u",
+            (unsigned long long) hash, (int) written, size);
+}
+
+static const SceGxmProgram* compile_bump_program(
+    const char* source, u64 hash)
+{
+    const u64 started = sceKernelGetProcessTimeWide();
+    u32 size = (u32) strlen(source);
+    SceGxmProgram* compiled = shark_compile_shader_extended(
+        source, &size, SHARK_VERTEX_SHADER, SHARK_OPT_DEFAULT,
+        SHARK_ENABLE, SHARK_ENABLE, SHARK_ENABLE);
+    s_bump_stats.compile_us += sceKernelGetProcessTimeWide() - started;
+    if (compiled == NULL || size == 0) {
+        const SceShaccCgCompileOutput* output =
+            shark_get_internal_compile_output();
+        if (output != NULL) {
+            for (int i = 0; i < output->diagnosticCount; ++i) {
+                const SceShaccCgDiagnosticMessage* d =
+                    &output->diagnostics[i];
+                melee_vita_log_info(
+                    "[GXR/BUMP] compile diag level=%d code=%d "
+                    "line=%d: %s",
+                    (int) d->level, (int) d->code,
+                    d->location != NULL
+                        ? (int) d->location->lineNumber : -1,
+                    d->message != NULL ? d->message : "(null)");
+            }
+        }
+        melee_vita_log_info(
+            "[GXR/BUMP] compile failed hash=%016llx source_bytes=%u",
+            (unsigned long long) hash, (unsigned) strlen(source));
+        shark_clear_output();
+        ++s_bump_stats.compile_failed;
+        return NULL;
+    }
+    SceGxmProgram* copy = malloc(size);
+    if (copy != NULL) memcpy(copy, compiled, size);
+    shark_clear_output();
+    if (copy == NULL) return NULL;
+    ++s_bump_stats.compiled;
+    store_bump_cached(hash, copy, size);
+    return copy;
+}
+
 /* vita2d's shader patcher has small fixed pools, and the generated GX programs
  * are many: after a few scenes' worth of TEV and vertex variants it runs out
  * and every later patch fails, which shows up as white or shattered geometry
@@ -1171,6 +1295,7 @@ typedef struct RqDraw {
     SceGxmFragmentProgram* fragment;
     const struct GxrProgram* program;
     const struct GxrVtxProgram* vp;
+    const struct GxrBumpVtxProgram* bump_vp;
     vita2d_texture* textures[GXR_MAX_TEXMAPS];
     const void* vertices;
     const u16* indices;
@@ -1187,6 +1312,8 @@ typedef struct RqDraw {
     f32 fog_params[4];
     u8 texture_mask;
     u8 cpu_path;
+    u8 bump_path;
+    u8 reserved8;
     u16 mtx_comps, tg_comps, light_comps, reserved;
     f32 registers[4][4];
     f32 konst[4][4];
@@ -1305,7 +1432,7 @@ bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
 
 /* ===================================================== GPU vertex pipeline */
 
-#define GXR_VTX_VERSION 3u
+#define GXR_VTX_VERSION MELEE_VITA_GXR_LEGACY_KEY_VERSION
 #define GXR_ARENA_SIZE (48u * 1024u * 1024u)
 
 typedef struct GxrVtxProgram {
@@ -1321,7 +1448,22 @@ typedef struct GxrVtxProgram {
     struct GxrVtxProgram* next;
 } GxrVtxProgram;
 
+typedef struct GxrBumpVtxProgram {
+    u64 hash;
+    GxrBumpVtxKey key;
+    bool failed;
+    SceGxmShaderPatcherId id;
+    const SceGxmProgram* program;
+    SceGxmVertexProgram* vertex;
+    const SceGxmProgramParameter* u_pos, *u_nrm, *u_proj, *u_tex, *u_post,
+        *u_light, *u_mat, *u_amb;
+    struct GxrBumpVtxProgram* next;
+} GxrBumpVtxProgram;
+
 static GxrVtxProgram* s_vtx_programs[GXR_PROGRAM_BUCKETS];
+#define GXR_BUMP_PROGRAM_LIMIT 8u
+static GxrBumpVtxProgram* s_bump_vtx_programs[GXR_PROGRAM_BUCKETS];
+static u32 s_bump_vtx_program_count;
 
 static const char* tex_attr_name(u8 source)
 {
@@ -1384,7 +1526,7 @@ static void emit_light_channel(Source* s, const GxrVtxKey* key, u32 index,
 
 static bool build_vertex_source(const GxrVtxKey* key, Source* s)
 {
-    emit(s, "void main(float3 aPos, float aMtx, float3 aNrm, float3 aBnr, float3 aTan, float4 aC0, float4 aC1,\n");
+    emit(s, "void main(float3 aPos, float aMtx, float3 aNrm, float4 aC0, float4 aC1,\n");
     emit(s, "    float2 aT0, float2 aT1, float2 aT2, float2 aT3,\n");
     emit(s, "    uniform float4 uPos[30], uniform float4 uNrm[30], uniform float4 uProj[4],\n");
     emit(s, "    uniform float4 uTex[24], uniform float4 uPost[24], uniform float4 uLight[40],\n");
@@ -1418,32 +1560,17 @@ static bool build_vertex_source(const GxrVtxKey* key, Source* s)
     emit(s, "    vPosition = float4(uProj[1].z * wc + uProj[1].w * xc, uProj[2].x * wc + uProj[2].y * yc,\n");
     emit(s, "                       uProj[2].z * wc + zc * uProj[2].w, wc);\n");
     emit(s, "    vColor0 = float4(0.0, 0.0, 0.0, 0.0);\n    vColor1 = float4(0.0, 0.0, 0.0, 0.0);\n");
-    for (u32 i = 0; i < GXR_MAX_TEXCOORDS; ++i)
-        emit(s, "    float2 tc%u = float2(0.0, 0.0);\n", i);
     for (u32 i = 0; i < key->channel_count && i < 2u; ++i) {
         const char* vc = i == 0 ? "aC0" : "aC1";
         emit_light_channel(s, key, i, false, vc);
         emit_light_channel(s, key, i, true, vc);
     }
     for (u32 i = 0; i < GXR_MAX_TEXCOORDS; ++i) {
-        if (i >= key->texgen_count) {
-            emit(s, "    vTex%u = tc%u;\n", i, i);
-            continue;
-        }
+        if (i >= key->texgen_count) { emit(s, "    vTex%u = float2(0.0, 0.0);\n", i); continue; }
         const GxrVtxTexGen* tg = &key->tg[i];
         const u32 r = i * 3u;
         emit(s, "    {\n        float3 t = float3(0.0, 0.0, 1.0);\n");
-        if (tg->type >= GX_TG_BUMP0 && tg->type <= GX_TG_BUMP7) {
-            const u32 source = (u32) tg->source - (u32) GX_TG_TEXCOORD0;
-            const u32 light = (u32) tg->type - (u32) GX_TG_BUMP0;
-            if (source < i)
-                emit(s, "        t.xy = tc%u;\n", source);
-            emit(s, "        float3 btan = float3(dot(uNrm[m].xyz, aTan), dot(uNrm[m + 1].xyz, aTan), dot(uNrm[m + 2].xyz, aTan));\n");
-            emit(s, "        float3 bbnr = float3(dot(uNrm[m].xyz, aBnr), dot(uNrm[m + 1].xyz, aBnr), dot(uNrm[m + 2].xyz, aBnr));\n");
-            emit(s, "        float3 ldir = uLight[%u].xyz - eye;\n", light * 5u + 1u);
-            emit(s, "        float ll2 = dot(ldir, ldir);\n");
-            emit(s, "        if (ll2 > 1e-16) { ldir = ldir * (1.0 / sqrt(ll2)); t.xy = t.xy + float2(dot(ldir, btan), dot(ldir, bbnr)); }\n");
-        } else if (tg->source >= GX_TG_TEX0 && tg->source <= GX_TG_TEX7)
+        if (tg->source >= GX_TG_TEX0 && tg->source <= GX_TG_TEX7)
             emit(s, "        t.xy = %s;\n", tex_attr_name(tg->source));
         else if (tg->source == GX_TG_POS) emit(s, "        t = aPos;\n");
         else if (tg->source == GX_TG_NRM) emit(s, "        t = aNrm;\n");
@@ -1469,8 +1596,113 @@ static bool build_vertex_source(const GxrVtxKey* key, Source* s)
                  r, r, r + 1u, r + 1u, r + 2u, r + 2u);
             emit(s, "        t = pr;\n        t.xy = (pr.z != 0.0) ? pr.xy / pr.z : pr.xy;\n");
         }
-        emit(s, "        tc%u = t.xy;\n        vTex%u = tc%u;\n    }\n",
-             i, i, i);
+        emit(s, "        vTex%u = t.xy;\n    }\n", i);
+    }
+    emit(s, "}\n");
+    return !s->overflow;
+}
+
+static bool build_bump_vertex_source(
+    const GxrBumpVtxKey* bump_key, Source* s)
+{
+    const GxrVtxKey* key = &bump_key->legacy;
+    const struct melee_vita_bump_plan* plan = &bump_key->plan;
+    emit(s, "void main(float3 aPos, float aMtx, float3 aNrm,\n");
+    emit(s, "    float3 aBinormal, float3 aTangent,\n");
+    emit(s, "    float4 aC0, float4 aC1,\n");
+    emit(s, "    float2 aT0, float2 aT1, float2 aT2, float2 aT3,\n");
+    emit(s, "    uniform float4 uPos[30], uniform float4 uNrm[30], uniform float4 uProj[4],\n");
+    emit(s, "    uniform float4 uTex[24], uniform float4 uPost[24], uniform float4 uLight[40],\n");
+    emit(s, "    uniform float4 uMat[2], uniform float4 uAmb[2],\n");
+    emit(s, "    out float4 vPosition : POSITION,\n");
+    emit(s, "    out float4 vColor0 : COLOR0, out float4 vColor1 : COLOR1,\n");
+    emit(s, "    out float2 vTex0 : TEXCOORD0, out float2 vTex1 : TEXCOORD1,\n");
+    emit(s, "    out float2 vTex2 : TEXCOORD2, out float2 vTex3 : TEXCOORD3,\n");
+    emit(s, "    out float2 vTex4 : TEXCOORD4, out float2 vTex5 : TEXCOORD5,\n");
+    emit(s, "    out float2 vTex6 : TEXCOORD6, out float2 vTex7 : TEXCOORD7)\n{\n");
+    if (key->has_mtxidx)
+        emit(s, "    int m = int(floor(aMtx / 3.0 + 0.01)) * 3;\n");
+    else
+        emit(s, "    int m = 0;\n");
+    emit(s, "    float4 p = float4(aPos, 1.0);\n");
+    emit(s, "    float3 eye = float3(dot(uPos[m], p), dot(uPos[m + 1], p), dot(uPos[m + 2], p));\n");
+    emit(s, "    float3 nrm = float3(dot(uNrm[m].xyz, aNrm), dot(uNrm[m + 1].xyz, aNrm), dot(uNrm[m + 2].xyz, aNrm));\n");
+    emit(s, "    float nl2 = dot(nrm, nrm);\n");
+    emit(s, "    nrm = (nl2 > 1e-16) ? nrm * (1.0 / sqrt(nl2)) : nrm;\n");
+    emit(s, "    float3 binormal = float3(dot(uNrm[m].xyz, aBinormal), dot(uNrm[m + 1].xyz, aBinormal), dot(uNrm[m + 2].xyz, aBinormal));\n");
+    emit(s, "    float3 tangent = float3(dot(uNrm[m].xyz, aTangent), dot(uNrm[m + 1].xyz, aTangent), dot(uNrm[m + 2].xyz, aTangent));\n");
+    if (key->perspective) {
+        emit(s, "    float xc = eye.x * uProj[0].x + eye.z * uProj[0].y;\n");
+        emit(s, "    float yc = eye.y * uProj[0].z + eye.z * uProj[0].w;\n");
+        emit(s, "    float zc = uProj[1].y + eye.z * uProj[1].x;\n");
+        emit(s, "    float wc = -eye.z;\n");
+    } else {
+        emit(s, "    float xc = uProj[0].y + eye.x * uProj[0].x;\n");
+        emit(s, "    float yc = uProj[0].w + eye.y * uProj[0].z;\n");
+        emit(s, "    float zc = uProj[1].y + eye.z * uProj[1].x;\n");
+        emit(s, "    float wc = 1.0;\n");
+    }
+    emit(s, "    vPosition = float4(uProj[1].z * wc + uProj[1].w * xc, uProj[2].x * wc + uProj[2].y * yc,\n");
+    emit(s, "                       uProj[2].z * wc + zc * uProj[2].w, wc);\n");
+    emit(s, "    vColor0 = float4(0.0, 0.0, 0.0, 0.0);\n    vColor1 = float4(0.0, 0.0, 0.0, 0.0);\n");
+    for (u32 i = 0; i < key->channel_count && i < 2u; ++i) {
+        const char* vc = i == 0 ? "aC0" : "aC1";
+        emit_light_channel(s, key, i, false, vc);
+        emit_light_channel(s, key, i, true, vc);
+    }
+    for (u32 i = 0; i < GXR_MAX_TEXCOORDS; ++i) {
+        if (i >= key->texgen_count) {
+            emit(s, "    vTex%u = float2(0.0, 0.0);\n", i);
+            continue;
+        }
+        const GxrVtxTexGen* tg = &key->tg[i];
+        const u32 r = i * 3u;
+        u8 bump_source, bump_light;
+        emit(s, "    {\n        float3 t = float3(0.0, 0.0, 1.0);\n");
+        if (melee_vita_bump_stage(
+                plan, (u8) i, GX_TG_BUMP0, GX_TG_TEXCOORD0,
+                &bump_source, &bump_light)) {
+            emit(s, "        t.xy = vTex%u;\n", bump_source);
+            emit(s, "        float3 ldir = uLight[%u].xyz - eye;\n",
+                 (u32) bump_light * 5u + 1u);
+            emit(s, "        float ll2 = dot(ldir, ldir);\n");
+            emit(s, "        if (ll2 > 1e-16) {\n");
+            emit(s, "            ldir = ldir * (1.0 / sqrt(ll2));\n");
+            emit(s, "            t.x += dot(ldir, tangent);\n");
+            emit(s, "            t.y += dot(ldir, binormal);\n");
+            emit(s, "        }\n");
+            emit(s, "        vTex%u = t.xy;\n    }\n", i);
+            continue;
+        }
+        if (tg->source >= GX_TG_TEX0 && tg->source <= GX_TG_TEX7)
+            emit(s, "        t.xy = %s;\n", tex_attr_name(tg->source));
+        else if (tg->source == GX_TG_POS) emit(s, "        t = aPos;\n");
+        else if (tg->source == GX_TG_NRM) emit(s, "        t = aNrm;\n");
+        else if (tg->source == GX_TG_COLOR0) emit(s, "        t.xy = vColor0.xy;\n");
+        else if (tg->source == GX_TG_COLOR1) emit(s, "        t.xy = vColor1.xy;\n");
+        if (tg->has_matrix) {
+            const bool pn =
+                tg->source == GX_TG_POS || tg->source == GX_TG_NRM;
+            const char* w = tg->source == GX_TG_NRM ? "0.0" : "1.0";
+            emit(s, "        float3 src = float3(t.xy, %s);\n",
+                 pn ? "t.z" : "1.0");
+            if (tg->type == GX_TG_MTX2x4)
+                emit(s, "        t = float3(dot(uTex[%u].xyz, src) + uTex[%u].w * %s, dot(uTex[%u].xyz, src) + uTex[%u].w * %s, 1.0);\n",
+                     r, r, w, r + 1u, r + 1u, w);
+            else
+                emit(s, "        t = float3(dot(uTex[%u].xyz, src) + uTex[%u].w * %s, dot(uTex[%u].xyz, src) + uTex[%u].w * %s, dot(uTex[%u].xyz, src) + uTex[%u].w * %s);\n",
+                     r, r, w, r + 1u, r + 1u, w, r + 2u, r + 2u, w);
+        }
+        if (tg->type == GX_TG_MTX3x4 && !tg->has_post)
+            emit(s, "        t.xy = (t.z != 0.0) ? t.xy / t.z : t.xy;\n");
+        if (tg->has_post) {
+            if (tg->normalize)
+                emit(s, "        { float tl = sqrt(dot(t, t)); t = (tl > 1e-8) ? t / tl : t; }\n");
+            emit(s, "        float3 pr = float3(dot(uPost[%u].xyz, t) + uPost[%u].w, dot(uPost[%u].xyz, t) + uPost[%u].w, dot(uPost[%u].xyz, t) + uPost[%u].w);\n",
+                 r, r, r + 1u, r + 1u, r + 2u, r + 2u);
+            emit(s, "        t = pr;\n        t.xy = (pr.z != 0.0) ? pr.xy / pr.z : pr.xy;\n");
+        }
+        emit(s, "        vTex%u = t.xy;\n    }\n", i);
     }
     emit(s, "}\n");
     return !s->overflow;
@@ -1478,8 +1710,8 @@ static bool build_vertex_source(const GxrVtxKey* key, Source* s)
 
 static GxrVtxProgram* find_vertex_program(const GxrVtxKey* key)
 {
-    const u64 hash = fnv1a(key, sizeof(*key),
-                           UINT64_C(0x9e3779b97f4a7c15) ^ GXR_VTX_VERSION);
+    const u64 hash =
+        melee_vita_gxr_legacy_vertex_hash(key, sizeof(*key));
     GxrVtxProgram** bucket = &s_vtx_programs[hash % GXR_PROGRAM_BUCKETS];
     for (GxrVtxProgram* p = *bucket; p != NULL; p = p->next)
         if (p->hash == hash && memcmp(&p->key, key, sizeof(*key)) == 0)
@@ -1530,18 +1762,16 @@ static GxrVtxProgram* find_vertex_program(const GxrVtxKey* key)
         { "aPos", 0, SCE_GXM_ATTRIBUTE_FORMAT_F32, 3 },
         { "aMtx", 12, SCE_GXM_ATTRIBUTE_FORMAT_F32, 1 },
         { "aNrm", 16, SCE_GXM_ATTRIBUTE_FORMAT_F32, 3 },
-        { "aBnr", 28, SCE_GXM_ATTRIBUTE_FORMAT_F16, 3 },
-        { "aTan", 34, SCE_GXM_ATTRIBUTE_FORMAT_F16, 3 },
-        { "aC0", 40, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4 },
-        { "aC1", 44, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4 },
-        { "aT0", 48, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
-        { "aT1", 56, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
-        { "aT2", 64, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
-        { "aT3", 72, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+        { "aC0", 28, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4 },
+        { "aC1", 32, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4 },
+        { "aT0", 36, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+        { "aT1", 44, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+        { "aT2", 52, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+        { "aT3", 60, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
     };
-    SceGxmVertexAttribute attributes[11];
+    SceGxmVertexAttribute attributes[9];
     u32 count = 0;
-    for (u32 i = 0; i < 11u; ++i) {
+    for (u32 i = 0; i < 9u; ++i) {
         const SceGxmProgramParameter* param = sceGxmProgramFindParameterByName(p->program, attrs[i].name);
         if (param == NULL) continue;
         attributes[count].streamIndex = 0;
@@ -1568,6 +1798,139 @@ static GxrVtxProgram* find_vertex_program(const GxrVtxKey* key)
     p->u_mat = sceGxmProgramFindParameterByName(p->program, "uMat");
     p->u_amb = sceGxmProgramFindParameterByName(p->program, "uAmb");
     p->failed = false;
+    return p;
+}
+
+static GxrBumpVtxProgram* find_bump_vertex_program(
+    const GxrBumpVtxKey* key)
+{
+    const u64 hash = melee_vita_gxr_bump_vertex_hash(
+        &key->legacy, sizeof(key->legacy), &key->plan);
+    GxrBumpVtxProgram** bucket =
+        &s_bump_vtx_programs[hash % GXR_PROGRAM_BUCKETS];
+    for (GxrBumpVtxProgram* p = *bucket; p != NULL; p = p->next)
+        if (p->hash == hash && memcmp(&p->key, key, sizeof(*key)) == 0)
+            return p;
+    if (s_bump_vtx_program_count >= GXR_BUMP_PROGRAM_LIMIT) {
+        if (s_bump_stats.program_limit++ < 8u)
+            melee_vita_log_info(
+                "[GXR/BUMP] reject program-limit hash=%016llx limit=%u",
+                (unsigned long long) hash, GXR_BUMP_PROGRAM_LIMIT);
+        return NULL;
+    }
+    GxrBumpVtxProgram* p = calloc(1, sizeof(*p));
+    if (p == NULL) return NULL;
+    ++s_bump_vtx_program_count;
+    p->hash = hash;
+    p->key = *key;
+    p->next = *bucket;
+    *bucket = p;
+    p->failed = true;
+
+    static char buffer[GXR_SOURCE_CAPACITY];
+    Source source = { buffer, 0, sizeof(buffer), false };
+    p->program = load_bump_cached(hash);
+    if (p->program != NULL) {
+        ++s_bump_stats.cache_loaded;
+    } else {
+        const u64 started = sceKernelGetProcessTimeWide();
+        buffer[0] = '\0';
+        if (!build_bump_vertex_source(key, &source)) {
+            melee_vita_log_info(
+                "[GXR/BUMP] reject source-overflow hash=%016llx",
+                (unsigned long long) hash);
+            return p;
+        }
+        s_bump_stats.source_us +=
+            sceKernelGetProcessTimeWide() - started;
+        p->program = compile_bump_program(buffer, hash);
+    }
+    SceGxmShaderPatcher* patcher = gxr_patcher();
+    const u64 register_started = sceKernelGetProcessTimeWide();
+    if (p->program == NULL ||
+        sceGxmShaderPatcherRegisterProgram(
+            patcher, p->program, &p->id) < 0) {
+        melee_vita_log_info(
+            "[GXR/BUMP] reject register hash=%016llx",
+            (unsigned long long) hash);
+        return p;
+    }
+    s_bump_stats.register_us +=
+        sceKernelGetProcessTimeWide() - register_started;
+    static const struct {
+        const char* name;
+        u16 offset;
+        u8 format;
+        u8 count;
+        bool required;
+    } attrs[] = {
+        { "aPos", 0, SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, true },
+        { "aMtx", 12, SCE_GXM_ATTRIBUTE_FORMAT_F32, 1, false },
+        { "aNrm", 16, SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, true },
+        { "aC0", 28, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4, false },
+        { "aC1", 32, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4, false },
+        { "aT0", 36, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2, false },
+        { "aT1", 44, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2, false },
+        { "aT2", 52, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2, false },
+        { "aT3", 60, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2, false },
+        { "aBinormal", 68, SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, true },
+        { "aTangent", 80, SCE_GXM_ATTRIBUTE_FORMAT_F32, 3, true },
+    };
+    SceGxmVertexAttribute attributes[11];
+    u32 count = 0;
+    for (u32 i = 0; i < 11u; ++i) {
+        const SceGxmProgramParameter* param =
+            sceGxmProgramFindParameterByName(p->program, attrs[i].name);
+        if (param == NULL) {
+            if (attrs[i].required) {
+                melee_vita_log_info(
+                    "[GXR/BUMP] reject missing-attribute %s hash=%016llx",
+                    attrs[i].name, (unsigned long long) hash);
+                return p;
+            }
+            continue;
+        }
+        attributes[count].streamIndex = 0;
+        attributes[count].offset = attrs[i].offset;
+        attributes[count].format = attrs[i].format;
+        attributes[count].componentCount = attrs[i].count;
+        attributes[count].regIndex =
+            (u16) sceGxmProgramParameterGetResourceIndex(param);
+        ++count;
+    }
+    const SceGxmVertexStream stream = {
+        sizeof(GxrGpuBumpVertex), SCE_GXM_INDEX_SOURCE_INDEX_16BIT,
+    };
+    const u64 patch_started = sceKernelGetProcessTimeWide();
+    if (sceGxmShaderPatcherCreateVertexProgram(
+            patcher, p->id, attributes, count, &stream, 1, &p->vertex) < 0) {
+        melee_vita_log_info(
+            "[GXR/BUMP] reject patch hash=%016llx",
+            (unsigned long long) hash);
+        return p;
+    }
+    s_bump_stats.vertex_patch_us +=
+        sceKernelGetProcessTimeWide() - patch_started;
+    p->u_pos = sceGxmProgramFindParameterByName(p->program, "uPos");
+    p->u_nrm = sceGxmProgramFindParameterByName(p->program, "uNrm");
+    p->u_proj = sceGxmProgramFindParameterByName(p->program, "uProj");
+    p->u_tex = sceGxmProgramFindParameterByName(p->program, "uTex");
+    p->u_post = sceGxmProgramFindParameterByName(p->program, "uPost");
+    p->u_light = sceGxmProgramFindParameterByName(p->program, "uLight");
+    p->u_mat = sceGxmProgramFindParameterByName(p->program, "uMat");
+    p->u_amb = sceGxmProgramFindParameterByName(p->program, "uAmb");
+    if (p->u_pos == NULL || p->u_nrm == NULL ||
+        p->u_proj == NULL || p->u_light == NULL) {
+        melee_vita_log_info(
+            "[GXR/BUMP] reject missing-uniform hash=%016llx",
+            (unsigned long long) hash);
+        return p;
+    }
+    p->failed = false;
+    melee_vita_log_info(
+        "[GXR/BUMP] program ready hash=%016llx slot=%u source=%s",
+        (unsigned long long) hash, s_bump_vtx_program_count,
+        source.length == 0u ? "cache" : "compile");
     return p;
 }
 
@@ -1709,16 +2072,8 @@ bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
     {
         const u32 lights_used = (u32) (vkey->chan[0].lights | vkey->chan[1].lights |
                                        vkey->chan[2].lights | vkey->chan[3].lights);
-        u32 bump_lights = 0u;
-        for (u32 i = 0; i < vkey->texgen_count; ++i) {
-            if (vkey->tg[i].type >= GX_TG_BUMP0 &&
-                vkey->tg[i].type <= GX_TG_BUMP7)
-                bump_lights |= 1u << (vkey->tg[i].type - GX_TG_BUMP0);
-        }
         u32 top = 8u;
-        while (top > 0u &&
-               ((lights_used | bump_lights) & (1u << (top - 1u))) == 0u)
-            --top;
+        while (top > 0u && (lights_used & (1u << (top - 1u))) == 0u) --top;
         light_comps = top * 20u;
     }
     total = 2u * mtx_comps + 16u + 2u * tg_comps + light_comps + 16u;
@@ -1766,6 +2121,146 @@ bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
     ++s_stats.draws;
 #undef GXR_DETAIL_START
 #undef GXR_DETAIL_END
+    return true;
+}
+
+static bool bump_uniform_fits(
+    const SceGxmProgramParameter* param, u32 components)
+{
+    if (param == NULL) return components == 0u;
+    return (u32) sceGxmProgramParameterGetArraySize(param) *
+               (u32) sceGxmProgramParameterGetComponentCount(param) >=
+           components;
+}
+
+bool gxr_draw_bump_gpu(
+    const GxrDraw* draw, const GxrBumpVtxKey* vkey,
+    const GxrVtxUniforms* u, const GxrGpuBumpVertex* vertices,
+    const u16* indices, u32 count, u8 cull)
+{
+    static GxrBumpVtxProgram* last_vp;
+    GxrBumpVtxProgram* vp;
+    GxrProgram* program;
+    SceGxmFragmentProgram* fragment;
+    RqDraw* d;
+    u32 mtx_comps, tg_comps, light_comps, total;
+    f32* out;
+    if (!s_ready || draw == NULL || vkey == NULL || u == NULL ||
+        vertices == NULL || indices == NULL || count == 0u ||
+        vkey->plan.mask == 0u) {
+        ++s_bump_stats.fallback;
+        return false;
+    }
+    if (cull == GXR_CULL_ALL) return true;
+    vp = (last_vp != NULL &&
+          memcmp(&last_vp->key, vkey, sizeof(*vkey)) == 0)
+        ? last_vp
+        : find_bump_vertex_program(vkey);
+    last_vp = vp;
+    if (vp == NULL || vp->failed) {
+        ++s_bump_stats.fallback;
+        return false;
+    }
+    program = lookup_program(&draw->key);
+    if (program == NULL || program->failed) {
+        ++s_bump_stats.fallback;
+        return false;
+    }
+    fragment = find_fragment(program, draw);
+    if (fragment == NULL) {
+        ++s_bump_stats.fallback;
+        return false;
+    }
+
+    mtx_comps = vkey->legacy.has_mtxidx ? 120u : 12u;
+    tg_comps = vkey->legacy.texgen_count * 12u;
+    {
+        u32 lights_used = (u32) (
+            vkey->legacy.chan[0].lights | vkey->legacy.chan[1].lights |
+            vkey->legacy.chan[2].lights | vkey->legacy.chan[3].lights);
+        for (u32 i = 0; i < vkey->plan.count; ++i) {
+            if ((vkey->plan.mask & (1u << i)) != 0u)
+                lights_used |= 1u << (
+                    vkey->plan.type[i] - (u32) GX_TG_BUMP0);
+        }
+        u32 top = 8u;
+        while (top > 0u &&
+               (lights_used & (1u << (top - 1u))) == 0u) {
+            --top;
+        }
+        light_comps = top * 20u;
+    }
+    if (!bump_uniform_fits(vp->u_pos, mtx_comps) ||
+        !bump_uniform_fits(vp->u_nrm, mtx_comps) ||
+        !bump_uniform_fits(vp->u_proj, 16u) ||
+        !bump_uniform_fits(vp->u_tex, vp->u_tex ? tg_comps : 0u) ||
+        !bump_uniform_fits(vp->u_post, vp->u_post ? tg_comps : 0u) ||
+        !bump_uniform_fits(vp->u_light, light_comps) ||
+        !bump_uniform_fits(vp->u_mat, vp->u_mat ? 8u : 0u) ||
+        !bump_uniform_fits(vp->u_amb, vp->u_amb ? 8u : 0u)) {
+        if (s_bump_stats.uniform_reject++ < 8u)
+            melee_vita_log_info(
+                "[GXR/BUMP] reject uniform-capacity hash=%016llx "
+                "mtx=%u tex=%u light=%u",
+                (unsigned long long) vp->hash,
+                mtx_comps, tg_comps, light_comps);
+        ++s_bump_stats.fallback;
+        return false;
+    }
+
+    total =
+        2u * mtx_comps + 16u + 2u * tg_comps + light_comps + 16u;
+    d = melee_vita_rq_push(
+        exec_draw, sizeof(RqDraw) + total * sizeof(f32));
+    if (d == NULL) {
+        ++s_bump_stats.fallback;
+        return false;
+    }
+    memset(d, 0, sizeof(*d));
+    d->vertex = vp->vertex;
+    d->fragment = fragment;
+    d->program = program;
+    d->bump_vp = vp;
+    d->bump_path = 1u;
+    d->vertices = vertices;
+    d->indices = indices;
+    d->count = count;
+    d->depth_function = draw_depth_function(draw);
+    d->depth_write = draw->depth_write
+        ? SCE_GXM_DEPTH_WRITE_ENABLED
+        : SCE_GXM_DEPTH_WRITE_DISABLED;
+    d->cull = cull_mode_for(cull);
+    d->primitive = gxm_primitive(draw->primitive);
+    d->line_width =
+        draw->line_width < 1.0f ? 1u : (u32) (draw->line_width + 0.5f);
+    d->mtx_comps = (u16) mtx_comps;
+    d->tg_comps = (u16) tg_comps;
+    d->light_comps = (u16) light_comps;
+    memcpy(d->registers, draw->registers, sizeof(d->registers));
+    memcpy(d->konst, draw->konst, sizeof(d->konst));
+    d->alpha_ref[0] = (f32) draw->key.alpha_ref[0];
+    d->alpha_ref[1] = (f32) draw->key.alpha_ref[1];
+    d->z_bias = (f32) draw->z_tex_bias;
+    memcpy(d->fog_color, draw->fog_color, sizeof(d->fog_color));
+    memcpy(d->fog_params, draw->fog_params, sizeof(d->fog_params));
+    resolve_textures(draw, d);
+    out = d->uniforms;
+    memcpy(out, u->pos, mtx_comps * sizeof(f32));
+    out += mtx_comps;
+    memcpy(out, u->nrm, mtx_comps * sizeof(f32));
+    out += mtx_comps;
+    memcpy(out, u->proj, 16u * sizeof(f32));
+    out += 16u;
+    memcpy(out, u->tex, tg_comps * sizeof(f32));
+    out += tg_comps;
+    memcpy(out, u->post, tg_comps * sizeof(f32));
+    out += tg_comps;
+    memcpy(out, u->light, light_comps * sizeof(f32));
+    out += light_comps;
+    memcpy(out, u->mat, 8u * sizeof(f32));
+    out += 8u;
+    memcpy(out, u->amb, 8u * sizeof(f32));
+    ++s_bump_stats.draws;
     return true;
 }
 
@@ -1840,25 +2335,45 @@ static void exec_draw(const void* payload)
         }
     } else {
         const GxrVtxProgram* vp = d->vp;
+        const GxrBumpVtxProgram* bump_vp = d->bump_vp;
+        const SceGxmProgramParameter* u_pos =
+            d->bump_path ? bump_vp->u_pos : vp->u_pos;
+        const SceGxmProgramParameter* u_nrm =
+            d->bump_path ? bump_vp->u_nrm : vp->u_nrm;
+        const SceGxmProgramParameter* u_proj =
+            d->bump_path ? bump_vp->u_proj : vp->u_proj;
+        const SceGxmProgramParameter* u_tex =
+            d->bump_path ? bump_vp->u_tex : vp->u_tex;
+        const SceGxmProgramParameter* u_post =
+            d->bump_path ? bump_vp->u_post : vp->u_post;
+        const SceGxmProgramParameter* u_light =
+            d->bump_path ? bump_vp->u_light : vp->u_light;
+        const SceGxmProgramParameter* u_mat =
+            d->bump_path ? bump_vp->u_mat : vp->u_mat;
+        const SceGxmProgramParameter* u_amb =
+            d->bump_path ? bump_vp->u_amb : vp->u_amb;
         const f32* in = d->uniforms;
         void* vbuf = NULL;
         sceGxmReserveVertexDefaultUniformBuffer(context, &vbuf);
         if (vbuf != NULL) {
-            if (vp->u_pos) set_uniform(vbuf, vp->u_pos, d->mtx_comps, in, "u_pos");
+            if (u_pos) set_uniform(vbuf, u_pos, d->mtx_comps, in, "u_pos");
             in += d->mtx_comps;
-            if (vp->u_nrm) set_uniform(vbuf, vp->u_nrm, d->mtx_comps, in, "u_nrm");
+            if (u_nrm) set_uniform(vbuf, u_nrm, d->mtx_comps, in, "u_nrm");
             in += d->mtx_comps;
-            if (vp->u_proj) set_uniform(vbuf, vp->u_proj, 16, in, "u_proj");
+            if (u_proj) set_uniform(vbuf, u_proj, 16, in, "u_proj");
             in += 16u;
-            if (vp->u_tex && d->tg_comps) set_uniform(vbuf, vp->u_tex, d->tg_comps, in, "tex");
+            if (u_tex && d->tg_comps)
+                set_uniform(vbuf, u_tex, d->tg_comps, in, "tex");
             in += d->tg_comps;
-            if (vp->u_post && d->tg_comps) set_uniform(vbuf, vp->u_post, d->tg_comps, in, "post");
+            if (u_post && d->tg_comps)
+                set_uniform(vbuf, u_post, d->tg_comps, in, "post");
             in += d->tg_comps;
-            if (vp->u_light && d->light_comps) set_uniform(vbuf, vp->u_light, d->light_comps, in, "light");
+            if (u_light && d->light_comps)
+                set_uniform(vbuf, u_light, d->light_comps, in, "light");
             in += d->light_comps;
-            if (vp->u_mat) set_uniform(vbuf, vp->u_mat, 8, in, "u_mat");
+            if (u_mat) set_uniform(vbuf, u_mat, 8, in, "u_mat");
             in += 8u;
-            if (vp->u_amb) set_uniform(vbuf, vp->u_amb, 8, in, "u_amb");
+            if (u_amb) set_uniform(vbuf, u_amb, 8, in, "u_amb");
         }
     }
     {

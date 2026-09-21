@@ -30,6 +30,16 @@
 #include <sysdolphin/baselib/gobjplink.h>
 #include <sysdolphin/baselib/gobjproc.h>
 
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+extern void melee_vita_bump_scope_begin(void);
+extern bool melee_vita_bump_scope_register(const void* identity);
+
+static void vi1201v2_EnableGpuBump(HSD_GObj* gobj)
+{
+    (void) melee_vita_bump_scope_register(gobj);
+}
+#endif
+
 /// @todo .sdata2 order hack
 #ifdef MUST_MATCH
 static void order_sdata2(void)
@@ -103,6 +113,9 @@ void un_803205F4(void)
         DP(HSD_Joint, vi_SceneModel(un_804D7010, 1)->joint));
     HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
     GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 0xB, 0);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    vi1201v2_EnableGpuBump(gobj);
+#endif
     gm_8016895C(jobj, vi_SceneModel(un_804D7010, 1), 0);
     HSD_JObjReqAnimAll(jobj, 251.0f);
     HSD_GObj_SetupProc(gobj, mn_8022EAE0, 0);
@@ -161,6 +174,9 @@ void un_803207C4(void)
             new_var = gobj;
             HSD_GObjObject_80390A70(new_var, HSD_GObj_JObjKind, jobj);
             GObj_SetupGXLink(new_var, HSD_GObj_JObjCallback, 0xB, 0);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+            vi1201v2_EnableGpuBump(new_var);
+#endif
             gm_8016895C(jobj, model, 0);
             HSD_JObjReqAnimAll(jobj, 0.0f);
             HSD_JObjAnimAll(jobj);
@@ -247,6 +263,9 @@ static inline void un_80320A40_SetupKoopa(void)
     jobj = HSD_JObjLoadJoint(un_804D7020);
     HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
     GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 0xB, 0);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    vi1201v2_EnableGpuBump(gobj);
+#endif
     HSD_JObjSetScaleX(jobj, 0.55f);
     HSD_JObjSetScaleY(jobj, 0.55f);
     HSD_JObjSetScaleZ(jobj, 0.55f);
@@ -268,6 +287,9 @@ static inline void un_80320A40_SetupStand(void)
         DP(HSD_Joint, vi_SceneModel(un_804D7014, 0)->joint));
     HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
     GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 0xB, 0);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    vi1201v2_EnableGpuBump(gobj);
+#endif
     HSD_GObj_SetupProc(gobj, un_803204C0, 0x17);
 
     if (jobj == NULL) {
@@ -315,6 +337,10 @@ void vi1201v2_Scene_OnEnter(void* arg)
     lbAudioAx_80024E50(1);
 
     un_80320A40_LoadAssets(input);
+
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    melee_vita_bump_scope_begin();
+#endif
 
     un_80320A40_SetupCamera();
 

@@ -22,6 +22,10 @@
 #include "../vita_log.h"
 
 extern unsigned int aurora_draw_tag;
+#if !defined(MELEE_VITA_RELEASE) || defined(MELEE_VITA_GPU_BUMP_DL)
+typedef struct HSD_GObj HSD_GObj;
+extern HSD_GObj* HSD_GObj_804D7814;
+#endif
 
 typedef struct VitaTexObj {
     const void* data;
@@ -1303,6 +1307,14 @@ static u32 s_prof_vertices;
 static u64 s_prof_decode_us, s_prof_fill_us;
 static u32 s_prof_draws;
 
+#ifndef MELEE_VITA_RELEASE
+void melee_vita_prof_get_geometry(u32* draws, u32* vertices)
+{
+    *draws = s_prof_draws;
+    *vertices = s_prof_vertices;
+}
+#endif
+
 /* GX draws points as screen-aligned sprites: the point size is a screen-space
  * square around the vertex, and GXEnableTexOffsets spreads texture coordinates
  * across it.  GXM points are single-texel dots, so each point becomes a quad
@@ -2127,9 +2139,33 @@ typedef struct DlCacheEntry {
     struct DlCacheEntry* next;
 } DlCacheEntry;
 
+typedef struct BumpDlCacheEntry {
+    const void* list;
+    u32 bytes;
+    u32 state_hash;
+    u32 scope_generation;
+    u32 content_hash;
+    u32 last_frame;
+    u32 validated_frame;
+    GxrGpuBumpVertex* vertices;
+    u16* indices;
+    u32 tri_count, line_count, point_count;
+    u32 vertex_count;
+    u8 has_mtxidx;
+    u8 array_count;
+    struct { u8 attr; u32 end; } ranges[GX_VA_MAX_ATTR];
+    struct BumpDlCacheEntry* next;
+} BumpDlCacheEntry;
+
 static DlCacheEntry* s_dl_cache[DL_CACHE_BUCKETS];
+static BumpDlCacheEntry* s_bump_dl_cache[DL_CACHE_BUCKETS];
 static u32 s_dl_state_hash, s_dl_state_gen;
 static struct { u32 hits, builds, rebuilds, fallbacks, entries; u64 hash_us; } s_dl_stats;
+static struct {
+    u32 hits, builds, rebuilds, entries;
+    u32 reject_scope, reject_plan, reject_nbt, reject_build, reject_primitive,
+        reject_submit;
+} s_bump_dl_stats;
 static struct { const void* data; u32 length; u32 hash; u32 frame; } s_array_hash[ARRAY_HASH_SLOTS];
 
 static u32 hash_bytes(const u8* p, u32 n, u32 h)
@@ -2216,6 +2252,20 @@ static u32 entry_content_hash(const DlCacheEntry* e)
     return h;
 }
 
+static u32 bump_entry_content_hash(const BumpDlCacheEntry* e)
+{
+    u32 h = hash_bytes(e->list, e->bytes, 0x1234567u);
+    for (u32 i = 0; i < e->array_count; ++i) {
+        const VitaArrayState* array =
+            &s_gx.arrays[e->ranges[i].attr];
+        const u32 length =
+            array->size != 0 ? array->size : e->ranges[i].end;
+        h ^= array_content_hash(array->data, length) +
+             0x9e3779b9u + (h << 6) + (h >> 2);
+    }
+    return h;
+}
+
 /* GPU commands for the current and previous frames may still reference a
  * buffer, so arena memory is released a few frames after it was dropped. */
 #define DEFERRED_FREE_MAX 8192u
@@ -2252,6 +2302,14 @@ static void free_entry_buffers(DlCacheEntry* e)
     e->indices = NULL;
 }
 
+static void free_bump_entry_buffers(BumpDlCacheEntry* e)
+{
+    defer_free(e->vertices);
+    defer_free(e->indices);
+    e->vertices = NULL;
+    e->indices = NULL;
+}
+
 static void evict_dl_cache(u32 max_age)
 {
     const u32 frame = s_gx.copied_frames;
@@ -2269,6 +2327,20 @@ static void evict_dl_cache(u32 max_age)
             link = &e->next;
         }
     }
+    for (u32 b = 0; b < DL_CACHE_BUCKETS; ++b) {
+            BumpDlCacheEntry** link = &s_bump_dl_cache[b];
+            while (*link != NULL) {
+                BumpDlCacheEntry* e = *link;
+                if (frame - e->last_frame > max_age) {
+                    *link = e->next;
+                    free_bump_entry_buffers(e);
+                    free(e);
+                    --s_bump_dl_stats.entries;
+                    continue;
+                }
+                link = &e->next;
+            }
+        }
 }
 
 typedef struct U16Vec { u16* data; u32 count, capacity; } U16Vec;
@@ -2285,49 +2357,15 @@ static bool u16vec_push(U16Vec* v, u16 value)
 }
 
 static GxrGpuVertex* s_build_vertices;
+static GxrGpuBumpVertex* s_bump_build_vertices;
 static u32 s_build_capacity;
-
-static u16 float_to_half(f32 value)
-{
-    u32 bits;
-    u32 sign;
-    u32 mantissa;
-    s32 exponent;
-    memcpy(&bits, &value, sizeof(bits));
-    sign = (bits >> 16) & 0x8000u;
-    mantissa = bits & 0x7fffffu;
-    exponent = (s32) ((bits >> 23) & 0xffu);
-    if (exponent == 0xff) {
-        return (u16) (sign | (mantissa != 0u ? 0x7e00u : 0x7c00u));
-    }
-    exponent -= 127 - 15;
-    if (exponent <= 0) {
-        u32 shift;
-        if (exponent < -10) return (u16) sign;
-        mantissa |= 0x800000u;
-        shift = (u32) (14 - exponent);
-        mantissa += ((1u << (shift - 1u)) - 1u) +
-                    ((mantissa >> shift) & 1u);
-        return (u16) (sign | (mantissa >> shift));
-    }
-    if (exponent >= 31) return (u16) (sign | 0x7c00u);
-    mantissa += 0xfffu + ((mantissa >> 13) & 1u);
-    if ((mantissa & 0x800000u) != 0u) {
-        mantissa = 0u;
-        if (++exponent >= 31) return (u16) (sign | 0x7c00u);
-    }
-    return (u16) (sign | ((u32) exponent << 10) | (mantissa >> 13));
-}
+static u32 s_bump_build_capacity;
 
 static void to_gpu_vertex(const VitaDecodedVertex* in, GxrGpuVertex* out)
 {
     memcpy(out->pos, in->position, sizeof(out->pos));
     out->mtx = (f32) in->position_matrix;
     memcpy(out->nrm, in->normal, sizeof(out->nrm));
-    for (u32 i = 0; i < 3u; ++i) {
-        out->binormal[i] = float_to_half(in->binormal[i]);
-        out->tangent[i] = float_to_half(in->tangent[i]);
-    }
     {
         const u32 c0 = in->has_color[0] ? in->color : 0xffffffffu;
         const u32 c1 = in->has_color[1] ? in->color1 : 0xffffffffu;
@@ -2335,6 +2373,14 @@ static void to_gpu_vertex(const VitaDecodedVertex* in, GxrGpuVertex* out)
         out->c1[0] = (u8) c1; out->c1[1] = (u8) (c1 >> 8); out->c1[2] = (u8) (c1 >> 16); out->c1[3] = (u8) (c1 >> 24);
     }
     for (u32 t = 0; t < GXR_GPU_TEX; ++t) { out->tex[t][0] = in->tex[t][0]; out->tex[t][1] = in->tex[t][1]; }
+}
+
+static void to_gpu_bump_vertex(
+    const VitaDecodedVertex* in, GxrGpuBumpVertex* out)
+{
+    to_gpu_vertex(in, &out->base);
+    memcpy(out->binormal, in->binormal, sizeof(out->binormal));
+    memcpy(out->tangent, in->tangent, sizeof(out->tangent));
 }
 
 /* Decodes one primitive's vertices into s_decode_vertices (count vertices).
@@ -2512,14 +2558,178 @@ static DlCacheEntry* build_dl_entry(const void* list, u32 bytes, u32 state_hash)
     return e;
 }
 
+static BumpDlCacheEntry* build_bump_dl_entry(
+    const void* list, u32 bytes, u32 state_hash, u32 scope_generation)
+{
+    static U16Vec tris, lines, points;
+    const u8* stream = list;
+    u32 cursor = 0, total = 0;
+    u32 max_end[GX_VA_MAX_ATTR] = { 0 };
+    bool has_mtxidx = false;
+    BumpDlCacheEntry* e;
+    tris.count = lines.count = points.count = 0;
+
+    while (cursor + 3u <= bytes) {
+        const u8 command = stream[cursor];
+        const GXPrimitive primitive =
+            (GXPrimitive) (command & 0xf8u);
+        const GXVtxFmt format = (GXVtxFmt) (command & 7u);
+        const u32 count =
+            (u32) stream[cursor + 1u] << 8 | stream[cursor + 2u];
+        u32 base, i;
+        if (command == 0 || primitive < GX_QUADS ||
+            primitive > GX_POINTS || !valid_format(format)) {
+            break;
+        }
+        cursor += 3u;
+        if (total + count > 0xffffu) return NULL;
+        if (!decode_primitive_vertices(
+                stream, bytes, &cursor, format, count, max_end,
+                &has_mtxidx)) {
+            return NULL;
+        }
+        for (i = 0; i < count; ++i) {
+            if (!s_decode_vertices[i].has_nbt) {
+                ++s_bump_dl_stats.reject_nbt;
+                return NULL;
+            }
+        }
+        if (total + count > s_bump_build_capacity) {
+            u32 cap =
+                s_bump_build_capacity ? s_bump_build_capacity : 4096u;
+            while (cap < total + count) cap *= 2u;
+            GxrGpuBumpVertex* resized = realloc(
+                s_bump_build_vertices,
+                cap * sizeof(GxrGpuBumpVertex));
+            if (resized == NULL) return NULL;
+            s_bump_build_vertices = resized;
+            s_bump_build_capacity = cap;
+        }
+        base = total;
+        for (i = 0; i < count; ++i) {
+            to_gpu_bump_vertex(
+                &s_decode_vertices[i], &s_bump_build_vertices[base + i]);
+        }
+        total += count;
+#define BUMP_TRI(a, b, c) \
+    (u16vec_push(&tris, (u16) (base + (a))) && \
+     u16vec_push(&tris, (u16) (base + (b))) && \
+     u16vec_push(&tris, (u16) (base + (c))))
+        if (primitive == GX_TRIANGLES) {
+            for (i = 0; i + 2u < count; i += 3u)
+                if (!BUMP_TRI(i, i + 1u, i + 2u)) return NULL;
+        } else if (primitive == GX_QUADS) {
+            for (i = 0; i + 3u < count; i += 4u)
+                if (!BUMP_TRI(i, i + 1u, i + 2u) ||
+                    !BUMP_TRI(i, i + 2u, i + 3u)) {
+                    return NULL;
+                }
+        } else if (primitive == GX_TRIANGLESTRIP) {
+            for (i = 2; i < count; ++i) {
+                const bool ok = (i & 1u)
+                    ? BUMP_TRI(i - 1u, i - 2u, i)
+                    : BUMP_TRI(i - 2u, i - 1u, i);
+                if (!ok) return NULL;
+            }
+        } else if (primitive == GX_TRIANGLEFAN) {
+            for (i = 2; i < count; ++i)
+                if (!BUMP_TRI(0u, i - 1u, i)) return NULL;
+        } else if (primitive == GX_LINES) {
+            for (i = 0; i + 1u < count; i += 2u)
+                if (!u16vec_push(&lines, (u16) (base + i)) ||
+                    !u16vec_push(&lines, (u16) (base + i + 1u))) {
+                    return NULL;
+                }
+        } else if (primitive == GX_LINESTRIP) {
+            for (i = 1; i < count; ++i)
+                if (!u16vec_push(&lines, (u16) (base + i - 1u)) ||
+                    !u16vec_push(&lines, (u16) (base + i))) {
+                    return NULL;
+                }
+        } else {
+            for (i = 0; i < count; ++i)
+                if (!u16vec_push(&points, (u16) (base + i))) return NULL;
+        }
+#undef BUMP_TRI
+    }
+    if (total == 0u) return NULL;
+
+    e = calloc(1, sizeof(*e));
+    if (e == NULL) return NULL;
+    {
+        const u32 index_total =
+            tris.count + lines.count + points.count;
+        e->vertices = gxr_arena_alloc(
+            total * sizeof(GxrGpuBumpVertex));
+        e->indices = index_total
+            ? gxr_arena_alloc(index_total * sizeof(u16))
+            : NULL;
+        if (e->vertices == NULL ||
+            (index_total != 0u && e->indices == NULL)) {
+            free_bump_entry_buffers(e);
+            evict_dl_cache(2);
+            e->vertices = gxr_arena_alloc(
+                total * sizeof(GxrGpuBumpVertex));
+            e->indices = index_total
+                ? gxr_arena_alloc(index_total * sizeof(u16))
+                : NULL;
+            if (e->vertices == NULL ||
+                (index_total != 0u && e->indices == NULL)) {
+                free_bump_entry_buffers(e);
+                free(e);
+                return NULL;
+            }
+        }
+        memcpy(
+            e->vertices, s_bump_build_vertices,
+            total * sizeof(GxrGpuBumpVertex));
+        if (tris.count)
+            memcpy(
+                e->indices, tris.data, tris.count * sizeof(u16));
+        if (lines.count)
+            memcpy(
+                e->indices + tris.count, lines.data,
+                lines.count * sizeof(u16));
+        if (points.count)
+            memcpy(
+                e->indices + tris.count + lines.count, points.data,
+                points.count * sizeof(u16));
+    }
+    e->list = list;
+    e->bytes = bytes;
+    e->state_hash = state_hash;
+    e->scope_generation = scope_generation;
+    e->vertex_count = total;
+    e->tri_count = tris.count;
+    e->line_count = lines.count;
+    e->point_count = points.count;
+    e->has_mtxidx = has_mtxidx;
+    for (u32 attr = 0; attr < GX_VA_MAX_ATTR; ++attr) {
+        if (s_gx.descriptors[attr] == GX_INDEX8 ||
+            s_gx.descriptors[attr] == GX_INDEX16) {
+            e->ranges[e->array_count].attr = (u8) attr;
+            e->ranges[e->array_count].end = max_end[attr];
+            ++e->array_count;
+        }
+    }
+    e->content_hash = bump_entry_content_hash(e);
+    ++s_bump_dl_stats.entries;
+    return e;
+}
+
 static void copy_rows(f32 (*dst)[4], const f32 (*src)[4], u32 rows)
 {
     for (u32 r = 0; r < rows; ++r) memcpy(dst[r], src[r], 4u * sizeof(f32));
 }
 
-static void fill_vertex_key_uniforms(GxrVtxKey* key, GxrVtxUniforms* u, bool has_mtxidx)
+static int fill_vertex_key_uniforms(
+    GxrVtxKey* key, GxrVtxUniforms* u, bool has_mtxidx,
+    struct melee_vita_bump_plan* bump_plan)
 {
     const f32* v = s_gx.viewport;
+    int bump_result = MELEE_VITA_BUMP_PLAN_OK;
+    u8 texgen_types[MELEE_VITA_BUMP_TEXGEN_MAX] = { 0 };
+    u8 texgen_sources[MELEE_VITA_BUMP_TEXGEN_MAX] = { 0 };
     f32 scale, offset, yscale;
     memset(key, 0, sizeof(*key));
     key->has_mtxidx = has_mtxidx ? 1u : 0u;
@@ -2567,10 +2777,16 @@ static void fill_vertex_key_uniforms(GxrVtxKey* key, GxrVtxUniforms* u, bool has
         const VitaTexGenState* g = &s_gx.texture_generators[i];
         GxrVtxTexGen* k = &key->tg[i];
         const f32 (*m)[4] = NULL;
-        k->type = (u8) g->type;
+        texgen_types[i] = (u8) g->type;
+        texgen_sources[i] = (u8) g->source;
+        if (bump_plan != NULL && g->type >= GX_TG_BUMP0 &&
+            g->type <= GX_TG_BUMP7) {
+            k->type = (u8) g->type;
+        } else {
+            k->type = g->type == GX_TG_MTX2x4
+                ? GX_TG_MTX2x4 : GX_TG_MTX3x4;
+        }
         k->source = (u8) g->source;
-        if (g->type >= GX_TG_BUMP0 && g->type <= GX_TG_BUMP7)
-            continue;
         if (g->matrix != GX_IDENTITY) {
             m = g->matrix < GX_TEXMTX0
                 ? (const f32 (*)[4]) s_gx.position_matrices[matrix_slot(g->matrix)]
@@ -2583,6 +2799,12 @@ static void fill_vertex_key_uniforms(GxrVtxKey* key, GxrVtxUniforms* u, bool has
             k->normalize = g->normalize ? 1u : 0u;
             copy_rows(u->post + i * 3u, (const f32 (*)[4]) s_gx.post_matrices[(g->post_matrix - GX_PTTEXMTX0) / 3u], 3u);
         }
+    }
+    if (bump_plan != NULL) {
+        bump_result = melee_vita_bump_plan_build(
+            texgen_types, texgen_sources, key->texgen_count,
+            GX_TG_BUMP0, GX_TG_BUMP7, GX_TG_TEXCOORD0,
+            bump_plan);
     }
     for (u32 l = 0; l < 8u; ++l) {
         const VitaLightObj* o = &s_gx.lights[l];
@@ -2597,6 +2819,7 @@ static void fill_vertex_key_uniforms(GxrVtxKey* key, GxrVtxUniforms* u, bool has
         gxcolor_to_float(s_gx.material_colors[i], u->mat[i]);
         gxcolor_to_float(s_gx.ambient_colors[i], u->amb[i]);
     }
+    return bump_result;
 }
 
 static u8 current_cull(void)
@@ -2609,6 +2832,136 @@ static u8 current_cull(void)
     }
 }
 
+static bool uses_bump_texgen(void)
+{
+    const u32 count = s_gx.texture_generator_count < GX_MAX_TEXCOORD
+        ? s_gx.texture_generator_count : GX_MAX_TEXCOORD;
+    for (u32 i = 0; i < count; ++i) {
+        const GXTexGenType type = s_gx.texture_generators[i].type;
+        if (type >= GX_TG_BUMP0 && type <= GX_TG_BUMP7) return true;
+    }
+    return false;
+}
+
+static void log_bump_reject(const char* reason, u32 detail)
+{
+    static u32 logged;
+    if (logged++ < 16u) {
+        melee_vita_log_info(
+            "[GX/BUMP] CPU fallback reason=%s detail=%u",
+            reason, detail);
+    }
+}
+
+static bool draw_bump_display_list_gpu(
+    const void* list, u32 bytes, u32 scope_generation)
+    __attribute__((unused));
+static bool draw_bump_display_list_gpu(
+    const void* list, u32 bytes, u32 scope_generation)
+{
+    const u32 frame = s_gx.copied_frames;
+    u64 started;
+    GxrBumpVtxKey key;
+    static GxrVtxUniforms uniforms;
+    u32 state_hash;
+    u32 bucket;
+    BumpDlCacheEntry* e;
+    int plan_result;
+
+    memset(&key, 0, sizeof(key));
+    started = sceKernelGetProcessTimeWide();
+    plan_result = fill_vertex_key_uniforms(
+        &key.legacy, &uniforms, false, &key.plan);
+    s_prof_fill_us += sceKernelGetProcessTimeWide() - started;
+    if (plan_result != MELEE_VITA_BUMP_PLAN_OK || key.plan.mask == 0u) {
+        ++s_bump_dl_stats.reject_plan;
+        log_bump_reject("plan", (u32) plan_result);
+        return false;
+    }
+
+    state_hash = current_state_hash();
+    bucket = (u32) (((uintptr_t) list >> 3) ^ bytes ^ state_hash ^
+                    scope_generation) &
+        (DL_CACHE_BUCKETS - 1u);
+    for (e = s_bump_dl_cache[bucket]; e != NULL; e = e->next) {
+        if (e->list == list && e->bytes == bytes &&
+            e->state_hash == state_hash &&
+            e->scope_generation == scope_generation) {
+            break;
+        }
+    }
+    if (e != NULL && e->validated_frame != s_array_epoch) {
+        const u32 h = bump_entry_content_hash(e);
+        e->validated_frame = s_array_epoch;
+        if (h != e->content_hash) {
+            BumpDlCacheEntry** link = &s_bump_dl_cache[bucket];
+            while (*link != e) link = &(*link)->next;
+            *link = e->next;
+            free_bump_entry_buffers(e);
+            free(e);
+            --s_bump_dl_stats.entries;
+            e = NULL;
+            ++s_bump_dl_stats.rebuilds;
+        }
+    }
+    if (e == NULL) {
+        started = sceKernelGetProcessTimeWide();
+        e = build_bump_dl_entry(
+            list, bytes, state_hash, scope_generation);
+        s_prof_decode_us += sceKernelGetProcessTimeWide() - started;
+        if (e == NULL) {
+            ++s_bump_dl_stats.reject_build;
+            log_bump_reject("geometry", bytes);
+            return false;
+        }
+        e->validated_frame = s_array_epoch;
+        e->next = s_bump_dl_cache[bucket];
+        s_bump_dl_cache[bucket] = e;
+        ++s_bump_dl_stats.builds;
+    } else {
+        ++s_bump_dl_stats.hits;
+    }
+    e->last_frame = frame;
+    if (e->tri_count == 0u || e->line_count != 0u ||
+        e->point_count != 0u) {
+        ++s_bump_dl_stats.reject_primitive;
+        log_bump_reject("primitive", e->vertex_count);
+        return false;
+    }
+
+    memset(&key, 0, sizeof(key));
+    started = sceKernelGetProcessTimeWide();
+    plan_result = fill_vertex_key_uniforms(
+        &key.legacy, &uniforms, e->has_mtxidx != 0, &key.plan);
+    s_prof_fill_us += sceKernelGetProcessTimeWide() - started;
+    if (plan_result != MELEE_VITA_BUMP_PLAN_OK || key.plan.mask == 0u) {
+        ++s_bump_dl_stats.reject_plan;
+        log_bump_reject("plan-after-build", (u32) plan_result);
+        return false;
+    }
+
+    {
+        GxrDraw* draw = &s_gxr_draw;
+        const u8 cull = current_cull();
+        bool ok = true;
+        draw->primitive = GXR_PRIM_TRIANGLES;
+        fill_gxr_draw(draw);
+        started = sceKernelGetProcessTimeWide();
+        draw->line_width = 1.0f;
+        ok = gxr_draw_bump_gpu(
+            draw, &key, &uniforms, e->vertices, e->indices,
+            e->tri_count, cull);
+        ++s_prof_draws;
+        s_prof_draw_us += sceKernelGetProcessTimeWide() - started;
+        s_prof_vertices += e->vertex_count;
+        if (!ok) {
+            ++s_bump_dl_stats.reject_submit;
+            log_bump_reject("submit", e->vertex_count);
+        }
+        return ok;
+    }
+}
+
 static bool draw_display_list_gpu(const void* list, u32 bytes) __attribute__((unused));
 static bool draw_display_list_gpu(const void* list, u32 bytes)
 {
@@ -2618,6 +2971,22 @@ static bool draw_display_list_gpu(const void* list, u32 bytes)
     DlCacheEntry* e;
     if (!gxr_available() || is_movie_yuv_draw() || bytes < 3u)
         return false;
+#ifdef MELEE_VITA_GPU_BUMP_DL
+    if (uses_bump_texgen()) {
+        const u32 scope_generation =
+            melee_vita_bump_scope_generation(HSD_GObj_804D7814);
+        if (scope_generation == 0u) {
+            ++s_bump_dl_stats.reject_scope;
+            log_bump_reject("scope", 0u);
+            return false;
+        }
+        return draw_bump_display_list_gpu(
+            list, bytes, scope_generation);
+    }
+#else
+    if (uses_bump_texgen())
+        return false;
+#endif
     state_hash = current_state_hash();
     bucket = (u32) (((uintptr_t) list >> 3) ^ bytes ^ state_hash) & (DL_CACHE_BUCKETS - 1u);
     for (e = s_dl_cache[bucket]; e != NULL; e = e->next)
@@ -2664,7 +3033,8 @@ static bool draw_display_list_gpu(const void* list, u32 bytes)
         const u64 fill_start = sceKernelGetProcessTimeWide();
         const u8 cull = current_cull();
         bool ok = true;
-        fill_vertex_key_uniforms(&key, &uniforms, e->has_mtxidx != 0);
+        (void) fill_vertex_key_uniforms(
+            &key, &uniforms, e->has_mtxidx != 0, NULL);
         draw->primitive = e->tri_count ? GXR_PRIM_TRIANGLES
             : e->line_count ? GXR_PRIM_LINES : GXR_PRIM_POINTS;
         fill_gxr_draw(draw);
@@ -3160,6 +3530,7 @@ void melee_vita_prof_log_window(const char* label)
              s_prof_fill_us / 1000.0, s_prof_draws, s_prof_vertices);
     melee_vita_log_info("%s", line);
 }
+
 #endif
 
 void GXCopyDisp(void* destination, GXBool clear)

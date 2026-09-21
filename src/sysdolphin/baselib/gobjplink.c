@@ -8,6 +8,10 @@
 #include "gobjuserdata.h"
 #include "objalloc.h"
 
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+extern void melee_vita_bump_scope_unregister(const void* identity);
+#endif
+
 void GObj_PReorder(HSD_GObj* gobj, HSD_GObj* hiprio_gobj)
 {
     u8 link = gobj->p_link;
@@ -107,6 +111,9 @@ void HSD_GObjFree(HSD_GObj* gobj)
         HSD_GObj_DelayedProcInfo.delay_remove_gobj = 1;
         return;
     }
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    melee_vita_bump_scope_unregister(gobj);
+#endif
     GObj_RemoveUserData(gobj);
     HSD_GObjObject_80390B0C(gobj);
     HSD_GObjProc_RemoveAllProcs(gobj);

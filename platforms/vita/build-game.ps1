@@ -86,6 +86,7 @@ if ($EnableDirectSnag) {
 if ($EnableRenderTrace) {
     $common += '-DMELEE_VITA_RENDER_TRACE=1'
 }
+$common += '-DMELEE_VITA_GPU_BUMP_DL=1'
 Write-Host "Melee Vita game C compiler flags: $($common -join ' ')"
 
 $sjisTool = Join-Path $PSScriptRoot 'sjis_literals.py'

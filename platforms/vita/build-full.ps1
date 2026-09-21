@@ -170,6 +170,7 @@ $platformSources = @(
     'platforms/vita/game/compat.c',
     'platforms/vita/game/dvd.c',
     'platforms/vita/game/gx.c',
+    'platforms/vita/game/gx_bump.c',
     'platforms/vita/game/gx_render.c',
     'platforms/vita/game/gxm_game.c',
     'platforms/vita/game/heap.c',
@@ -205,6 +206,7 @@ if ($Configuration -eq 'Debug') {
 if ($EnableRenderTrace) {
     $common += '-DMELEE_VITA_RENDER_TRACE=1'
 }
+$common += '-DMELEE_VITA_GPU_BUMP_DL=1'
 if ($UseCpuVertexPath) {
     $common += '-DMELEE_VITA_GX_CPU_VERTEX=1'
 }

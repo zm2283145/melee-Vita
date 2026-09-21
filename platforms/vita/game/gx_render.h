@@ -16,6 +16,7 @@
 #include <psp2/gxm.h>
 #include <stdbool.h>
 
+#include "gx_bump.h"
 #include "gxm_game.h"
 
 #define GXR_MAX_STAGES 16
@@ -83,12 +84,16 @@ typedef struct GxrGpuVertex {
     f32 pos[3];
     f32 mtx;          /* GX_VA_PNMTXIDX value (0..27) */
     f32 nrm[3];
-    u16 binormal[3];  /* IEEE-754 half-floats */
-    u16 tangent[3];
     u8 c0[4];
     u8 c1[4];
     f32 tex[GXR_GPU_TEX][2];
-} GxrGpuVertex;       /* 80 bytes */
+} GxrGpuVertex;       /* 68 bytes */
+
+typedef struct GxrGpuBumpVertex {
+    GxrGpuVertex base;
+    f32 binormal[3];
+    f32 tangent[3];
+} GxrGpuBumpVertex;   /* 92 bytes */
 
 typedef struct GxrVtxChan {
     u8 enabled, amb_src, mat_src, lights, diffuse, atten;
@@ -106,6 +111,11 @@ typedef struct GxrVtxKey {
     GxrVtxChan chan[4];
     GxrVtxTexGen tg[GXR_MAX_TEXCOORDS];
 } GxrVtxKey;
+
+typedef struct GxrBumpVtxKey {
+    GxrVtxKey legacy;
+    struct melee_vita_bump_plan plan;
+} GxrBumpVtxKey;
 
 typedef struct GxrVtxUniforms {
     f32 pos[30][4];    /* 10 position matrices, 3 rows each */
@@ -127,6 +137,10 @@ void gxr_arena_free(void* block);
 bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
                   const GxrVtxUniforms* uniforms, const GxrGpuVertex* vertices,
                   const u16* indices, u32 count, u8 cull);
+bool gxr_draw_bump_gpu(
+    const GxrDraw* draw, const GxrBumpVtxKey* vkey,
+    const GxrVtxUniforms* uniforms, const GxrGpuBumpVertex* vertices,
+    const u16* indices, u32 count, u8 cull);
 
 int gxr_init(void);
 bool gxr_available(void);

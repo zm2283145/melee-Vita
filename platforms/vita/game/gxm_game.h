@@ -76,6 +76,8 @@ void melee_vita_gxm_mark_texture_data_dirty(void);
 void melee_vita_gxm_wait_idle(void);
 void melee_vita_gxm_queue_overlay(struct vita2d_texture* texture,
                                   u32 width, u32 height);
+void melee_vita_gxm_queue_overlay_full_width(
+    struct vita2d_texture* texture, u32 width, u32 height);
 void melee_vita_gxm_log_memory(const char* phase);
 
 #endif

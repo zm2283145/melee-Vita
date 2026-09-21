@@ -1312,10 +1312,9 @@ static void exec_overlay(const void* payload)
     }
 }
 
-void melee_vita_gxm_queue_overlay(vita2d_texture* texture,
-                                  u32 width, u32 height)
+static void queue_overlay(vita2d_texture* texture, u32 width, u32 height,
+                          bool fill_width)
 {
-    extern int melee_vita_widescreen_active(void);
     RqOverlay* overlay;
     if (!s_initialized || width == 0u || height == 0u)
         return;
@@ -1324,7 +1323,21 @@ void melee_vita_gxm_queue_overlay(vita2d_texture* texture,
     overlay->texture = texture;
     overlay->width = width;
     overlay->height = height;
-    overlay->fill_width = melee_vita_widescreen_active() != 0;
+    overlay->fill_width = fill_width;
+}
+
+void melee_vita_gxm_queue_overlay(vita2d_texture* texture,
+                                  u32 width, u32 height)
+{
+    extern int melee_vita_widescreen_active(void);
+    queue_overlay(texture, width, height,
+                  melee_vita_widescreen_active() != 0);
+}
+
+void melee_vita_gxm_queue_overlay_full_width(vita2d_texture* texture,
+                                             u32 width, u32 height)
+{
+    queue_overlay(texture, width, height, true);
 }
 
 /* ---- present ---- */

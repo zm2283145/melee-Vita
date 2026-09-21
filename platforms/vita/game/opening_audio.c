@@ -15,7 +15,7 @@
 #define HPS_BLOCK_HEADER_SIZE 0x20u
 #define HPS_CHANNEL_HEADER_SIZE 0x38u
 #define HPS_CHANNEL_COUNT 2u
-#define HPS_MAX_FILE_SIZE (8u * 1024u * 1024u)
+#define HPS_MAX_FILE_SIZE (64u * 1024u * 1024u)
 
 static struct melee_vita_opening_audio* s_handoff_audio;
 static struct melee_vita_opening_audio* s_output_audio;
@@ -34,10 +34,9 @@ struct dsp_channel {
 };
 
 struct melee_vita_opening_audio {
-    /* opening.hps is only 3.28 MiB.  Keeping the compressed stream resident
-     * deliberately avoids competing ISO seeks with the movie decoder while
-     * still decoding PCM a 512-frame grain at a time (the expanded track
-     * would be 11.47 MiB). */
+    /* Keeping the compressed stream resident deliberately avoids competing ISO
+     * seeks with the movie decoder while still decoding PCM a 512-frame grain
+     * at a time. */
     unsigned char* file;
     uint32_t file_size;
     uint32_t sample_rate;
@@ -238,7 +237,8 @@ static int16_t mix_s16(int16_t current, int16_t added)
                                                      : (int16_t) mixed;
 }
 
-struct melee_vita_opening_audio* melee_vita_opening_audio_load(void)
+struct melee_vita_opening_audio* melee_vita_opening_audio_load_file(
+    const char* filename)
 {
     melee_vita_opening_audio_poll();
     if (s_handoff_audio != NULL) {
@@ -252,9 +252,8 @@ struct melee_vita_opening_audio* melee_vita_opening_audio_load(void)
 
     FILE* disc = fopen(MELEE_VITA_DISC_PATH, "rb");
     uint32_t disc_offset = 0u;
-    if (disc == NULL ||
-        !find_disc_file(disc, "opening.hps", &disc_offset,
-                        &audio->file_size) ||
+    if (disc == NULL || filename == NULL ||
+        !find_disc_file(disc, filename, &disc_offset, &audio->file_size) ||
         audio->file_size < HPS_HEADER_SIZE + HPS_BLOCK_HEADER_SIZE ||
         audio->file_size > HPS_MAX_FILE_SIZE) {
         if (disc != NULL) fclose(disc);
@@ -304,9 +303,15 @@ struct melee_vita_opening_audio* melee_vita_opening_audio_load(void)
 
     audio->ready = 1;
     melee_vita_log_info(
-        "FRONTEND opening audio ready rate=%u channels=2 frames=%u bytes=%u",
-        audio->sample_rate, audio->total_frames, audio->file_size);
+        "FRONTEND movie audio ready file=%s rate=%u channels=2 frames=%u "
+        "bytes=%u",
+        filename, audio->sample_rate, audio->total_frames, audio->file_size);
     return audio;
+}
+
+struct melee_vita_opening_audio* melee_vita_opening_audio_load(void)
+{
+    return melee_vita_opening_audio_load_file("opening.hps");
 }
 
 void melee_vita_opening_audio_start(struct melee_vita_opening_audio* audio)

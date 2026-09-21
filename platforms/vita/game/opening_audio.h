@@ -6,10 +6,12 @@
 
 struct melee_vita_opening_audio;
 
-/* Loads the original /audio/opening.hps stream from the user's disc image.
- * Playback starts only after start() and is mixed through vita-port's existing
- * AX output thread, avoiding a competing native BGM port. */
+/* Loads an HPS stream from the user's disc image. Playback starts only after
+ * start() and is mixed through vita-port's existing AX output thread, avoiding
+ * a competing native BGM port. */
 struct melee_vita_opening_audio* melee_vita_opening_audio_load(void);
+struct melee_vita_opening_audio* melee_vita_opening_audio_load_file(
+    const char* filename);
 void melee_vita_opening_audio_start(
     struct melee_vita_opening_audio* audio);
 void melee_vita_opening_audio_stop(

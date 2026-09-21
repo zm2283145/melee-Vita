@@ -18,6 +18,28 @@
 #include <sysdolphin/baselib/memory.h>
 #include <sysdolphin/baselib/sobjlib.h>
 
+#ifdef TARGET_VITA
+#include "opening_movie.h"
+#include "vita_platform.h"
+
+static struct melee_vita_opening_movie* s_vita_gallery_movie;
+static bool s_vita_gallery_movie_finished;
+
+static void mnGallery_VitaMovieRender(HSD_GObj* gobj, int render_pass)
+{
+    (void) gobj;
+    (void) render_pass;
+    melee_vita_opening_movie_draw_active();
+}
+
+static void mnGallery_VitaReleaseMovie(void)
+{
+    melee_vita_opening_movie_free(s_vita_gallery_movie);
+    s_vita_gallery_movie = NULL;
+    s_vita_gallery_movie_finished = false;
+}
+#endif
+
 static StaticModelDesc mnGallery_804A0BA0;
 static StaticModelDesc mnGallery_804A0BB0;
 static HSD_GObj* mnGallery_804D6C88;
@@ -132,6 +154,29 @@ static void mnGallery_80258BC4(struct mnGallery_804D6C88_userdata* data)
     if (mode < 0 || mode >= 2) {
         return;
     }
+#ifdef TARGET_VITA
+    if (mode == 0 || mode == 1) {
+        const char* movie_filename =
+            mode == 0 ? "MvOmake15.mth" : "MvHowto.mth";
+        const char* audio_filename =
+            mode == 0 ? "swm_15min.hps" : "howto.hps";
+        const uint32_t* movie_rate_table =
+            mode == 0 ? NULL : (const uint32_t*) gm_801ACC94();
+        s_vita_gallery_movie = melee_vita_opening_movie_load_asset(
+            movie_filename, audio_filename, movie_rate_table, true);
+        if (melee_vita_opening_movie_ready(s_vita_gallery_movie)) {
+            gobj = GObj_Create(6, 7, 0x80);
+            data->gobj8 = gobj;
+            GObj_SetupGXLink(gobj, mnGallery_VitaMovieRender, 8, 0x80);
+            lbAudioAx_800236DC();
+            melee_vita_audio_flush();
+            melee_vita_opening_movie_start(s_vita_gallery_movie);
+            data->unk0 = 1;
+            return;
+        }
+        mnGallery_VitaReleaseMovie();
+    }
+#endif
     data->unk2 = mode;
     gobj = GObj_Create(6, 7, 0x80);
     data->gobj8 = gobj;
@@ -174,7 +219,14 @@ static void mnGallery_80258BC4(struct mnGallery_804D6C88_userdata* data)
 static void mnGallery_80258D50(struct mnGallery_804D6C88_userdata* data)
 {
     if (data->unk0 != 0) {
-        lbMthp_8001F800();
+#ifdef TARGET_VITA
+        if (s_vita_gallery_movie != NULL) {
+            mnGallery_VitaReleaseMovie();
+        } else
+#endif
+        {
+            lbMthp_8001F800();
+        }
         lbAudioAx_800236DC();
         lbAudioAx_80023F28(gmMainLib_8015ECB0());
 
@@ -197,17 +249,36 @@ static void mnGallery_80258DBC(HSD_GObj* gobj,
     u32 buttons;
     u32 skip;
     u32 pressed;
+    bool movie_complete;
     PAD_STACK(0x10);
 
     skip = 0;
     buttons = HSD_PadCopyStatus[0].trigger | HSD_PadCopyStatus[1].trigger;
     buttons |= HSD_PadCopyStatus[2].trigger;
     buttons |= HSD_PadCopyStatus[3].trigger;
-    lbMthp_8001F578();
-    if (lbMthp_8001F604() != 0) {
+#ifdef TARGET_VITA
+    if (s_vita_gallery_movie != NULL) {
+        if (!s_vita_gallery_movie_finished) {
+            const enum melee_vita_opening_movie_result result =
+                melee_vita_opening_movie_update(s_vita_gallery_movie);
+            if (result != MELEE_VITA_OPENING_MOVIE_PLAYING) {
+                s_vita_gallery_movie_finished = true;
+                if (result == MELEE_VITA_OPENING_MOVIE_SKIPPED ||
+                    result == MELEE_VITA_OPENING_MOVIE_FAILED)
+                    skip = 1;
+            }
+        }
+        movie_complete = s_vita_gallery_movie_finished;
+    } else
+#endif
+    {
+        lbMthp_8001F578();
+        movie_complete = lbMthp_8001F604() != 0;
+    }
+    if (movie_complete) {
         data->unk1 = data->unk1 + 1;
     }
-    if (gmMainLib_8046B0F0.xC != 0 && lbMthp_8001F604() == 0) {
+    if (gmMainLib_8046B0F0.xC != 0 && !movie_complete) {
         skip = 1;
     }
     pressed = buttons & 0x1300;
@@ -217,17 +288,7 @@ static void mnGallery_80258DBC(HSD_GObj* gobj,
         }
         data->state = 1;
         mn_8022BD8C();
-        if (data->unk0 != 0) {
-            lbMthp_8001F800();
-            lbAudioAx_800236DC();
-            lbAudioAx_80023F28(gmMainLib_8015ECB0());
-            data->unk0 = 0;
-            data->unk1 = 0;
-            if (data->gobj8 != NULL) {
-                HSD_GObjFree(data->gobj8);
-                data->gobj8 = NULL;
-            }
-        }
+        mnGallery_80258D50(data);
     }
 }
 

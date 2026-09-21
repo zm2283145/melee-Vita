@@ -21,7 +21,7 @@
 #include <string.h>
 
 /*
- * Opening movie (MvOpen.mth) playback.
+ * Native MTH movie playback.
  *
  * The pipeline mirrors lbmthp.c's split between DVD streaming, decoding and
  * presentation, but uses three Vita threads so that no stage can stall
@@ -33,10 +33,8 @@
  *
  * Measurements on retail hardware (see git history) showed the previous
  * single-worker design spent ~340 ms per synchronous 1 MiB refill on the
- * decode thread and discarded late-but-complete frames, which produced the
- * visible freezes followed by fast catch-up.  The movie needs ~1.3 MiB/s and
- * the ISO delivers ~4 MiB/s sequentially, so a read-ahead ring removes the
- * I/O stalls entirely.
+ * decode thread and discarded late-but-complete frames, which produced visible
+ * freezes followed by fast catch-up. A read-ahead ring removes the I/O stalls.
  */
 
 #define DISC_HEADER_FST_OFFSET 0x424u
@@ -80,6 +78,9 @@ struct movie_texture {
 
 struct melee_vita_opening_movie {
     /* File layout. */
+    const char* movie_filename;
+    const uint32_t* rate_table;
+    bool force_full_width;
     uint32_t file_offset;
     uint32_t file_size;
     uint32_t header_maximum_frame_size;
@@ -724,7 +725,9 @@ static void create_hw_decoder(struct melee_vita_opening_movie* movie)
         info.yuv_capacity, info.coefficient_capacity);
 }
 
-struct melee_vita_opening_movie* melee_vita_opening_movie_load(void)
+struct melee_vita_opening_movie* melee_vita_opening_movie_load_asset(
+    const char* movie_filename, const char* audio_filename,
+    const uint32_t* rate_table, bool force_full_width)
 {
     const uint64_t load_started = sceKernelGetProcessTimeWide();
     struct melee_vita_opening_movie* movie = calloc(1, sizeof(*movie));
@@ -734,11 +737,14 @@ struct melee_vita_opening_movie* melee_vita_opening_movie_load(void)
     movie->decode_thread = -1;
     movie->current_texture = -1;
     movie->current_frame = UINT32_MAX;
+    movie->movie_filename = movie_filename;
+    movie->rate_table = rate_table;
+    movie->force_full_width = force_full_width;
 
     FILE* disc = fopen(MELEE_VITA_DISC_PATH, "rb");
     unsigned char header[MTH_HEADER_SIZE];
-    int valid = disc != NULL &&
-        find_disc_file(disc, "MvOpen.mth", &movie->file_offset,
+    int valid = disc != NULL && movie_filename != NULL &&
+        find_disc_file(disc, movie_filename, &movie->file_offset,
                        &movie->file_size) &&
         read_at(disc, movie->file_offset, header, sizeof(header));
     if (disc != NULL) fclose(disc);
@@ -760,7 +766,8 @@ struct melee_vita_opening_movie* melee_vita_opening_movie_load(void)
             movie->first_frame_offset >= MTH_HEADER_SIZE;
     }
     if (!valid) {
-        melee_vita_log_info("FRONTEND MvOpen.mth header failed");
+        melee_vita_log_info("FRONTEND movie header failed file=%s",
+                            movie_filename != NULL ? movie_filename : "(null)");
         melee_vita_opening_movie_free(movie);
         return NULL;
     }
@@ -801,9 +808,10 @@ struct melee_vita_opening_movie* melee_vita_opening_movie_load(void)
     create_hw_decoder(movie);
 #endif
 
-    movie->audio = melee_vita_opening_audio_load();
+    movie->audio = melee_vita_opening_audio_load_file(audio_filename);
     if (!melee_vita_opening_audio_ready(movie->audio)) {
-        melee_vita_log_info("FRONTEND opening audio unavailable");
+        melee_vita_log_info("FRONTEND movie audio unavailable file=%s",
+                            audio_filename != NULL ? audio_filename : "(null)");
         melee_vita_opening_movie_free(movie);
         return NULL;
     }
@@ -822,13 +830,24 @@ struct melee_vita_opening_movie* melee_vita_opening_movie_load(void)
         return NULL;
     }
     melee_vita_log_info(
-        "FRONTEND movie loaded %ux%u frames=%u header_fps=%u bytes=%u "
+        "FRONTEND movie loaded file=%s %ux%u frames=%u header_fps=%u bytes=%u "
         "header_max=%u packet_capacity=%u hw=%d load_us=%llu",
-        movie->width, movie->height, movie->frame_count, movie->frame_rate,
-        movie->file_size, movie->header_maximum_frame_size,
+        movie->movie_filename, movie->width, movie->height, movie->frame_count,
+        movie->frame_rate, movie->file_size, movie->header_maximum_frame_size,
         movie->packet_capacity, movie->use_hw,
         (unsigned long long) (sceKernelGetProcessTimeWide() - load_started));
     return movie;
+}
+
+struct melee_vita_opening_movie* melee_vita_opening_movie_load(void)
+{
+    static const uint32_t opening_rate_table[] = {
+        MELEE_VITA_OPENING_FIRST_RATE_FRAMES, 2u,
+        MELEE_VITA_OPENING_FAST_RATE_FRAMES, 1u,
+        UINT32_MAX, 2u,
+    };
+    return melee_vita_opening_movie_load_asset(
+        "MvOpen.mth", "opening.hps", opening_rate_table, false);
 }
 
 void melee_vita_opening_movie_start(struct melee_vita_opening_movie* movie)
@@ -882,9 +901,10 @@ enum melee_vita_opening_movie_result melee_vita_opening_movie_update(
         (now - movie->start_time) * UINT64_C(60) / UINT64_C(1000000);
     movie->elapsed_ticks = elapsed_ticks;
     const uint64_t total_ticks =
-        melee_vita_opening_total_ticks(movie->frame_count);
+        melee_vita_movie_total_ticks(movie->frame_count, movie->rate_table);
     const uint32_t desired =
-        melee_vita_opening_frame_for_tick(elapsed_ticks, movie->frame_count);
+        melee_vita_movie_frame_for_tick(elapsed_ticks, movie->frame_count,
+                                        movie->rate_table);
     __atomic_store_n(&movie->clock_frame, desired, __ATOMIC_RELEASE);
     present_due_frame(movie, desired, now);
 
@@ -898,7 +918,8 @@ enum melee_vita_opening_movie_result melee_vita_opening_movie_update(
         __atomic_load_n(&movie->decoder_done, __ATOMIC_ACQUIRE) != 0;
     if (elapsed_ticks >= total_ticks && (last_shown || stream_exhausted)) {
         const uint64_t final_duration =
-            (uint64_t) melee_vita_opening_frame_ticks(movie->current_frame) *
+            (uint64_t) melee_vita_movie_frame_ticks(movie->current_frame,
+                                                    movie->rate_table) *
             UINT64_C(1000000) / UINT64_C(60);
         if (now - movie->last_present_time >= final_duration) {
             log_stats(movie, "finished", desired);
@@ -916,13 +937,23 @@ void melee_vita_opening_movie_draw_active(void)
     const struct melee_vita_opening_movie* movie = s_active_movie;
     if (movie == NULL || !movie->presentation.visible) return;
     if (movie->current_texture < 0) {
-        melee_vita_gxm_queue_overlay(NULL, movie->width, movie->height);
+        if (movie->force_full_width) {
+            melee_vita_gxm_queue_overlay_full_width(
+                NULL, movie->width, movie->height);
+        } else {
+            melee_vita_gxm_queue_overlay(NULL, movie->width, movie->height);
+        }
         return;
     }
     const struct movie_texture* texture =
         &movie->textures[movie->current_texture];
-    melee_vita_gxm_queue_overlay(texture->texture, texture->width,
-                                 texture->height);
+    if (movie->force_full_width) {
+        melee_vita_gxm_queue_overlay_full_width(
+            texture->texture, texture->width, texture->height);
+    } else {
+        melee_vita_gxm_queue_overlay(texture->texture, texture->width,
+                                     texture->height);
+    }
 }
 
 void melee_vita_opening_movie_hide_active(void)
@@ -942,7 +973,7 @@ uint32_t melee_vita_opening_movie_total_ticks(
 {
     if (movie == NULL) return 0u;
     const uint64_t total_ticks =
-        melee_vita_opening_total_ticks(movie->frame_count);
+        melee_vita_movie_total_ticks(movie->frame_count, movie->rate_table);
     return total_ticks <= UINT32_MAX ? (uint32_t) total_ticks : UINT32_MAX;
 }
 

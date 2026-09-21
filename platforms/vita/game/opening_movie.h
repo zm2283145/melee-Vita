@@ -14,6 +14,9 @@ enum melee_vita_opening_movie_result {
 };
 
 struct melee_vita_opening_movie* melee_vita_opening_movie_load(void);
+struct melee_vita_opening_movie* melee_vita_opening_movie_load_asset(
+    const char* movie_filename, const char* audio_filename,
+    const uint32_t* rate_table, bool force_full_width);
 void melee_vita_opening_movie_start(struct melee_vita_opening_movie* movie);
 enum melee_vita_opening_movie_result melee_vita_opening_movie_update(
     struct melee_vita_opening_movie* movie);

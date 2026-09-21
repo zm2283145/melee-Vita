@@ -12,47 +12,100 @@ typedef struct MeleeVitaOpeningPresentation {
     bool visible;
 } MeleeVitaOpeningPresentation;
 
+static inline uint64_t melee_vita_movie_total_ticks(
+    uint32_t frame_count, const uint32_t* rate_table)
+{
+    uint64_t total = 0u;
+    uint32_t frame = 0u;
+
+    if (rate_table == NULL) return frame_count;
+    while (frame < frame_count) {
+        const uint32_t count = rate_table[0];
+        const uint32_t ticks = rate_table[1];
+        if (count == 0u || ticks == 0u)
+            return total + frame_count - frame;
+        const uint32_t remaining = frame_count - frame;
+        const uint32_t segment = count < remaining ? count : remaining;
+        total += (uint64_t) segment * ticks;
+        frame += segment;
+        rate_table += 2;
+    }
+    return total;
+}
+
+static inline uint32_t melee_vita_movie_frame_for_tick(
+    uint64_t tick, uint32_t frame_count, const uint32_t* rate_table)
+{
+    uint32_t frame = 0u;
+
+    if (frame_count == 0u) return 0u;
+    if (rate_table == NULL)
+        return tick < frame_count ? (uint32_t) tick : frame_count - 1u;
+    while (frame < frame_count) {
+        const uint32_t count = rate_table[0];
+        const uint32_t ticks = rate_table[1];
+        if (count == 0u || ticks == 0u) {
+            const uint64_t fallback = frame + tick;
+            return fallback < frame_count ? (uint32_t) fallback
+                                          : frame_count - 1u;
+        }
+        const uint32_t remaining = frame_count - frame;
+        const uint32_t segment = count < remaining ? count : remaining;
+        const uint64_t segment_ticks = (uint64_t) segment * ticks;
+        if (tick < segment_ticks)
+            return frame + (uint32_t) (tick / ticks);
+        tick -= segment_ticks;
+        frame += segment;
+        rate_table += 2;
+    }
+    return frame_count - 1u;
+}
+
+static inline uint32_t melee_vita_movie_frame_ticks(
+    uint32_t frame, const uint32_t* rate_table)
+{
+    uint32_t first = 0u;
+
+    if (rate_table == NULL) return 1u;
+    for (;;) {
+        const uint32_t count = rate_table[0];
+        const uint32_t ticks = rate_table[1];
+        if (count == 0u || ticks == 0u) return 1u;
+        if (frame - first < count) return ticks;
+        first += count;
+        rate_table += 2;
+    }
+}
+
 static inline uint64_t melee_vita_opening_total_ticks(uint32_t frame_count)
 {
-    const uint32_t first =
-        frame_count < MELEE_VITA_OPENING_FIRST_RATE_FRAMES
-        ? frame_count : MELEE_VITA_OPENING_FIRST_RATE_FRAMES;
-    const uint32_t after_first = frame_count - first;
-    const uint32_t fast =
-        after_first < MELEE_VITA_OPENING_FAST_RATE_FRAMES
-        ? after_first : MELEE_VITA_OPENING_FAST_RATE_FRAMES;
-    const uint32_t final = after_first - fast;
-    return (uint64_t) first * 2u + fast + (uint64_t) final * 2u;
+    static const uint32_t rate_table[] = {
+        MELEE_VITA_OPENING_FIRST_RATE_FRAMES, 2u,
+        MELEE_VITA_OPENING_FAST_RATE_FRAMES, 1u,
+        UINT32_MAX, 2u,
+    };
+    return melee_vita_movie_total_ticks(frame_count, rate_table);
 }
 
 static inline uint32_t melee_vita_opening_frame_for_tick(
     uint64_t tick, uint32_t frame_count)
 {
-    uint64_t frame;
-    const uint64_t first_ticks =
-        (uint64_t) MELEE_VITA_OPENING_FIRST_RATE_FRAMES * 2u;
-
-    if (frame_count == 0u) return 0u;
-    if (tick < first_ticks) {
-        frame = tick / 2u;
-    } else if (tick - first_ticks < MELEE_VITA_OPENING_FAST_RATE_FRAMES) {
-        frame = MELEE_VITA_OPENING_FIRST_RATE_FRAMES + tick - first_ticks;
-    } else {
-        frame = MELEE_VITA_OPENING_FIRST_RATE_FRAMES +
-                MELEE_VITA_OPENING_FAST_RATE_FRAMES +
-                (tick - first_ticks -
-                 MELEE_VITA_OPENING_FAST_RATE_FRAMES) /
-                    2u;
-    }
-    return frame < frame_count ? (uint32_t) frame : frame_count - 1u;
+    static const uint32_t rate_table[] = {
+        MELEE_VITA_OPENING_FIRST_RATE_FRAMES, 2u,
+        MELEE_VITA_OPENING_FAST_RATE_FRAMES, 1u,
+        UINT32_MAX, 2u,
+    };
+    return melee_vita_movie_frame_for_tick(tick, frame_count, rate_table);
 }
 
 static inline uint32_t melee_vita_opening_frame_ticks(uint32_t frame)
 {
-    return frame >= MELEE_VITA_OPENING_FIRST_RATE_FRAMES &&
-                   frame < MELEE_VITA_OPENING_FIRST_RATE_FRAMES +
-                               MELEE_VITA_OPENING_FAST_RATE_FRAMES
-        ? 1u : 2u;
+    static const uint32_t rate_table[] = {
+        MELEE_VITA_OPENING_FIRST_RATE_FRAMES, 2u,
+        MELEE_VITA_OPENING_FAST_RATE_FRAMES, 1u,
+        UINT32_MAX, 2u,
+    };
+    return melee_vita_movie_frame_ticks(frame, rate_table);
 }
 
 static inline void melee_vita_opening_presentation_start(

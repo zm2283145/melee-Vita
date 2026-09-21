@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "vita_platform.h"
 #include "../vita_log.h"
+#ifdef MELEE_VITA_UPDATER
+#include "../updater/update_runtime.h"
+#endif
 
 #include <psp2/kernel/processmgr.h>
 
@@ -43,8 +46,14 @@ int main(void)
 #endif
 
     melee_vita_log_info("Platform initialized; entering melee_main");
+#ifdef MELEE_VITA_UPDATER
+    melee_vita_updater_init();
+#endif
     result = melee_main();
     melee_vita_log_info("melee_main returned: %d", result);
+#ifdef MELEE_VITA_UPDATER
+    melee_vita_updater_shutdown();
+#endif
     melee_vita_platform_shutdown();
     melee_vita_log_info("Platform shutdown complete");
     melee_vita_log_stop();

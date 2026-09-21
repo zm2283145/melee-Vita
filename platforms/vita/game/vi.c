@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Vita vertical-interrupt and frame-boundary implementation. */
 #include "vita_platform.h"
+#ifdef MELEE_VITA_UPDATER
+#include "../updater/update_runtime.h"
+#endif
 
 #include <dolphin/gx.h>
 #include <dolphin/vi.h>
@@ -58,6 +61,9 @@ void VIWaitForRetrace(void)
     ++s_retrace_count;
     melee_vita_os_run_alarms();
     melee_vita_card_poll();
+#ifdef MELEE_VITA_UPDATER
+    melee_vita_updater_poll();
+#endif
     if (s_pre_callback != NULL) s_pre_callback(s_retrace_count);
     s_current_framebuffer = s_next_framebuffer;
     if (s_post_callback != NULL) s_post_callback(s_retrace_count);

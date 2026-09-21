@@ -80,6 +80,14 @@ jobs:
             platforms/vita/game/gx_bump.c -lm \
             -o "$RUNNER_TEMP/gx-bump-test"
           "$RUNNER_TEMP/gx-bump-test"
+          cc -std=c11 -Wall -Wextra -Werror -Iplatforms/vita/game \
+            platforms/vita/tests/point_sprite_test.c \
+            -o "$RUNNER_TEMP/point-sprite-test"
+          "$RUNNER_TEMP/point-sprite-test"
+          cc -std=c11 -Wall -Wextra -Werror -Iplatforms/vita/game \
+            platforms/vita/tests/display_list_memo_test.c \
+            -o "$RUNNER_TEMP/display-list-memo-test"
+          "$RUNNER_TEMP/display-list-memo-test"
 
       - name: Build full game
         shell: pwsh

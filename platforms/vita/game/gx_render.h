@@ -128,6 +128,13 @@ typedef struct GxrVtxUniforms {
     f32 amb[2][4];
 } GxrVtxUniforms;
 
+typedef struct GxrPointParams {
+    f32 clip_half_x;
+    f32 clip_half_y;
+    f32 tex_span;
+    u8 tex_offset_mask;
+} GxrPointParams;
+
 enum { GXR_CULL_NONE = 0, GXR_CULL_FRONT, GXR_CULL_BACK, GXR_CULL_ALL };
 
 /* Persistent GPU memory for cached geometry. */
@@ -141,6 +148,11 @@ bool gxr_draw_bump_gpu(
     const GxrDraw* draw, const GxrBumpVtxKey* vkey,
     const GxrVtxUniforms* uniforms, const GxrGpuBumpVertex* vertices,
     const u16* indices, u32 count, u8 cull);
+bool gxr_draw_gpu_points(const GxrDraw* draw, const GxrVtxKey* vkey,
+                         const GxrVtxUniforms* uniforms,
+                         const GxrPointParams* point,
+                         const GxrGpuVertex* vertices, const u16* indices,
+                         u32 count);
 
 int gxr_init(void);
 bool gxr_available(void);

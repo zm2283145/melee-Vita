@@ -10,6 +10,10 @@ extern "C" {
 void GXBeginDisplayList(void* list, u32 size);
 u32 GXEndDisplayList(void);
 void GXCallDisplayList(const void* list, u32 nbytes);
+#if defined(TARGET_VITA)
+void GXCallDisplayListImmutable(const void* list, u32 nbytes);
+void GXInvalidateDisplayList(const void* list);
+#endif
 
 #ifdef __cplusplus
 }

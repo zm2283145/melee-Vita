@@ -1235,7 +1235,13 @@ static void PObjDispSimplePrimitive(HSD_PObj* pobj, u32 rendermode)
     setupArrayDesc(pobj->verts);
     setupVtxDesc(pobj);
 
+#if defined(TARGET_VITA)
+    /* Archive display bytes are immutable for a PObj's lifetime. Indexed
+     * arrays are still validated by the Vita cache on every render epoch. */
+    GXCallDisplayListImmutable(pobj->display, pobj->n_display << 5);
+#else
     GXCallDisplayList(pobj->display, pobj->n_display << 5);
+#endif
 }
 
 static void PObjDispShapeAnim(HSD_PObj* pobj, u32 rendermode)
@@ -1275,6 +1281,9 @@ static void PObjRelease(HSD_Class* o)
 {
     HSD_PObj* pobj = HSD_POBJ(o);
 
+#if defined(TARGET_VITA)
+    GXInvalidateDisplayList(pobj->display);
+#endif
     switch (pobj_type(pobj)) {
     case POBJ_SHAPEANIM:
         HSD_ShapeSetRemove(pobj->u.shape_set);

@@ -18,7 +18,9 @@
 #include <psp2/kernel/processmgr.h>
 #include "gxm_game.h"
 #include <vita2d.h>
+#include "display_list_memo.h"
 #include "gx_render.h"
+#include "point_sprite.h"
 #include "../vita_log.h"
 
 extern unsigned int aurora_draw_tag;
@@ -249,9 +251,14 @@ static const char* const k_vpz_names[VPZ_COUNT] = {
 };
 static u64 s_vpz_us[VPZ_COUNT];
 static u32 s_vpz_calls[VPZ_COUNT];
+
+
 void melee_vita_prof_add(int zone, u64 us)
 {
-    if ((unsigned) zone < VPZ_COUNT) { s_vpz_us[zone] += us; ++s_vpz_calls[zone]; }
+    if ((unsigned) zone < VPZ_COUNT) {
+        s_vpz_us[zone] += us;
+        ++s_vpz_calls[zone];
+    }
 }
 
 static VitaDecodedVertex* s_decode_vertices;
@@ -1317,9 +1324,9 @@ void melee_vita_prof_get_geometry(u32* draws, u32* vertices)
 
 /* GX draws points as screen-aligned sprites: the point size is a screen-space
  * square around the vertex, and GXEnableTexOffsets spreads texture coordinates
- * across it.  GXM points are single-texel dots, so each point becomes a quad
- * here, the same way the hardware would have rasterised it.  Particle effects
- * (Bowser's fire, Mario's coins, hit sparks) are drawn this way. */
+ * across it. GXM point primitives repeat one texture sample across that square,
+ * so each point becomes a quad here to reproduce GX's corner coordinates.
+ * Particle effects (Bowser's fire, Mario's coins, hit sparks) use this path. */
 static f32 tex_offset_span(GXTexOffset offset)
 {
     switch (offset) {
@@ -1349,14 +1356,17 @@ static void expand_points(const GxrXform* xform, const VitaDecodedVertex* vertic
         build_gxr_vertex(xform, &vertices[i], &base);
         for (c = 0; c < 4u; ++c) {
             GxrVertex* v = &out[out_index + c];
+            f32 tex_s, tex_t;
             *v = base;
             v->position[0] += corner[c][0] * half_x * base.position[3];
             v->position[1] += corner[c][1] * half_y * base.position[3];
-            if (span > 0.0f) {
+            if (span > 0.0f &&
+                melee_vita_point_sprite_texcoord_offset(
+                    c, span, &tex_s, &tex_t)) {
                 for (t = 0; t < GXR_MAX_TEXCOORDS; ++t) {
                     if (!s_gx.tex_offset_points[t]) continue;
-                    v->tex[t][0] = base.tex[t][0] + (corner[c][0] * 0.5f + 0.5f) * span;
-                    v->tex[t][1] = base.tex[t][1] + (0.5f - corner[c][1] * 0.5f) * span;
+                    v->tex[t][0] = base.tex[t][0] + tex_s;
+                    v->tex[t][1] = base.tex[t][1] + tex_t;
                 }
             }
         }
@@ -1370,11 +1380,14 @@ static void expand_points(const GxrXform* xform, const VitaDecodedVertex* vertic
     }
 }
 
-static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices, u32 count)
+static bool submit_gxr(GXPrimitive primitive,
+                       const VitaDecodedVertex* vertices, u32 count,
+                       bool draw_ready)
 {
     const u64 prof_start = sceKernelGetProcessTimeWide();
     u32 output = 0, i;
     u32 needed;
+    u32 vertex_count = count;
     GxrVertex* out;
     u16* idx;
     GxrDraw* draw = &s_gxr_draw;
@@ -1386,15 +1399,14 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
         needed = count >= 3u ? (count - 2u) * 3u : 0u;
     else if (primitive == GX_LINES) needed = count / 2u * 2u;
     else if (primitive == GX_LINESTRIP) needed = count >= 2u ? (count - 1u) * 2u : 0u;
-    else if (primitive == GX_POINTS) needed = count * 6u; /* sprite quads */
+    else if (primitive == GX_POINTS) {
+        if (!melee_vita_point_sprite_counts(count, &vertex_count, &needed))
+            return false;
+    }
     else return false;
     if (needed == 0) return true;
     if (count > 0xffffu) return false;
-    {
-        const u32 vertex_count = primitive == GX_POINTS ? count * 4u : count;
-        if (vertex_count > 0xffffu) return false;
-        out = gxr_alloc_vertices(vertex_count);
-    }
+    out = gxr_alloc_vertices(vertex_count);
     idx = gxr_alloc_indices(needed);
     if (out == NULL || idx == NULL) return false;
 
@@ -1467,7 +1479,7 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
         draw->primitive = GXR_PRIM_TRIANGLES;
         draw->line_width = 1.0f;
     }
-    {
+    if (!draw_ready) {
         const u64 fill_start = sceKernelGetProcessTimeWide();
         fill_gxr_draw(draw);
         s_prof_fill_us += sceKernelGetProcessTimeWide() - fill_start;
@@ -1475,7 +1487,8 @@ static bool submit_gxr(GXPrimitive primitive, const VitaDecodedVertex* vertices,
     {
         const u64 draw_start = sceKernelGetProcessTimeWide();
         const bool ok = gxr_draw(draw, out, idx, output);
-        s_prof_draw_us += sceKernelGetProcessTimeWide() - draw_start;
+        if (!draw_ready)
+            s_prof_draw_us += sceKernelGetProcessTimeWide() - draw_start;
         ++s_prof_draws;
         return ok;
     }
@@ -1496,7 +1509,7 @@ static void submit_decoded(GXPrimitive primitive,
                                   s_gx.blend_destination == GX_BL_ONE;
     render_state.line_width = s_gx.line_width >= 6 ? s_gx.line_width / 6 : 1;
     render_state.point_size = s_gx.point_size >= 6 ? s_gx.point_size / 6 : 1;
-    if (submit_gxr(primitive, vertices, count)) return;
+    if (submit_gxr(primitive, vertices, count, false)) return;
 
     if (primitive == GX_LINES || primitive == GX_LINESTRIP || primitive == GX_POINTS) {
         u32 primitive_vertices = primitive == GX_LINESTRIP
@@ -2114,9 +2127,10 @@ static bool decode_indexed_nbt3(VitaDecodedVertex* vertex,
  * GPU display-list cache.  A display list plus the vertex arrays it indexes
  * is decoded once into GxrGpuVertex/u16 buffers in persistent GPU memory and
  * redrawn from there; vertex shaders do transform, lighting and texgen.  The
- * cached copy is validated every frame with a content hash of the list and of
- * each array it reads (arrays are hashed once per frame, since HSD skinning
- * and shape animation rewrite vertex buffers in place).
+ * The cached copy is validated every frame. Mutable callers rehash the list;
+ * immutable archive lists retain their build-time command hash. Each indexed
+ * array is still hashed once per frame because HSD skinning and shape
+ * animation rewrite vertex buffers in place.
  * ------------------------------------------------------------------------ */
 
 #define DL_CACHE_BUCKETS 2048u
@@ -2126,14 +2140,19 @@ typedef struct DlCacheEntry {
     const void* list;
     u32 bytes;
     u32 state_hash;
+    u32 command_hash;
     u32 content_hash;
     u32 last_frame;
     u32 validated_frame;
     GxrGpuVertex* vertices;
+    GxrGpuVertex* point_gpu_vertices;
+    VitaDecodedVertex* point_vertices;
     u16* indices;          /* triangles, then lines, then points */
+    u16* point_gpu_indices;
     u32 tri_count, line_count, point_count;
     u32 vertex_count;
     u8 has_mtxidx;
+    u8 immutable_bytecode;
     u8 array_count;
     struct { u8 attr; u32 end; } ranges[GX_VA_MAX_ATTR];
     struct DlCacheEntry* next;
@@ -2229,8 +2248,9 @@ static u32 array_content_hash(const void* data, u32 length)
 {
     const u32 slot = array_slot(data);
     if (s_array_hash[slot].data == data && s_array_hash[slot].frame == s_array_epoch &&
-        s_array_hash[slot].length == length)
+        s_array_hash[slot].length == length) {
         return s_array_hash[slot].hash;
+    }
     {
         const u32 h = sample_hash(data, length);
         s_array_hash[slot].data = data;
@@ -2241,13 +2261,17 @@ static u32 array_content_hash(const void* data, u32 length)
     }
 }
 
-static u32 entry_content_hash(const DlCacheEntry* e)
+static u32 entry_content_hash(const DlCacheEntry* e, bool initial)
 {
-    u32 h = hash_bytes(e->list, e->bytes, 0x1234567u);
+    u32 h = e->command_hash;
+    if (!initial &&
+        melee_vita_dl_rehash_bytecode(e->immutable_bytecode != 0u))
+        h = hash_bytes(e->list, e->bytes, 0x1234567u);
     for (u32 i = 0; i < e->array_count; ++i) {
         const VitaArrayState* array = &s_gx.arrays[e->ranges[i].attr];
         u32 length = array->size != 0 ? array->size : e->ranges[i].end;
-        h ^= array_content_hash(array->data, length) + 0x9e3779b9u + (h << 6) + (h >> 2);
+        h = melee_vita_dl_combine_array_hash(
+            h, array_content_hash(array->data, length));
     }
     return h;
 }
@@ -2298,8 +2322,14 @@ static void free_entry_buffers(DlCacheEntry* e)
 {
     defer_free(e->vertices);
     defer_free(e->indices);
+    defer_free(e->point_gpu_vertices);
+    defer_free(e->point_gpu_indices);
+    free(e->point_vertices);
     e->vertices = NULL;
     e->indices = NULL;
+    e->point_gpu_vertices = NULL;
+    e->point_gpu_indices = NULL;
+    e->point_vertices = NULL;
 }
 
 static void free_bump_entry_buffers(BumpDlCacheEntry* e)
@@ -2360,6 +2390,8 @@ static GxrGpuVertex* s_build_vertices;
 static GxrGpuBumpVertex* s_bump_build_vertices;
 static u32 s_build_capacity;
 static u32 s_bump_build_capacity;
+static VitaDecodedVertex* s_build_point_vertices;
+static u32 s_build_point_capacity;
 
 static void to_gpu_vertex(const VitaDecodedVertex* in, GxrGpuVertex* out)
 {
@@ -2372,6 +2404,7 @@ static void to_gpu_vertex(const VitaDecodedVertex* in, GxrGpuVertex* out)
         out->c0[0] = (u8) c0; out->c0[1] = (u8) (c0 >> 8); out->c0[2] = (u8) (c0 >> 16); out->c0[3] = (u8) (c0 >> 24);
         out->c1[0] = (u8) c1; out->c1[1] = (u8) (c1 >> 8); out->c1[2] = (u8) (c1 >> 16); out->c1[3] = (u8) (c1 >> 24);
     }
+
     for (u32 t = 0; t < GXR_GPU_TEX; ++t) { out->tex[t][0] = in->tex[t][0]; out->tex[t][1] = in->tex[t][1]; }
 }
 
@@ -2381,6 +2414,49 @@ static void to_gpu_bump_vertex(
     to_gpu_vertex(in, &out->base);
     memcpy(out->binormal, in->binormal, sizeof(out->binormal));
     memcpy(out->tangent, in->tangent, sizeof(out->tangent));
+}
+
+static bool build_gpu_point_buffers(DlCacheEntry* e, u32 point_count)
+{
+    u32 expanded_vertices;
+    u32 max_chunk_indices;
+    u64 vertex_bytes;
+    u64 index_bytes;
+    if (e == NULL || point_count == 0u ||
+        !melee_vita_point_gpu_payload(
+            point_count, sizeof(GxrGpuVertex), &expanded_vertices,
+            &max_chunk_indices, &vertex_bytes, &index_bytes) ||
+        vertex_bytes > UINT32_MAX || index_bytes > UINT32_MAX)
+        return false;
+    e->point_gpu_vertices = gxr_arena_alloc((u32) vertex_bytes);
+    e->point_gpu_indices = gxr_arena_alloc((u32) index_bytes);
+    if (e->point_gpu_vertices == NULL || e->point_gpu_indices == NULL) {
+        gxr_arena_free(e->point_gpu_vertices);
+        gxr_arena_free(e->point_gpu_indices);
+        e->point_gpu_vertices = NULL;
+        e->point_gpu_indices = NULL;
+        return false;
+    }
+    for (u32 i = 0; i < point_count; ++i) {
+        GxrGpuVertex base;
+        to_gpu_vertex(&e->point_vertices[i], &base);
+        for (u32 corner = 0; corner < 4u; ++corner) {
+            GxrGpuVertex* out = &e->point_gpu_vertices[i * 4u + corner];
+            *out = base;
+            out->mtx = (f32) corner;
+        }
+    }
+    for (u32 i = 0; i < max_chunk_indices / 6u; ++i) {
+        if (!melee_vita_point_sprite_quad_indices(
+                i, &e->point_gpu_indices[i * 6u])) {
+            gxr_arena_free(e->point_gpu_vertices);
+            gxr_arena_free(e->point_gpu_indices);
+            e->point_gpu_vertices = NULL;
+            e->point_gpu_indices = NULL;
+            return false;
+        }
+    }
+    return expanded_vertices == point_count * 4u;
 }
 
 /* Decodes one primitive's vertices into s_decode_vertices (count vertices).
@@ -2459,11 +2535,12 @@ static bool decode_primitive_vertices(const u8* stream, u32 bytes, u32* cursor_i
     return true;
 }
 
-static DlCacheEntry* build_dl_entry(const void* list, u32 bytes, u32 state_hash)
+static DlCacheEntry* build_dl_entry(
+    const void* list, u32 bytes, u32 state_hash, bool immutable_bytecode)
 {
     static U16Vec tris, lines, points;
     const u8* stream = list;
-    u32 cursor = 0, total = 0;
+    u32 cursor = 0, total = 0, point_total = 0;
     u32 max_end[GX_VA_MAX_ATTR] = { 0 };
     bool has_mtxidx = false;
     DlCacheEntry* e;
@@ -2480,6 +2557,21 @@ static DlCacheEntry* build_dl_entry(const void* list, u32 bytes, u32 state_hash)
         if (total + count > 0xffffu) return NULL;
         if (!decode_primitive_vertices(stream, bytes, &cursor, format, count, max_end, &has_mtxidx))
             return NULL;
+        if (primitive == GX_POINTS) {
+            if (point_total + count > s_build_point_capacity) {
+                u32 cap = s_build_point_capacity ? s_build_point_capacity : 1024u;
+                while (cap < point_total + count) cap *= 2u;
+                VitaDecodedVertex* r =
+                    realloc(s_build_point_vertices,
+                            cap * sizeof(VitaDecodedVertex));
+                if (r == NULL) return NULL;
+                s_build_point_vertices = r;
+                s_build_point_capacity = cap;
+            }
+            memcpy(s_build_point_vertices + point_total, s_decode_vertices,
+                   count * sizeof(VitaDecodedVertex));
+            point_total += count;
+        }
         if (total + count > s_build_capacity) {
             u32 cap = s_build_capacity ? s_build_capacity : 4096u;
             while (cap < total + count) cap *= 2u;
@@ -2534,6 +2626,19 @@ static DlCacheEntry* build_dl_entry(const void* list, u32 bytes, u32 state_hash)
             }
         }
         memcpy(e->vertices, s_build_vertices, total * sizeof(GxrGpuVertex));
+        if (point_total != 0u) {
+            e->point_vertices =
+                malloc(point_total * sizeof(VitaDecodedVertex));
+            if (e->point_vertices == NULL) {
+                free_entry_buffers(e);
+                free(e);
+                return NULL;
+            }
+            memcpy(e->point_vertices, s_build_point_vertices,
+                   point_total * sizeof(VitaDecodedVertex));
+            if (!has_mtxidx)
+                (void) build_gpu_point_buffers(e, point_total);
+        }
         if (tris.count) memcpy(e->indices, tris.data, tris.count * sizeof(u16));
         if (lines.count) memcpy(e->indices + tris.count, lines.data, lines.count * sizeof(u16));
         if (points.count) memcpy(e->indices + tris.count + lines.count, points.data, points.count * sizeof(u16));
@@ -2541,6 +2646,8 @@ static DlCacheEntry* build_dl_entry(const void* list, u32 bytes, u32 state_hash)
     e->list = list;
     e->bytes = bytes;
     e->state_hash = state_hash;
+    e->command_hash = hash_bytes(list, bytes, 0x1234567u);
+    e->immutable_bytecode = immutable_bytecode ? 1u : 0u;
     e->vertex_count = total;
     e->tri_count = tris.count;
     e->line_count = lines.count;
@@ -2553,7 +2660,7 @@ static DlCacheEntry* build_dl_entry(const void* list, u32 bytes, u32 state_hash)
             ++e->array_count;
         }
     }
-    e->content_hash = entry_content_hash(e);
+    e->content_hash = entry_content_hash(e, true);
     ++s_dl_stats.entries;
     return e;
 }
@@ -2822,6 +2929,39 @@ static int fill_vertex_key_uniforms(
     return bump_result;
 }
 
+static bool point_gpu_state_supported(const DlCacheEntry* e,
+                                      const GxrVtxKey* key)
+{
+    bool unsupported_texcoord_source = false;
+    for (u32 i = 0; i < key->texgen_count; ++i) {
+        const u8 source = key->tg[i].source;
+        if (source >= GX_TG_TEX4 && source <= GX_TG_TEX7) {
+            unsupported_texcoord_source = true;
+            break;
+        }
+    }
+    return melee_vita_point_gpu_path_supported(
+        e->has_mtxidx != 0u, unsupported_texcoord_source,
+        e->point_gpu_vertices != NULL && e->point_gpu_indices != NULL);
+}
+
+static void fill_gpu_point_params(GxrPointParams* point)
+{
+    f32 scale;
+    f32 offset;
+    f32 yscale;
+    screen_mapping(&scale, &offset, &yscale);
+    (void) offset;
+    melee_vita_point_sprite_clip_half(
+        s_gx.point_size, scale, yscale, &point->clip_half_x,
+        &point->clip_half_y);
+    point->tex_span = tex_offset_span(s_gx.point_offset);
+    point->tex_offset_mask = 0u;
+    for (u32 i = 0; i < GXR_MAX_TEXCOORDS; ++i)
+        if (s_gx.tex_offset_points[i])
+            point->tex_offset_mask |= (u8) (1u << i);
+}
+
 static u8 current_cull(void)
 {
     switch (s_gx.cull_mode) {
@@ -2962,8 +3102,11 @@ static bool draw_bump_display_list_gpu(
     }
 }
 
-static bool draw_display_list_gpu(const void* list, u32 bytes) __attribute__((unused));
-static bool draw_display_list_gpu(const void* list, u32 bytes)
+static bool draw_display_list_gpu(
+    const void* list, u32 bytes, bool immutable_bytecode)
+    __attribute__((unused));
+static bool draw_display_list_gpu(
+    const void* list, u32 bytes, bool immutable_bytecode)
 {
     const u32 frame = s_gx.copied_frames;
     u32 state_hash;
@@ -2988,13 +3131,19 @@ static bool draw_display_list_gpu(const void* list, u32 bytes)
         return false;
 #endif
     state_hash = current_state_hash();
-    bucket = (u32) (((uintptr_t) list >> 3) ^ bytes ^ state_hash) & (DL_CACHE_BUCKETS - 1u);
+    bucket = (u32) (((uintptr_t) list >> 3) ^ bytes ^ state_hash ^
+                    (immutable_bytecode ? 0x9e3779b9u : 0u)) &
+             (DL_CACHE_BUCKETS - 1u);
     for (e = s_dl_cache[bucket]; e != NULL; e = e->next)
-        if (e->list == list && e->bytes == bytes && e->state_hash == state_hash) break;
+        if (melee_vita_dl_cache_identity_matches(
+                e->list, e->bytes, e->state_hash,
+                e->immutable_bytecode != 0u, list, bytes, state_hash,
+                immutable_bytecode))
+            break;
     {
         const u64 t0 = sceKernelGetProcessTimeWide();
         if (e != NULL && e->validated_frame != s_array_epoch) {
-            const u32 h = entry_content_hash(e);
+            const u32 h = entry_content_hash(e, false);
             e->validated_frame = s_array_epoch;
             if (h != e->content_hash) {
                 /* Contents changed (skinning/shape animation): rebuild. */
@@ -3013,10 +3162,14 @@ static bool draw_display_list_gpu(const void* list, u32 bytes)
     }
     if (e == NULL) {
         const u64 t0 = sceKernelGetProcessTimeWide();
-        e = build_dl_entry(list, bytes, state_hash);
+        e = build_dl_entry(
+            list, bytes, state_hash, immutable_bytecode);
         s_prof_decode_us += sceKernelGetProcessTimeWide() - t0;
         melee_vita_prof_add(VPZ_DL_BUILD, sceKernelGetProcessTimeWide() - t0);
-        if (e == NULL) { ++s_dl_stats.fallbacks; return false; }
+        if (e == NULL) {
+            ++s_dl_stats.fallbacks;
+            return false;
+        }
         e->validated_frame = s_array_epoch;
         e->next = s_dl_cache[bucket];
         s_dl_cache[bucket] = e;
@@ -3055,28 +3208,91 @@ static bool draw_display_list_gpu(const void* list, u32 bytes)
                 ++s_prof_draws;
             }
             if (e->point_count) {
-                draw->primitive = GXR_PRIM_POINTS;
-                draw->line_width = (s_gx.point_size / 6.0f) * (544.0f / 480.0f);
-                ok = gxr_draw_gpu(draw, &key, &uniforms, e->vertices, e->indices + e->tri_count + e->line_count, e->point_count, GXR_CULL_NONE) && ok;
-                ++s_prof_draws;
+                const u32 chunks =
+                    melee_vita_point_sprite_chunk_count(e->point_count);
+                if (point_gpu_state_supported(e, &key)) {
+                    GxrPointParams point;
+                    fill_gpu_point_params(&point);
+                    draw->primitive = GXR_PRIM_TRIANGLES;
+                    draw->line_width = 1.0f;
+                    for (u32 i = 0; i < chunks; ++i) {
+                        u32 offset;
+                        u32 count;
+                        u32 expanded;
+                        u32 indices;
+                        const bool valid = melee_vita_point_sprite_chunk(
+                            e->point_count, i, &offset, &count) &&
+                            melee_vita_point_sprite_counts(
+                                count, &expanded, &indices);
+                        bool point_ok = false;
+                        if (valid) {
+                            point_ok = gxr_draw_gpu_points(
+                                draw, &key, &uniforms, &point,
+                                e->point_gpu_vertices + offset * 4u,
+                                e->point_gpu_indices, indices);
+                        }
+                        if (point_ok) {
+                            s_prof_vertices += count;
+                            ++s_prof_draws;
+                        }
+                        ok = point_ok && ok;
+                    }
+                } else {
+                    /* Unsupported point states retain the accepted CPU quad
+                     * path, including its bounded u16 chunks. */
+                    for (u32 i = 0; i < chunks; ++i) {
+                        u32 offset;
+                        u32 count;
+                        const bool valid = melee_vita_point_sprite_chunk(
+                            e->point_count, i, &offset, &count);
+                        if (!valid) {
+                            ok = false;
+                            break;
+                        }
+                        ok = submit_gxr(
+                                 GX_POINTS, e->point_vertices + offset, count,
+                                 true) &&
+                             ok;
+                    }
+                }
             }
             s_prof_draw_us += sceKernelGetProcessTimeWide() - draw_start;
             melee_vita_prof_add(VPZ_GPU_SUBMIT, sceKernelGetProcessTimeWide() - draw_start);
         }
-        s_prof_vertices += e->vertex_count;
+        s_prof_vertices += e->vertex_count - e->point_count;
         /* A shader failure falls back to the CPU path for this draw only if
          * nothing was drawn; partial success is accepted. */
         return ok;
     }
 }
 
-void GXCallDisplayList(const void* list, u32 bytes)
+void GXInvalidateDisplayList(const void* list)
+{
+    if (list == NULL) return;
+    for (u32 bucket = 0; bucket < DL_CACHE_BUCKETS; ++bucket) {
+        DlCacheEntry** link = &s_dl_cache[bucket];
+        while (*link != NULL) {
+            DlCacheEntry* e = *link;
+            if (melee_vita_dl_release_invalidates(e->list, list)) {
+                *link = e->next;
+                free_entry_buffers(e);
+                free(e);
+                --s_dl_stats.entries;
+                continue;
+            }
+            link = &e->next;
+        }
+    }
+}
+
+static void call_display_list(
+    const void* list, u32 bytes, bool immutable_bytecode)
 {
     const u8* stream = list;
     u32 cursor = 0;
     if (stream == NULL) return;
 #ifndef MELEE_VITA_GX_CPU_VERTEX
-    if (draw_display_list_gpu(list, bytes)) return;
+    if (draw_display_list_gpu(list, bytes, immutable_bytecode)) return;
 #endif
     while (cursor + 3u <= bytes) {
         const u8 command = stream[cursor];
@@ -3120,6 +3336,7 @@ void GXCallDisplayList(const void* list, u32 bytes)
                 if (entry->array->data == NULL || entry->array->stride == 0) return;
             }
         }
+
         default_color = packed_color(s_gx.material_colors[0]);
 
         for (vertex_index = 0; vertex_index < count; ++vertex_index) {
@@ -3162,6 +3379,16 @@ void GXCallDisplayList(const void* list, u32 bytes)
         s_prof_decode_us += sceKernelGetProcessTimeWide() - decode_start;
         submit_decoded(primitive, s_decode_vertices, count);
     }
+}
+
+void GXCallDisplayList(const void* list, u32 bytes)
+{
+    call_display_list(list, bytes, false);
+}
+
+void GXCallDisplayListImmutable(const void* list, u32 bytes)
+{
+    call_display_list(list, bytes, true);
 }
 
 #define GX_VALUE_FN_1(name, type) void name(type a) { (void) a; note_value(); }
@@ -3546,6 +3773,7 @@ void GXCopyDisp(void* destination, GXBool clear)
     process_deferred_frees();
     {
         static u64 last_us, sum_us, max_us;
+        bool periodic_logs = true;
         const u64 now_us = sceKernelGetProcessTimeWide();
         if (last_us != 0) {
             const u64 delta = now_us - last_us;
@@ -3553,7 +3781,7 @@ void GXCopyDisp(void* destination, GXBool clear)
             if (delta > max_us) max_us = delta;
         }
         last_us = now_us;
-        if ((s_gx.copied_frames % 120u) == 0u) {
+        if (periodic_logs && (s_gx.copied_frames % 120u) == 0u) {
             extern u64 g_melee_vita_vi_wait_us;
             extern u32 g_melee_vita_vi_calls;
             extern u64 g_melee_vita_update_us, g_melee_vita_render_us;
@@ -3599,10 +3827,14 @@ void GXCopyDisp(void* destination, GXBool clear)
             sum_us = 0; max_us = 0;
         }
     }
-    if ((s_gx.copied_frames % 300u) == 1u) gxr_log_stats();
-    if ((s_gx.copied_frames % 120u) == 1u) {
+    {
+        bool periodic_logs = true;
+        if (periodic_logs && (s_gx.copied_frames % 300u) == 1u)
+            gxr_log_stats();
+        if (periodic_logs && (s_gx.copied_frames % 120u) == 1u) {
         melee_vita_log_info("[GXSTAT] frame=%u draws=%u tris=%u culled=%u textured=%u alpha0=%u bm_none=%u z=[%.3f,%.3f] cull=%d proj=%.0f",
             s_gx.copied_frames, s_stats.draws, s_stats.tris_in, s_stats.tris_culled, s_stats.textured, s_stats.alpha0, s_stats.bm_none, s_stats.zmin, s_stats.zmax, (int) s_gx.cull_mode, s_gx.projection[0]);
+        }
     }
     memset(&s_stats, 0, sizeof(s_stats)); s_stats.zmin = 1e9f; s_stats.zmax = -1e9f;
     melee_vita_gxm_present(color);

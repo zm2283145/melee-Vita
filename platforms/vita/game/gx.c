@@ -2287,11 +2287,47 @@ static bool u16vec_push(U16Vec* v, u16 value)
 static GxrGpuVertex* s_build_vertices;
 static u32 s_build_capacity;
 
+static u16 float_to_half(f32 value)
+{
+    u32 bits;
+    u32 sign;
+    u32 mantissa;
+    s32 exponent;
+    memcpy(&bits, &value, sizeof(bits));
+    sign = (bits >> 16) & 0x8000u;
+    mantissa = bits & 0x7fffffu;
+    exponent = (s32) ((bits >> 23) & 0xffu);
+    if (exponent == 0xff) {
+        return (u16) (sign | (mantissa != 0u ? 0x7e00u : 0x7c00u));
+    }
+    exponent -= 127 - 15;
+    if (exponent <= 0) {
+        u32 shift;
+        if (exponent < -10) return (u16) sign;
+        mantissa |= 0x800000u;
+        shift = (u32) (14 - exponent);
+        mantissa += ((1u << (shift - 1u)) - 1u) +
+                    ((mantissa >> shift) & 1u);
+        return (u16) (sign | (mantissa >> shift));
+    }
+    if (exponent >= 31) return (u16) (sign | 0x7c00u);
+    mantissa += 0xfffu + ((mantissa >> 13) & 1u);
+    if ((mantissa & 0x800000u) != 0u) {
+        mantissa = 0u;
+        if (++exponent >= 31) return (u16) (sign | 0x7c00u);
+    }
+    return (u16) (sign | ((u32) exponent << 10) | (mantissa >> 13));
+}
+
 static void to_gpu_vertex(const VitaDecodedVertex* in, GxrGpuVertex* out)
 {
     memcpy(out->pos, in->position, sizeof(out->pos));
     out->mtx = (f32) in->position_matrix;
     memcpy(out->nrm, in->normal, sizeof(out->nrm));
+    for (u32 i = 0; i < 3u; ++i) {
+        out->binormal[i] = float_to_half(in->binormal[i]);
+        out->tangent[i] = float_to_half(in->tangent[i]);
+    }
     {
         const u32 c0 = in->has_color[0] ? in->color : 0xffffffffu;
         const u32 c1 = in->has_color[1] ? in->color1 : 0xffffffffu;
@@ -2531,8 +2567,10 @@ static void fill_vertex_key_uniforms(GxrVtxKey* key, GxrVtxUniforms* u, bool has
         const VitaTexGenState* g = &s_gx.texture_generators[i];
         GxrVtxTexGen* k = &key->tg[i];
         const f32 (*m)[4] = NULL;
-        k->type = g->type == GX_TG_MTX2x4 ? GX_TG_MTX2x4 : GX_TG_MTX3x4;
+        k->type = (u8) g->type;
         k->source = (u8) g->source;
+        if (g->type >= GX_TG_BUMP0 && g->type <= GX_TG_BUMP7)
+            continue;
         if (g->matrix != GX_IDENTITY) {
             m = g->matrix < GX_TEXMTX0
                 ? (const f32 (*)[4]) s_gx.position_matrices[matrix_slot(g->matrix)]
@@ -2571,17 +2609,6 @@ static u8 current_cull(void)
     }
 }
 
-static bool uses_bump_texgen(void)
-{
-    const u32 count = s_gx.texture_generator_count < GX_MAX_TEXCOORD
-        ? s_gx.texture_generator_count : GX_MAX_TEXCOORD;
-    for (u32 i = 0; i < count; ++i) {
-        const GXTexGenType type = s_gx.texture_generators[i].type;
-        if (type >= GX_TG_BUMP0 && type <= GX_TG_BUMP7) return true;
-    }
-    return false;
-}
-
 static bool draw_display_list_gpu(const void* list, u32 bytes) __attribute__((unused));
 static bool draw_display_list_gpu(const void* list, u32 bytes)
 {
@@ -2589,8 +2616,7 @@ static bool draw_display_list_gpu(const void* list, u32 bytes)
     u32 state_hash;
     u32 bucket;
     DlCacheEntry* e;
-    if (!gxr_available() || is_movie_yuv_draw() || uses_bump_texgen() ||
-        bytes < 3u)
+    if (!gxr_available() || is_movie_yuv_draw() || bytes < 3u)
         return false;
     state_hash = current_state_hash();
     bucket = (u32) (((uintptr_t) list >> 3) ^ bytes ^ state_hash) & (DL_CACHE_BUCKETS - 1u);

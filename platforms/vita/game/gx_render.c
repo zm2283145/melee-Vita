@@ -1305,7 +1305,7 @@ bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
 
 /* ===================================================== GPU vertex pipeline */
 
-#define GXR_VTX_VERSION 2u
+#define GXR_VTX_VERSION 3u
 #define GXR_ARENA_SIZE (48u * 1024u * 1024u)
 
 typedef struct GxrVtxProgram {
@@ -1384,7 +1384,7 @@ static void emit_light_channel(Source* s, const GxrVtxKey* key, u32 index,
 
 static bool build_vertex_source(const GxrVtxKey* key, Source* s)
 {
-    emit(s, "void main(float3 aPos, float aMtx, float3 aNrm, float4 aC0, float4 aC1,\n");
+    emit(s, "void main(float3 aPos, float aMtx, float3 aNrm, float3 aBnr, float3 aTan, float4 aC0, float4 aC1,\n");
     emit(s, "    float2 aT0, float2 aT1, float2 aT2, float2 aT3,\n");
     emit(s, "    uniform float4 uPos[30], uniform float4 uNrm[30], uniform float4 uProj[4],\n");
     emit(s, "    uniform float4 uTex[24], uniform float4 uPost[24], uniform float4 uLight[40],\n");
@@ -1418,17 +1418,32 @@ static bool build_vertex_source(const GxrVtxKey* key, Source* s)
     emit(s, "    vPosition = float4(uProj[1].z * wc + uProj[1].w * xc, uProj[2].x * wc + uProj[2].y * yc,\n");
     emit(s, "                       uProj[2].z * wc + zc * uProj[2].w, wc);\n");
     emit(s, "    vColor0 = float4(0.0, 0.0, 0.0, 0.0);\n    vColor1 = float4(0.0, 0.0, 0.0, 0.0);\n");
+    for (u32 i = 0; i < GXR_MAX_TEXCOORDS; ++i)
+        emit(s, "    float2 tc%u = float2(0.0, 0.0);\n", i);
     for (u32 i = 0; i < key->channel_count && i < 2u; ++i) {
         const char* vc = i == 0 ? "aC0" : "aC1";
         emit_light_channel(s, key, i, false, vc);
         emit_light_channel(s, key, i, true, vc);
     }
     for (u32 i = 0; i < GXR_MAX_TEXCOORDS; ++i) {
-        if (i >= key->texgen_count) { emit(s, "    vTex%u = float2(0.0, 0.0);\n", i); continue; }
+        if (i >= key->texgen_count) {
+            emit(s, "    vTex%u = tc%u;\n", i, i);
+            continue;
+        }
         const GxrVtxTexGen* tg = &key->tg[i];
         const u32 r = i * 3u;
         emit(s, "    {\n        float3 t = float3(0.0, 0.0, 1.0);\n");
-        if (tg->source >= GX_TG_TEX0 && tg->source <= GX_TG_TEX7)
+        if (tg->type >= GX_TG_BUMP0 && tg->type <= GX_TG_BUMP7) {
+            const u32 source = (u32) tg->source - (u32) GX_TG_TEXCOORD0;
+            const u32 light = (u32) tg->type - (u32) GX_TG_BUMP0;
+            if (source < i)
+                emit(s, "        t.xy = tc%u;\n", source);
+            emit(s, "        float3 btan = float3(dot(uNrm[m].xyz, aTan), dot(uNrm[m + 1].xyz, aTan), dot(uNrm[m + 2].xyz, aTan));\n");
+            emit(s, "        float3 bbnr = float3(dot(uNrm[m].xyz, aBnr), dot(uNrm[m + 1].xyz, aBnr), dot(uNrm[m + 2].xyz, aBnr));\n");
+            emit(s, "        float3 ldir = uLight[%u].xyz - eye;\n", light * 5u + 1u);
+            emit(s, "        float ll2 = dot(ldir, ldir);\n");
+            emit(s, "        if (ll2 > 1e-16) { ldir = ldir * (1.0 / sqrt(ll2)); t.xy = t.xy + float2(dot(ldir, btan), dot(ldir, bbnr)); }\n");
+        } else if (tg->source >= GX_TG_TEX0 && tg->source <= GX_TG_TEX7)
             emit(s, "        t.xy = %s;\n", tex_attr_name(tg->source));
         else if (tg->source == GX_TG_POS) emit(s, "        t = aPos;\n");
         else if (tg->source == GX_TG_NRM) emit(s, "        t = aNrm;\n");
@@ -1454,7 +1469,8 @@ static bool build_vertex_source(const GxrVtxKey* key, Source* s)
                  r, r, r + 1u, r + 1u, r + 2u, r + 2u);
             emit(s, "        t = pr;\n        t.xy = (pr.z != 0.0) ? pr.xy / pr.z : pr.xy;\n");
         }
-        emit(s, "        vTex%u = t.xy;\n    }\n", i);
+        emit(s, "        tc%u = t.xy;\n        vTex%u = tc%u;\n    }\n",
+             i, i, i);
     }
     emit(s, "}\n");
     return !s->overflow;
@@ -1514,16 +1530,18 @@ static GxrVtxProgram* find_vertex_program(const GxrVtxKey* key)
         { "aPos", 0, SCE_GXM_ATTRIBUTE_FORMAT_F32, 3 },
         { "aMtx", 12, SCE_GXM_ATTRIBUTE_FORMAT_F32, 1 },
         { "aNrm", 16, SCE_GXM_ATTRIBUTE_FORMAT_F32, 3 },
-        { "aC0", 28, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4 },
-        { "aC1", 32, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4 },
-        { "aT0", 36, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
-        { "aT1", 44, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
-        { "aT2", 52, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
-        { "aT3", 60, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+        { "aBnr", 28, SCE_GXM_ATTRIBUTE_FORMAT_F16, 3 },
+        { "aTan", 34, SCE_GXM_ATTRIBUTE_FORMAT_F16, 3 },
+        { "aC0", 40, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4 },
+        { "aC1", 44, SCE_GXM_ATTRIBUTE_FORMAT_U8N, 4 },
+        { "aT0", 48, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+        { "aT1", 56, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+        { "aT2", 64, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
+        { "aT3", 72, SCE_GXM_ATTRIBUTE_FORMAT_F32, 2 },
     };
-    SceGxmVertexAttribute attributes[9];
+    SceGxmVertexAttribute attributes[11];
     u32 count = 0;
-    for (u32 i = 0; i < 9u; ++i) {
+    for (u32 i = 0; i < 11u; ++i) {
         const SceGxmProgramParameter* param = sceGxmProgramFindParameterByName(p->program, attrs[i].name);
         if (param == NULL) continue;
         attributes[count].streamIndex = 0;
@@ -1691,8 +1709,16 @@ bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
     {
         const u32 lights_used = (u32) (vkey->chan[0].lights | vkey->chan[1].lights |
                                        vkey->chan[2].lights | vkey->chan[3].lights);
+        u32 bump_lights = 0u;
+        for (u32 i = 0; i < vkey->texgen_count; ++i) {
+            if (vkey->tg[i].type >= GX_TG_BUMP0 &&
+                vkey->tg[i].type <= GX_TG_BUMP7)
+                bump_lights |= 1u << (vkey->tg[i].type - GX_TG_BUMP0);
+        }
         u32 top = 8u;
-        while (top > 0u && (lights_used & (1u << (top - 1u))) == 0u) --top;
+        while (top > 0u &&
+               ((lights_used | bump_lights) & (1u << (top - 1u))) == 0u)
+            --top;
         light_comps = top * 20u;
     }
     total = 2u * mtx_comps + 16u + 2u * tg_comps + light_comps + 16u;

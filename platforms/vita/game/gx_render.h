@@ -83,10 +83,12 @@ typedef struct GxrGpuVertex {
     f32 pos[3];
     f32 mtx;          /* GX_VA_PNMTXIDX value (0..27) */
     f32 nrm[3];
+    u16 binormal[3];  /* IEEE-754 half-floats */
+    u16 tangent[3];
     u8 c0[4];
     u8 c1[4];
     f32 tex[GXR_GPU_TEX][2];
-} GxrGpuVertex;       /* 68 bytes */
+} GxrGpuVertex;       /* 80 bytes */
 
 typedef struct GxrVtxChan {
     u8 enabled, amb_src, mat_src, lights, diffuse, atten;

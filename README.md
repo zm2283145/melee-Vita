@@ -72,7 +72,7 @@ Development/debug builds have separate requirements.
 
 ## Install and run
 
-1. Download `SmashMeleevita.vpk` from a **published Vita release** in
+1. Download the versioned `SmashMeleevita-<version>.vpk` from a **published Vita release** in
    [Releases](https://github.com/zm2283145/melee-Vita/releases).
 2. Install the VPK using VitaShell. It uses title ID **`MLVITA002`** and currently
    appears as **Smash Melee Vita** in LiveArea.
@@ -158,8 +158,8 @@ and dependency setup. The normal build uses **Release** configuration:
 .\platforms\vita\build-full.ps1 -Configuration Release
 ```
 
-The result is `build-vita/full/SmashMeleevita.vpk`, also distributed by CI as
-`SmashMeleevita.vpk`.
+The result is `build-vita/full/SmashMeleevita.vpk`. CI distributes it with the
+release version in the filename, such as `SmashMeleevita-0.8.4.vpk`.
 Release builds use optimization, disable diagnostic logging and debugger
 support, and do not include debug symbols. The dormant hidden Debug Tools UI
 does not change those guarantees. Runtime shader compilation and its disk cache

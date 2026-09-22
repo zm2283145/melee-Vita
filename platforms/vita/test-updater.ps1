@@ -34,7 +34,13 @@ if ($LASTEXITCODE -ne 0) {
     throw "Host updater tests failed with exit code $LASTEXITCODE"
 }
 
-& $HostCompiler -std=c++20 -Wall -Wextra -Werror -pedantic -shared -static `
+$hostLibraryFlags = @(
+    '-std=c++20', '-Wall', '-Wextra', '-Werror', '-pedantic', '-shared'
+)
+if ($IsWindows) {
+    $hostLibraryFlags += '-static'
+}
+& $HostCompiler @hostLibraryFlags `
     -I (Join-Path $PSScriptRoot 'updater') $source -o $hostLibrary
 if ($LASTEXITCODE -ne 0) {
     throw "Host updater test library compilation failed with exit code $LASTEXITCODE"

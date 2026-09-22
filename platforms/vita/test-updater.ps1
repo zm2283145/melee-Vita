@@ -39,6 +39,8 @@ $hostLibraryFlags = @(
 )
 if ($IsWindows) {
     $hostLibraryFlags += '-static'
+} else {
+    $hostLibraryFlags += '-fPIC'
 }
 & $HostCompiler @hostLibraryFlags `
     -I (Join-Path $PSScriptRoot 'updater') $source -o $hostLibrary

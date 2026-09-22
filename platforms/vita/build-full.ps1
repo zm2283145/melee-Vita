@@ -20,7 +20,8 @@ param(
     [switch]$EnableModernDebugMenu,
     [switch]$EnableDirectSnag,
     [switch]$EnableRenderTrace,
-    [switch]$UseCpuVertexPath
+    [switch]$UseCpuVertexPath,
+    [string]$VitaBuildNumber = $env:MELEE_VITA_BUILD_NUMBER
 )
 
 $ErrorActionPreference = 'Stop'
@@ -101,6 +102,22 @@ if ($version.release -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]
     $version.app -notmatch '^[0-9]{2}\.[0-9]{2}$') {
     throw 'Invalid release or Vita app version in platforms/vita/version.json.'
 }
+if ([string]::IsNullOrWhiteSpace($VitaBuildNumber)) {
+    if ($env:GITHUB_RUN_NUMBER -match '^[1-9][0-9]*$') {
+        $attempt = if ($env:GITHUB_RUN_ATTEMPT -match '^[1-9][0-9]*$') {
+            $env:GITHUB_RUN_ATTEMPT
+        } else {
+            '1'
+        }
+        $VitaBuildNumber = "$($env:GITHUB_RUN_NUMBER).$attempt"
+    } else {
+        $VitaBuildNumber = 'local'
+    }
+}
+if ($VitaBuildNumber -notmatch '^(local|[1-9][0-9]*\.[1-9][0-9]*)$' -or
+    "VITA $($version.release) BUILD $VitaBuildNumber".Length -gt 48) {
+    throw 'Invalid Vita build number.'
+}
 $build = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BuildDirectory)
 if ($EnableDebugger -and $Configuration -ne 'Debug') {
     throw '-EnableDebugger requires -Configuration Debug.'
@@ -151,7 +168,9 @@ $gameArchive = & (Join-Path $PSScriptRoot 'build-game.ps1') `
     -EnableDebugMenu:$EnableDebugMenu `
     -EnableModernDebugMenu:$EnableModernDebugMenu `
     -EnableDirectSnag:$EnableDirectSnag `
-    -EnableRenderTrace:$EnableRenderTrace |
+    -EnableRenderTrace:$EnableRenderTrace `
+    -VitaReleaseVersion $version.release `
+    -VitaBuildNumber $VitaBuildNumber |
     Select-Object -Last 1
 
 $platformSources = @(

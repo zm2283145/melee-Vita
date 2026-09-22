@@ -1,0 +1,15 @@
+#ifndef MELEE_VITA_BUILD_LABEL_H
+#define MELEE_VITA_BUILD_LABEL_H
+
+#ifndef MELEE_VITA_RELEASE_VERSION
+#define MELEE_VITA_RELEASE_VERSION "dev"
+#endif
+
+#ifndef MELEE_VITA_BUILD_NUMBER
+#define MELEE_VITA_BUILD_NUMBER "local"
+#endif
+
+#define MELEE_VITA_BUILD_LABEL                                               \
+    "VITA " MELEE_VITA_RELEASE_VERSION " BUILD " MELEE_VITA_BUILD_NUMBER
+
+#endif

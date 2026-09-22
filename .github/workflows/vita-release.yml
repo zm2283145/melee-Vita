@@ -88,12 +88,19 @@ jobs:
             platforms/vita/tests/display_list_memo_test.c \
             -o "$RUNNER_TEMP/display-list-memo-test"
           "$RUNNER_TEMP/display-list-memo-test"
+          cc -std=c11 -Wall -Wextra -Werror -Iplatforms/vita/game \
+            '-DMELEE_VITA_RELEASE_VERSION="0.8.2"' \
+            '-DMELEE_VITA_BUILD_NUMBER="37.1"' \
+            platforms/vita/tests/title_build_label_test.c \
+            -o "$RUNNER_TEMP/title-build-label-test"
+          "$RUNNER_TEMP/title-build-label-test"
 
       - name: Build full game
         shell: pwsh
         run: |
           $env:PATH = "$env:VITASDK/bin:$env:PATH"
-          ./platforms/vita/build-full.ps1 -Configuration Release -Jobs 2
+          ./platforms/vita/build-full.ps1 -Configuration Release -Jobs 2 `
+            -VitaBuildNumber "${{ github.run_number }}.${{ github.run_attempt }}"
 
       - name: Verify release has no debug symbols or logger
         run: |

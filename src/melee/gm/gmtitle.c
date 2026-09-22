@@ -27,6 +27,9 @@
 #include <sysdolphin/baselib/gobjproc.h>
 #include <sysdolphin/baselib/random.h>
 #include <sysdolphin/baselib/sislib.h>
+#ifdef TARGET_VITA
+#include "vita_build_label.h"
+#endif
 
 static StaticModelDesc model_desc_0;
 static StaticModelDesc model_desc_1;
@@ -378,6 +381,17 @@ void gm_Scene_Title_OnEnter(void* unused)
     OSReport("[TITLE] enter step 9\n");
     fn_801A1498_inline();
 
+    /* The Vita release identifier belongs only to the Press Start scene. */
+#ifdef TARGET_VITA
+    HSD_SisLib_803A611C(0, NULL, 9, 0xD, 0, 0xE, 0, 0x13);
+    text = HSD_SisLib_803A6754(0, 0);
+    gmTitle_801A1D38(MELEE_VITA_BUILD_LABEL, debug_text_buffer);
+    scale = HSD_SisLib_803A6B98(text, 620.0F, 430.0F, "%s",
+                                debug_text_buffer);
+    text->default_alignment = 2;
+    text->default_kerning = 1;
+    HSD_SisLib_803A7548(text, scale, 0.45F, 0.45F);
+#else
     // Debug shows the build timestamp on the title screen
     if (DbLevel >= DbLKind_NoDebugRom) {
         HSD_SisLib_803A611C(0, NULL, 9, 0xD, 0, 0xE, 0, 0x13);
@@ -388,4 +402,5 @@ void gm_Scene_Title_OnEnter(void* unused)
         text->default_kerning = 1;
         HSD_SisLib_803A7548(text, scale, 0.7f, 0.55f);
     }
+#endif
 }

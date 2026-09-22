@@ -9,7 +9,9 @@ param(
     [switch]$EnableDebugMenu,
     [switch]$EnableModernDebugMenu,
     [switch]$EnableDirectSnag,
-    [switch]$EnableRenderTrace
+    [switch]$EnableRenderTrace,
+    [string]$VitaReleaseVersion,
+    [string]$VitaBuildNumber = $env:MELEE_VITA_BUILD_NUMBER
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,11 +20,34 @@ if (-not $VitaSdk) {
 }
 
 $root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+$version = Get-Content -Raw (Join-Path $PSScriptRoot 'version.json') | ConvertFrom-Json
+if ([string]::IsNullOrWhiteSpace($VitaReleaseVersion)) {
+    $VitaReleaseVersion = $version.release
+}
+if ([string]::IsNullOrWhiteSpace($VitaBuildNumber)) {
+    if ($env:GITHUB_RUN_NUMBER -match '^[1-9][0-9]*$') {
+        $attempt = if ($env:GITHUB_RUN_ATTEMPT -match '^[1-9][0-9]*$') {
+            $env:GITHUB_RUN_ATTEMPT
+        } else {
+            '1'
+        }
+        $VitaBuildNumber = "$($env:GITHUB_RUN_NUMBER).$attempt"
+    } else {
+        $VitaBuildNumber = 'local'
+    }
+}
+if ($VitaReleaseVersion -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' -or
+    $VitaBuildNumber -notmatch '^(local|[1-9][0-9]*\.[1-9][0-9]*)$' -or
+    "VITA $VitaReleaseVersion BUILD $VitaBuildNumber".Length -gt 48) {
+    throw 'Invalid Vita release version or build number.'
+}
 $variantParts = @($Configuration)
 if ($EnableDebugMenu) { $variantParts += 'DebugMenu' }
 if ($EnableModernDebugMenu) { $variantParts += 'ModernDebugMenu' }
 if ($EnableDirectSnag) { $variantParts += 'DirectSnag' }
 if ($EnableRenderTrace) { $variantParts += 'RenderTrace' }
+$variantParts += "Vita$($VitaReleaseVersion -replace '\.', '_')"
+$variantParts += "Build$($VitaBuildNumber -replace '\.', '_')"
 $variant = $variantParts -join '-'
 $build = Join-Path ($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BuildDirectory)) $variant
 $objects = Join-Path $build 'obj'
@@ -62,6 +87,8 @@ $common = @(
     '-std=c11',
     '-DTARGET_PC=1', '-DTARGET_VITA=1', '-DMELEE_PC=1',
     '-DMELEE_VITA_MODERN_DEBUG_MENU=1',
+    "-DMELEE_VITA_RELEASE_VERSION=`"$VitaReleaseVersion`"",
+    "-DMELEE_VITA_BUILD_NUMBER=`"$VitaBuildNumber`"",
     "-I$includeAurora", "-I$includeSrc", "-I$includeSdk", "-I$includeVita",
     '-Wno-all', '-Wno-extra',
     '-Werror=int-conversion', '-Werror=implicit-function-declaration',

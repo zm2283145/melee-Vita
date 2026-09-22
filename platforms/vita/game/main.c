@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "vita_platform.h"
+#include "profiler_live.h"
 #include "../vita_log.h"
 #ifdef MELEE_VITA_UPDATER
 #include "../updater/update_runtime.h"
@@ -38,6 +39,11 @@ int main(void)
         return result;
     }
 
+#ifdef MELEE_VITA_PROFILER
+    if (melee_vita_profiler_start() != 0)
+        printf("Melee Vita: live profiler unavailable\n");
+#endif
+
 #ifdef MELEE_VITA_WAIT_FOR_DEBUGGER
     if (melee_vita_debugger_wait() < 0) {
         melee_vita_log_info("[DEBUGGER] failed to enter GDB wait");
@@ -54,6 +60,7 @@ int main(void)
 #ifdef MELEE_VITA_UPDATER
     melee_vita_updater_shutdown();
 #endif
+    melee_vita_profiler_stop();
     melee_vita_platform_shutdown();
     melee_vita_log_info("Platform shutdown complete");
     melee_vita_log_stop();

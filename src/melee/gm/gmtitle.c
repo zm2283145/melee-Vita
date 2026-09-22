@@ -284,7 +284,11 @@ void gm_Scene_Title_OnFrame(void)
         tmp = gm_GetCurrentSceneExitData();
         *tmp = 0;
         gm_801A4B60();
+#ifdef TARGET_VITA
+    } else if (input & (HSD_PAD_START | HSD_PAD_A)) {
+#else
     } else if (input & HSD_PAD_START) {
+#endif
         lbAudioAx_80026F2C(0x1C);
         lbAudioAx_8002702C(0xC, 0);
         lbAudioAx_80027168();

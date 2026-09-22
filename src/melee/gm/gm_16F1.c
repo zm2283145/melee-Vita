@@ -1,4 +1,5 @@
 #include "gm_16F1.h"
+#include "giga_bowser_rules.h"
 
 #include <melee/pl/forward.h>
 
@@ -1343,6 +1344,11 @@ static inline bool gm_801721EC_2(void)
             return true;
         }
     }
+    if (gm_IsCKindUnlocked(CKind_GKoops) &&
+        gm_801721EC_1(GM_GIGA_BOWSER_NOTIFICATION_ID))
+    {
+        return true;
+    }
     return false;
 }
 
@@ -1822,6 +1828,9 @@ static inline const struct lbl_803B7AD0_t* inline2(u8 cpu_ckind)
 u8 gm_DecideChallengerCpuLevel(u8 cpu_ckind, UNUSED u8 human_nametag)
 {
     int var_r0;
+    if (cpu_ckind == CKind_GKoops) {
+        return 5;
+    }
     const struct lbl_803B7AD0_t* var_r31 = inline2(cpu_ckind);
 
     var_r0 = var_r31->x1 - var_r31->x2 * gmMainLib_8015DB6C(
@@ -1837,7 +1846,8 @@ u8 gm_DecideChallengerCpuLevel(u8 cpu_ckind, UNUSED u8 human_nametag)
 u8 gm_80172D78(void)
 {
     u32* temp_r31 = &gmMainLib_8015ED98()->x4;
-    if (!gm_IsCKindUnlocked(CKind_Mewtwo) && *temp_r31 >= 0x11940) {
+    /* Combined human-player VS time is stored in seconds. */
+    if (!gm_IsCKindUnlocked(CKind_Mewtwo) && *temp_r31 >= 60 * 60) {
         return CKind_Mewtwo;
     }
     return ChKind_None;
@@ -2011,6 +2021,9 @@ u8 gm_80173224(int arg0, int arg1)
     if (ckind == ChKind_None) {
         ckind = gm_80172E74();
     }
+    if (ckind == ChKind_None && gm_IsGigaBowserChallengerEligible()) {
+        ckind = CKind_GKoops;
+    }
     return ckind;
 }
 
@@ -2023,7 +2036,31 @@ u8 gm_801732D8(u8 arg0)
     if (!gm_IsCKindUnlocked(CKind_Pichu) && gm_801BEBC0(arg0) == 0xE) {
         return CKind_Pichu;
     }
+    if (gm_IsGigaBowserChallengerEligible()) {
+        return CKind_GKoops;
+    }
     return ChKind_None;
+}
+
+bool gm_IsGigaBowserChallengerEligible(void)
+{
+    GmSaveData* save = gmMainLib_GetSaveData();
+    bool adventure_hard_completed = false;
+    int i;
+
+    /* Adventure records retain the highest cleared difficulty for every
+     * character.  Hard is 2 and Very Hard is 3/4 in the original save data,
+     * so this also recognizes qualifying clears from older save files. */
+    for (i = 0; i < SELKIND_COUNT; i++) {
+        if (*gmMainLib_8015D2BC(i) >= 2) {
+            adventure_hard_completed = true;
+            break;
+        }
+    }
+
+    return gmGigaBowser_IsEligible(save->x1A68,
+                                   adventure_hard_completed,
+                                   save->giga_bowser_flags);
 }
 
 u16 gm_8017335C(void)

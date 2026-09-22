@@ -8,6 +8,8 @@
 #include "gm_unsplit.h"
 #include "gmresult.h"
 #include "gmresultplayer.static.h"
+#include "giga_bowser_result_banner.inc"
+#include "giga_bowser_result_icon.inc"
 #include "gmscene.h"
 #include "types.h"
 #include <melee/if/ifcoget.h>
@@ -27,6 +29,73 @@
 #include <sysdolphin/baselib/wobj.h>
 
 extern ResultsData lbl_8046DBE8;
+
+static HSD_ImageDesc gmResult_GigaBowserBannerDesc;
+static HSD_ImageDesc gmResult_GigaBowserIconDesc;
+
+static void gmResult_UseGigaBowserImage(HSD_JObj* jobj,
+                                        HSD_ImageDesc* desc, void* pixels,
+                                        u16 width, u16 height)
+{
+    HSD_DObj* dobj = HSD_JObjGetDObj(jobj);
+    HSD_TObj* tobj;
+    if (dobj == NULL || dobj->mobj == NULL ||
+        (tobj = dobj->mobj->tobj) == NULL)
+    {
+        return;
+    }
+    DP_SET(desc->image_ptr, pixels);
+    desc->width = width;
+    desc->height = height;
+    desc->format = GX_TF_RGBA8;
+    desc->mipmap = 0;
+    desc->minLOD = 0.0F;
+    desc->maxLOD = 0.0F;
+    tobj->imagedesc = desc;
+    tobj->flags = (tobj->flags & ~TEX_ALPHAMAP_MASK) | TEX_ALPHAMAP_REPLACE;
+    dobj->mobj->rendermode |= RENDER_XLU | RENDER_NO_ZUPDATE;
+}
+
+static void gmResult_UseGigaBowserImages(ResultsData* data,
+                                          MatchEnd* match_end)
+{
+    int i;
+    for (i = 0; i < 4; i++) {
+        if (match_end->player_standings[i].pkind == Gm_PKind_NA ||
+            match_end->player_standings[i].ckind != CKind_GKoops)
+        {
+            continue;
+        }
+        gmResult_UseGigaBowserImage(data->player_data[i].jobjs[0],
+                                    &gmResult_GigaBowserIconDesc,
+                                    gmResult_GigaBowserIconTexture, 64, 56);
+        gmResult_UseGigaBowserImage(data->player_data[i].jobjs[5],
+                                    &gmResult_GigaBowserBannerDesc,
+                                    gmResult_GigaBowserBannerTexture, 256, 28);
+        if (match_end->is_teams == 0 && data->x6 == i &&
+            gm_WasMatchCanceled(match_end->outcome) == 0 &&
+            data->x30 != NULL && data->x30->u.dobj != NULL &&
+            data->x30->u.dobj->next != NULL)
+        {
+            HSD_DObj* dobj = data->x30->u.dobj->next;
+            if (dobj->mobj != NULL && dobj->mobj->tobj != NULL) {
+                HSD_TObj* tobj = dobj->mobj->tobj;
+                DP_SET(gmResult_GigaBowserBannerDesc.image_ptr,
+                       gmResult_GigaBowserBannerTexture);
+                gmResult_GigaBowserBannerDesc.width = 256;
+                gmResult_GigaBowserBannerDesc.height = 28;
+                gmResult_GigaBowserBannerDesc.format = GX_TF_RGBA8;
+                gmResult_GigaBowserBannerDesc.mipmap = 0;
+                gmResult_GigaBowserBannerDesc.minLOD = 0.0F;
+                gmResult_GigaBowserBannerDesc.maxLOD = 0.0F;
+                tobj->imagedesc = &gmResult_GigaBowserBannerDesc;
+                tobj->flags = (tobj->flags & ~TEX_ALPHAMAP_MASK) |
+                              TEX_ALPHAMAP_REPLACE;
+                dobj->mobj->rendermode |= RENDER_XLU | RENDER_NO_ZUPDATE;
+            }
+        }
+    }
+}
 
 /* 3D6A08 */ u32 gmResultPlayerColors[4] = {
     0x013C59FF,
@@ -1318,6 +1387,7 @@ void fn_80179350(HSD_GObj* arg0)
         }
     }
     fn_80179350_update(data, match_end, arg0);
+    gmResult_UseGigaBowserImages(data, match_end);
 
     if ((u32) data->x8 < (u32) -1) {
         data->x8++;

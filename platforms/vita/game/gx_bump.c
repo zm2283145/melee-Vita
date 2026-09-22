@@ -97,6 +97,13 @@ bool melee_vita_bump_scope_register(const void* identity)
     return false;
 }
 
+bool melee_vita_bump_scope_register_or_begin(const void* identity)
+{
+    if (identity == NULL) return false;
+    if (!s_scope_active) melee_vita_bump_scope_begin();
+    return melee_vita_bump_scope_register(identity);
+}
+
 void melee_vita_bump_scope_unregister(const void* identity)
 {
     bool any = false;

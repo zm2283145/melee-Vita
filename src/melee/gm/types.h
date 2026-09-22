@@ -340,7 +340,8 @@ typedef struct {
     /* 0x01FC */ s32 x1A64;
     /* 0x0200 */ s64 x1A68;
     /* 0x0208 */ s32 x1A70[4];
-    /* 0x0218 */ u8 padding_x1A70[0xBC];
+    /* 0x0218 */ u8 giga_bowser_flags;
+    /* 0x0219 */ u8 padding_x1A70[0xBB];
     /* 0x02D4 */ u8 x1B3C;
     /* 0x02D5 */ char pad_2D5[3]; /* maybe part of x1B3C[4]? */
     /* 0x02D8 */ u32 x1B40[3];
@@ -362,6 +363,7 @@ ASSERT_SIZE(GmSaveData, 0x1790);
 ASSERT_OFFSET(GmSaveData, unk_30.x14, 0x44);
 ASSERT_OFFSET(GmSaveData, x1A48, 0x1E0);
 ASSERT_OFFSET(GmSaveData, x1A4C, 0x1E4);
+ASSERT_OFFSET(GmSaveData, giga_bowser_flags, 0x218);
 ASSERT_OFFSET(GmSaveData, trophy_count, 0x468);
 ASSERT_OFFSET(GmSaveData, trophy_category_flags, 0x46A);
 ASSERT_OFFSET(GmSaveData, trophy_flags, 0x46C);

@@ -476,6 +476,14 @@ Fighter_GObj* fn_8017A67C(CharacterKind kind, int arg1, int arg2)
     HSD_GObj* gobj = NULL;
     int slot_type;
 
+    /* Giga Bowser has no result-demo symbol in the stock archive.  The
+     * archive lookup otherwise passes a NULL name to strcmp and crashes.
+     * Use Bowser's compatible victory demo model; the MatchEnd character
+     * kind remains Giga Bowser for the results UI and saved match data. */
+    if (kind == CKind_GKoops) {
+        kind = CKind_Koopa;
+    }
+
     if (match_end->is_teams == 0) {
         slot_type = match_end->player_standings[arg2].is_big_loser;
     } else {

@@ -319,6 +319,13 @@ void gmVsMelee_ExitResults(GameModeState* state, VsModeData* vs, u8 state_id)
                                       unk, 0);
                 gm_SetNextGameModeStateId(gmVsMode_State_Approach);
                 unk_bool = true;
+            } else if (gm_IsGigaBowserChallengerEligible()) {
+                gm_InitChallengerData(match_end->player_standings[idx].ckind,
+                                      (match_end->player_standings[idx].x3_b0),
+                                      idx, match_end->player_standings[idx].x4,
+                                      CKind_GKoops, 0);
+                gm_SetNextGameModeStateId(gmVsMode_State_Approach);
+                unk_bool = true;
             }
             foo = gm_80172F00(gmMainLib_8015EDB0()->x0);
             if (foo != 328) {

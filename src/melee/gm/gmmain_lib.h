@@ -110,6 +110,7 @@ static inline struct NameTagDataBank* gmMainLib_8015CC4C(void)
 /* 15D8B0 */ void gmMainLib_8015D8B0(u32);
 /* 15D8D8 */ s32 gmMainLib_8015D8D8(u32);
 /* 15D8FC */ void gmMainLib_8015D8FC(u32);
+void gmMainLib_SetNotificationPending(u32 notification_id);
 /* 15D924 */ void gmMainLib_8015D924(u32);
 /* 15D94C */ int gmMainLib_8015D94C(u32);
 /* 15D970 */ u32* gmMainLib_8015D970(ssize_t idx);

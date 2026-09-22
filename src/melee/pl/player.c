@@ -1,4 +1,8 @@
 #include "player.h"
+#include <melee/gm/giga_bowser_rules.h>
+
+_Static_assert(GM_GIGA_BOWSER_FIGHTER_KIND == Ft_Kind_GKoops,
+               "CSS Giga Bowser must map to the Giga fighter kind");
 
 #include <melee/ft/forward.h>
 
@@ -64,7 +68,7 @@ ftMapping ftMapping_list[ChKind_Max] = {
     /* CKind_MasterH   */ { Ft_Kind_MasterH, 0xFF },
     /* CKind_Boy       */ { Ft_Kind_Boy, 0xFF },
     /* CKind_Girl      */ { Ft_Kind_Girl, 0xFF },
-    /* CKind_GKoops    */ { Ft_Kind_GKoops, 0xFF },
+    /* CKind_GKoops    */ { GM_GIGA_BOWSER_FIGHTER_KIND, 0xFF },
     /* CKind_CrezyH    */ { Ft_Kind_CrezyH, 0xFF },
     /* ChKind_Sandbag  */ { Ft_Kind_Sandbag, 0xFF },
     /* ChKind_Popo     */ { Ft_Kind_Popo, 0xFF }

@@ -6,6 +6,9 @@
 #include "types.h"
 #include <melee/db/db.h>
 #include <melee/db/dbsound.h>
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+#include <melee/gm/gm_16F1.h>
+#endif
 #include <melee/gm/gm_unsplit.h>
 #include <melee/gm/gmmain_lib.h>
 #include <melee/lb/lbarchive.h>
@@ -633,7 +636,7 @@ struct un_803FA258_t {
 /* 803FDAC4 */ extern char un_803FDAC4[];
 /* 803FDAD4 */ extern char un_803FDAD4[];
 /* 803FDAE4 */ extern char un_803FDAE4[];
-/* 803FDAF8 */ extern struct un_80304138_objalloc_t_x8 un_803FDAF8[4];
+/* 803FDAF8 */ extern struct un_80304138_objalloc_t_x8 un_803FDAF8[];
 /* 803FDB78 */ extern char un_803FDB78[];
 /* 803FDB88 */ extern char un_803FDB88[];
 /* 803FDB9C */ extern struct un_80304138_objalloc_t_x8 un_803FDB9C[4];
@@ -2179,6 +2182,20 @@ bool un_80301D7C(enum soundtest_callback_arg0 arg0)
     return 0;
 }
 
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+static bool vita_debug_test_giga_challenger(
+    enum soundtest_callback_arg0 update_scene)
+{
+    if (update_scene == true) {
+        sfxForward();
+        gm_InitGigaBowserChallengerTest();
+        gm_ChangeGameModeAfterCurrentScene(GM_CHALLENGER_APPROACH);
+        gm_801A4B60();
+    }
+    return false;
+}
+#endif
+
 bool un_80301DCC(enum soundtest_callback_arg0 update_scene)
 {
     if (update_scene == true) {
@@ -3105,11 +3122,15 @@ static char vita_debug_sound_test[] = "Sound Test";
 /* 803FDAC4 */ char un_803FDAC4[] = "< Sakoda Test >";
 /* 803FDAD4 */ char un_803FDAD4[] = "Event Stage :";
 /* 803FDAE4 */ char un_803FDAE4[] = "FixCamera Start >";
-/* 803FDAF8 */ struct un_80304138_objalloc_t_x8 un_803FDAF8[4] = {
+/* 803FDAF8 */ struct un_80304138_objalloc_t_x8 un_803FDAF8[] = {
     { 0, NULL, un_803FDAC4, NULL, NULL, 0.0f, 0.0f, 0.0f },
     { 3, un_80301D7C, un_803FDAD4, NULL, &un_803FA258.x188, 1.0f, 51.0f,
       1.0f },
     { 1, un_80301D40, un_803FDAE4, NULL, NULL, 0.0f, 0.0f, 0.0f },
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+    { 1, vita_debug_test_giga_challenger, "Test Giga Challenger >", NULL,
+      NULL, 0.0f, 0.0f, 0.0f },
+#endif
     { 9, NULL, NULL, NULL, NULL, 0.0f, 0.0f, 0.0f },
 };
 /* 803FDB78 */ char un_803FDB78[] = "< Sugano Test >";

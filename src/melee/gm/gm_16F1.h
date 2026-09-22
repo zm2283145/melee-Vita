@@ -82,6 +82,7 @@ struct lbl_804D65A8_t;
 /* 173098 */ u8 fn_80173098(int);
 /* 173224 */ u8 gm_80173224(int, int);
 /* 1732D8 */ u8 gm_801732D8(u8);
+bool gm_IsGigaBowserChallengerEligible(void);
 /* 17335C */ u16 gm_8017335C(void);
 /* 1733D8 */ u8 gm_801733D8(void);
 /* 17341C */ u16 gm_8017341C(void);
@@ -96,6 +97,11 @@ struct lbl_804D65A8_t;
 /* 1736E8 */ void gm_InitChallengerData(u8 human_ckind, u8 human_color,
                                         u8 human_slot, u8 human_nametag,
                                         u8 cpu_ckind, u8 curr_mode);
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+void gm_InitGigaBowserChallengerTest(void);
+bool gm_IsGigaBowserChallengerTest(void);
+void gm_EndGigaBowserChallengerTest(void);
+#endif
 /* 173754 */ bool gm_80173754(u8, u8);
 /* 1737D8 */ u8 gm_801737D8(void);
 /* 1737E8 */ void gm_Mode_ChallengerApproach_OnLoad(void);

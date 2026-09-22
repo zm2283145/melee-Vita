@@ -9,6 +9,7 @@
 #include <melee/lb/lblanguage.h>
 #include <melee/mn/inlines.h>
 #ifdef TARGET_VITA
+#include <melee_save_compat.h>
 #include <melee/ty/toy.h>
 #endif
 #include <sysdolphin/baselib/controller.h>
@@ -299,6 +300,16 @@ void gm_Scene_MemCard_OnFrame(void)
         temp_r29 = lb_8001CBBC();
 #ifdef TARGET_VITA
         if ((temp_r29 == 0 || temp_r29 == 2) && lb_8001B6E0(1) == 0) {
+            GmSaveData* save = gmMainLib_GetSaveData();
+            MeleeVitaProgressFields progress = {
+                save->unlocked_characters,
+                save->x186A,
+                (u64) save->x1A68,
+            };
+            melee_vita_normalize_progress_fields(&progress);
+            save->unlocked_characters = progress.unlocked_characters;
+            save->x186A = progress.unlocked_stages;
+            save->x1A68 = (s64) progress.completed_events;
             Toy_NormalizeImportedSaveData();
         }
 #endif

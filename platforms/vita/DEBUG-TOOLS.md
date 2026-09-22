@@ -165,6 +165,11 @@ The historical names shown in older documentation may differ. The Vita
 presentation uses functional aliases such as **Match Setup**, **Characters**,
 **CPU Behavior**, and **Event & Fixed Camera**.
 
+The hidden menu includes **Test Giga Challenger** under **Event & Fixed
+Camera**. It launches Mario against Giga Bowser through the challenger approach
+and battle scenes, then returns to Debug Tools. This test route never writes
+match statistics, Event 51 completion, or the Giga Bowser unlock bit.
+
 ## In-match debug shortcuts
 
 These shortcuts are active in matches launched while Debug Tools owns the

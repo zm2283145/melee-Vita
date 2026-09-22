@@ -59,6 +59,28 @@ void onExit(GameModeState* scene)
     }
 #else
     if (DbLevel >= DbLKind_DebugRom) {
+#ifdef TARGET_VITA
+        if (*buttons & (HSD_PAD_START | HSD_PAD_A)) {
+            gm_80173EEC();
+            gm_80172898(0x100);
+            if (!gm_80173754(1, 0)) {
+                gm_SetPendingGameMode(GM_MENU);
+            }
+        } else if (*buttons & HSD_PAD_X) {
+            gm_SetPendingGameMode(GM_DEBUG_SOUND_TEST);
+        } else if (*buttons & HSD_PAD_Y) {
+#ifdef MELEE_VITA_DIRECT_SNAG
+            struct gmm_x0_528_t* classic = gmMainLib_8015CDC8();
+            classic->x5 = 5;
+            gm_SetPendingGameMode(GM_CLASSIC);
+#else
+            gm_SetPendingGameMode(GM_DEBUG);
+#endif
+        } else {
+            gm_801BF708(1);
+            gm_SetPendingGameMode(GM_OPENING_MV);
+        }
+#else
         if (*buttons & HSD_PAD_A) {
             gm_SetPendingGameMode(GM_DEBUG_VS);
         } else if (*buttons & HSD_PAD_START) {
@@ -81,6 +103,7 @@ void onExit(GameModeState* scene)
             gm_801BF708(1);
             gm_SetPendingGameMode(GM_OPENING_MV);
         }
+#endif
     } else if (*buttons & HSD_PAD_START) {
         gm_80173EEC();
         gm_80172898(0x100);

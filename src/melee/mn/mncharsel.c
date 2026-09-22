@@ -13,6 +13,7 @@
 #include "types.h"
 #include <melee/gm/gm_1601.h>
 #include <melee/gm/gm_unsplit.h>
+#include <melee/gm/giga_bowser_rules.h>
 #include <melee/gm/gmmain_lib.h>
 #include <melee/gm/types.h>
 #include <melee/lb/lb_00B0.h>
@@ -41,12 +42,18 @@
 #include <sysdolphin/baselib/mobj.h>
 #include <sysdolphin/baselib/random.h>
 #include <sysdolphin/baselib/sislib.h>
+#include <sysdolphin/baselib/state.h>
+#include <sysdolphin/baselib/util.h>
+
+#include <dolphin/gx.h>
 
 static u8 mnCharSel_804D50C8[4] = { 1, 2, 4, 8 };
 static u8 mnCharSel_804D50CC[4] = { 1, 0, 0, 2 };
 static u8 mnCharSel_804D50D0[8] = { 2, 0, 1, 0, 5, 3, 4, 0 };
 static u8 mnCharSel_804D50D8[8] = { 2, 0, 8, 1, 7, 7, 7, 7 };
 static u8 mnCharSel_804D50E0[3] = { 0, 1, 3 };
+
+#include "giga_bowser_css_icon.inc"
 
 typedef struct DISC_STRUCT MnSelectChrModels {
     /* 0x0 */ StaticModelDesc background;
@@ -84,6 +91,8 @@ static HSD_Text* mnCharSel_804D6CDC;
 static HSD_Text* mnCharSel_804D6CE0;
 static HSD_Text* mnCharSel_804D6CE4;
 static HSD_Text* mnCharSel_804D6CE8;
+static HSD_Text* mnCharSel_GigaBowserLabel;
+static HSD_ImageDesc mnCharSel_GigaBowserPortraitDesc;
 static u32 mnCharSel_804D6CEC;
 static s8 mnCharSel_804D6CF0;
 static s8 mnCharSel_804D6CF1;
@@ -118,6 +127,23 @@ static s8 mnCharSel_804D6CF9;
 #define ICONBNDS_COL7_L 17.6F
 #define ICONBNDS_COL8_L 24.4F
 #define ICONBNDS_COL8_R 30.2F
+
+/* The painted icon extends past the cursor bounds like the stock tiles. */
+#define GIGA_ICON_DRAW_R 31.4F
+#define GIGA_ICON_DRAW_TOP 5.8F
+#define GIGA_ICON_DRAW_BTM (-1.2F)
+
+enum {
+    CSS_BASE_CHARACTER_ICON_COUNT = 25,
+    CSS_EXTRA_CHARACTER_ICON_COUNT = 1,
+    CSS_CHARACTER_ICON_COUNT =
+        CSS_BASE_CHARACTER_ICON_COUNT + CSS_EXTRA_CHARACTER_ICON_COUNT,
+    CSS_GIGA_BOWSER_ICON_INDEX = CSS_BASE_CHARACTER_ICON_COUNT,
+    CSS_RANDOM_ICON_INDEX = CSS_CHARACTER_ICON_COUNT,
+};
+
+_Static_assert(GM_GIGA_BOWSER_CSS_CKIND == CKind_GKoops,
+               "CSS Giga Bowser kind must match CharacterKind");
 
 static CSSIconsData mnCharSel_803F0A48 = {
     {
@@ -159,7 +185,7 @@ static CSSIconsData mnCharSel_803F0A48 = {
     },
 };
 
-static CSSIcon icons[25 + 1] = {
+static CSSIcon icons[CSS_RANDOM_ICON_INDEX + 1] = {
     // -------- Icons Top Row --------
 
     { // Dr. Mario -                      0x803F0B24
@@ -267,8 +293,72 @@ static CSSIcon icons[25 + 1] = {
     { // Roy -                            0x803F0DC4
       ICONHUD_EMBLEM, CKind_Emblem, ICONSTATE_UNLOCKED, 0x00, ICONJOINT_EMBLEM,
       ICONJOINT_EMBLEM, 0x000000DA, ICONBNDS_COL7_L, 23.6, ICONROWHT_BTM_TOP,
-      ICONROWHT_BTM_BTM }
+      ICONROWHT_BTM_BTM },
+    { // Giga Bowser - custom tile in the unused bottom-right cell
+      ICONHUD_KOOPA, CKind_GKoops, ICONSTATE_LOCKED, 0x00, ICONJOINT_KOOPA,
+      ICONJOINT_KOOPA, 0x000000CA, ICONBNDS_COL8_L, ICONBNDS_COL8_R,
+      ICONROWHT_BTM_TOP, ICONROWHT_BTM_BTM },
+    { 0 }, // Random / no-selection sentinel
 };
+
+static inline bool isCssCharacterKind(s8 ckind)
+{
+    return (ckind >= 0 && ckind < CKind_Playable_Count) ||
+           ckind == CKind_GKoops;
+}
+
+static void mnCharSel_RenderGigaBowserIcon(HSD_GObj* gobj, int code)
+{
+    GXTexObj texture;
+    Mtx view_mtx;
+    (void) gobj;
+    (void) code;
+
+    if (icons[CSS_GIGA_BOWSER_ICON_INDEX].state != ICONSTATE_UNLOCKED) {
+        return;
+    }
+
+    GXInitTexObj(&texture, mnCharSel_GigaBowserIconTexture, 64, 56,
+                 GX_TF_RGBA8, GX_CLAMP, GX_CLAMP, GX_DISABLE);
+    GXLoadTexObj(&texture, GX_TEXMAP0);
+    GXSetNumChans(0);
+    GXSetNumTexGens(1);
+    GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY,
+                      GX_FALSE, GX_PTIDENTITY);
+    GXSetNumTevStages(1);
+    GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
+    GXSetTevOp(GX_TEVSTAGE0, GX_REPLACE);
+    GXSetCullMode(GX_CULL_NONE);
+    GXSetAlphaCompare(GX_GREATER, 0, GX_AOP_AND, GX_GREATER, 0);
+    GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA,
+                   GX_LO_CLEAR);
+    GXSetZMode(GX_DISABLE, GX_ALWAYS, GX_DISABLE);
+    GXSetColorUpdate(GX_ENABLE);
+    GXSetAlphaUpdate(GX_ENABLE);
+
+    GXClearVtxDesc();
+    GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+    GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
+    GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+    GXSetVtxDesc(GX_VA_TEX0, GX_DIRECT);
+    /* CSS icon bounds are in the menu model's world coordinates. */
+    HSD_CObjGetViewingMtx(HSD_CObjGetCurrent(), view_mtx);
+    GXLoadPosMtxImm(view_mtx, GX_PNMTX0);
+    GXSetCurrentMtx(GX_PNMTX0);
+
+    GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+    GXPosition3f32(ICONBNDS_COL8_L, GIGA_ICON_DRAW_TOP, 0.0f);
+    GXTexCoord2f32(0.0f, 0.0f);
+    GXPosition3f32(GIGA_ICON_DRAW_R, GIGA_ICON_DRAW_TOP, 0.0f);
+    GXTexCoord2f32(1.0f, 0.0f);
+    GXPosition3f32(GIGA_ICON_DRAW_R, GIGA_ICON_DRAW_BTM, 0.0f);
+    GXTexCoord2f32(1.0f, 1.0f);
+    GXPosition3f32(ICONBNDS_COL8_L, GIGA_ICON_DRAW_BTM, 0.0f);
+    GXTexCoord2f32(0.0f, 1.0f);
+    GXEnd();
+
+    HSD_StateInvalidate(HSD_STATE_ALL);
+}
 
 static CSSDoorsData mnCharSel_803F0DFC = {
     { { 0x2E, 0x33, 0x38, 0x85, 0x29,  0xA6,  0x3D,  0x41,
@@ -958,6 +1048,28 @@ static inline HSD_JObj* animateJointLeadingPad(HSD_JObj* root, u8 joint,
     return jobj;
 }
 
+static void mnCharSel_UseGigaBowserPortrait(HSD_JObj* jobj)
+{
+    HSD_TObj* tobj;
+    if (jobj == NULL || jobj->u.dobj == NULL ||
+        jobj->u.dobj->mobj == NULL ||
+        (tobj = jobj->u.dobj->mobj->tobj) == NULL)
+    {
+        return;
+    }
+    DP_SET(mnCharSel_GigaBowserPortraitDesc.image_ptr,
+           mnCharSel_GigaBowserIconTexture);
+    mnCharSel_GigaBowserPortraitDesc.width = 64;
+    mnCharSel_GigaBowserPortraitDesc.height = 56;
+    mnCharSel_GigaBowserPortraitDesc.format = GX_TF_RGBA8;
+    mnCharSel_GigaBowserPortraitDesc.mipmap = 0;
+    mnCharSel_GigaBowserPortraitDesc.minLOD = 0.0F;
+    mnCharSel_GigaBowserPortraitDesc.maxLOD = 0.0F;
+    tobj->imagedesc = &mnCharSel_GigaBowserPortraitDesc;
+    tobj->flags = (tobj->flags & ~TEX_ALPHAMAP_MASK) | TEX_ALPHAMAP_REPLACE;
+    jobj->u.dobj->mobj->rendermode |= RENDER_XLU | RENDER_NO_ZUPDATE;
+}
+
 void mnCharSel_8025D5AC(int door, int frame, bool hidden)
 {
     HSD_JObj* sp5C;
@@ -978,6 +1090,12 @@ void mnCharSel_8025D5AC(int door, int frame, bool hidden)
             sp58 =
                 animateJoint(mnCharSel_804D6CC4, 6, TOBJ_MASK, (float) frame);
             sethidden(sp58, hidden);
+            if (!hidden &&
+                mnCharSel_803F0DFC.doors[door].sel_icon ==
+                    CSS_GIGA_BOWSER_ICON_INDEX)
+            {
+                mnCharSel_UseGigaBowserPortrait(sp5C);
+            }
             return;
         }
         sp54 =
@@ -987,6 +1105,12 @@ void mnCharSel_8025D5AC(int door, int frame, bool hidden)
         sp50 =
             animateJoint(mnCharSel_804D6CC0, 0x2D, TOBJ_MASK, (float) frame);
         sethidden(sp50, hidden);
+        if (!hidden &&
+            mnCharSel_803F0DFC.doors[door].sel_icon ==
+                CSS_GIGA_BOWSER_ICON_INDEX)
+        {
+            mnCharSel_UseGigaBowserPortrait(sp54);
+        }
         if (hidden) {
             frame = 0xB9;
         }
@@ -1002,6 +1126,12 @@ void mnCharSel_8025D5AC(int door, int frame, bool hidden)
                         mnCharSel_803F0DFC.doors[door].costume_joint,
                         TOBJ_MASK, (float) frame);
     sethidden(sp48, hidden);
+    if (!hidden &&
+        mnCharSel_803F0DFC.doors[door].sel_icon ==
+            CSS_GIGA_BOWSER_ICON_INDEX)
+    {
+        mnCharSel_UseGigaBowserPortrait(sp48);
+    }
 
     sp44 = animateJoint(mnCharSel_804D6CC0,
                         mnCharSel_803F0DFC.doors[door].emblem_joint, TOBJ_MASK,
@@ -1025,7 +1155,7 @@ static inline bool isDuplicateCostumeWith(int door, CSSData* css,
     for (j = 0; j < num_doors; j++) {
         CSSDoor* other_door = &mnCharSel_803F0DFC.doors[j];
         if (door != j && other_door->p_kind != 3 &&
-            other_door->sel_icon < 0x19 &&
+            other_door->sel_icon < CSS_CHARACTER_ICON_COUNT &&
             other_door->sel_icon == base_door->sel_icon &&
             base_door->costume == other_door->costume)
         {
@@ -1068,7 +1198,7 @@ static inline bool isDuplicateCostumeCached(int door)
     (void) cost;
     for (j = 0; j < num_doors; j++) {
         if (door != j && mnCharSel_803F0DFC.doors[j].p_kind != 3 &&
-            mnCharSel_803F0DFC.doors[j].sel_icon < 0x19 &&
+            mnCharSel_803F0DFC.doors[j].sel_icon < CSS_CHARACTER_ICON_COUNT &&
             equalU8(mnCharSel_803F0DFC.doors[j].sel_icon, sel) &&
             cost == mnCharSel_803F0DFC.doors[j].costume)
         {
@@ -1095,7 +1225,7 @@ static inline bool isDuplicateCostumeExact(int door)
     for (j = 0; j < num_doors; j++) {
         CSSDoor* other_door = &mnCharSel_803F0DFC.doors[j];
         if (door != j && other_door->p_kind != 3 &&
-            other_door->sel_icon < 0x19 &&
+            other_door->sel_icon < CSS_CHARACTER_ICON_COUNT &&
             other_door->sel_icon == base_door->sel_icon &&
             base_door->costume == other_door->costume)
         {
@@ -1120,7 +1250,7 @@ static inline bool isDuplicateCostume(int door)
     for (j = 0; j < num_doors; j++) {
         CSSDoor* other_door = &mnCharSel_803F0DFC.doors[j];
         if (door != j && other_door->p_kind != 3 &&
-            other_door->sel_icon < 0x19 &&
+            other_door->sel_icon < CSS_CHARACTER_ICON_COUNT &&
             other_door->sel_icon == base_door->sel_icon &&
             base_door->costume == other_door->costume)
         {
@@ -1146,7 +1276,7 @@ bool mnCharSel_8025DAA0(int door)
 
     for (j = 0; j < num_doors; j++) {
         if (door != j && mnCharSel_803F0DFC.doors[j].p_kind != 3 &&
-            mnCharSel_803F0DFC.doors[j].sel_icon < 0x19 &&
+            mnCharSel_803F0DFC.doors[j].sel_icon < CSS_CHARACTER_ICON_COUNT &&
             mnCharSel_803F0DFC.doors[j].sel_icon ==
                 mnCharSel_803F0DFC.doors[door].sel_icon &&
             mnCharSel_803F0DFC.doors[door].costume ==
@@ -1204,7 +1334,9 @@ void mnCharSel_8025DB34(u8 arg0)
     mnCharSel_8025D5AC((int) arg0, 0, 1);
 
     /* Name display */
-    if (mnCharSel_803F0E8C[arg0].data->use_tag == 0 && (int) sel_icon < 0x19) {
+    if (mnCharSel_803F0E8C[arg0].data->use_tag == 0 &&
+        (int) sel_icon < CSS_CHARACTER_ICON_COUNT)
+    {
         mnCharSel_803F0E8C[arg0].data->text->default_kerning = 1;
         if (lbLang_IsSavedLanguageUS() != 0 && (int) sel_icon == 0x16) {
             HSD_SisLib_803A70A0(mnCharSel_803F0E8C[arg0].data->text, 0,
@@ -1250,7 +1382,7 @@ void mnCharSel_8025DB34(u8 arg0)
             animateJoint(mnCharSel_804D6CC0, 0x2B, MOBJ_MASK, anim_frame);
         }
         if (mnCharSel_803F0E8C[arg0].data->use_tag == 0 &&
-            mnCharSel_803F0DFC.doors[arg0].sel_icon >= 0x19U)
+            mnCharSel_803F0DFC.doors[arg0].sel_icon >= CSS_CHARACTER_ICON_COUNT)
         {
             mnCharSel_803F0E8C[arg0].data->text->hidden = 1;
         } else {
@@ -1513,7 +1645,8 @@ void mnCharSel_8025DB34(u8 arg0)
         /* Hide/show nametag text */
         if (mnCharSel_803F0DFC.doors[arg0].p_kind == 3 ||
             (mnCharSel_803F0E8C[arg0].data->use_tag == 0 &&
-             mnCharSel_803F0DFC.doors[arg0].sel_icon >= 0x19U))
+             mnCharSel_803F0DFC.doors[arg0].sel_icon >=
+                 CSS_CHARACTER_ICON_COUNT))
         {
             mnCharSel_803F0E8C[arg0].data->text->hidden = 1;
         } else {
@@ -1524,7 +1657,7 @@ void mnCharSel_8025DB34(u8 arg0)
     /* Final: costume color assignment */
     {
         u8 final_icon = mnCharSel_803F0DFC.doors[arg0].sel_icon;
-        if (final_icon < 0x19U) {
+        if (final_icon < CSS_CHARACTER_ICON_COUNT) {
             if (mnCharSel_804D6CF5 == 1 ||
                 mnCharSel_804D6CB0->vs.start.rules.is_teams == 0)
             {
@@ -1681,12 +1814,12 @@ void fn_8025F0E0(HSD_GObj* gobj)
                         AOBJ_ARG_AF, 0.0f);
     }
 
-    for (i = 0; i < 25; i++) {
+    for (i = 0; i < CSS_CHARACTER_ICON_COUNT; i++) {
         timer = icons[i].anim_timer;
         if (timer != 0) {
             timer = timer - 1;
             icons[i].anim_timer = timer;
-            if (timer == 0) {
+            if (timer == 0 && i != CSS_GIGA_BOWSER_ICON_INDEX) {
                 if (mnCharSel_804D6CF5 == 1) {
                     lb_80011E24(jobj, &sp4C, icons[i].joint_id_1p, -1);
                     HSD_ForeachAnim(sp4C, JOBJ_TYPE, TOBJ_MASK,
@@ -2022,7 +2155,7 @@ void mnCharSel_8025FB50(u8 door, s32 arg1)
     HSD_JObj* icon_jobj;
 
     do {
-        s32 temp = HSD_Randi(0x19);
+        s32 temp = HSD_Randi(CSS_CHARACTER_ICON_COUNT);
         icon_idx = temp;
         icon_offset = getIconOffset(icon_idx);
     } while (icons[icon_idx].state == 0);
@@ -2053,15 +2186,19 @@ void mnCharSel_8025FB50(u8 door, s32 arg1)
     HSD_GObjGXLink_803909D8(mnCharSel_804A0BD0[door]->gobj,
                             mnCharSel_804A0BC0[mnCharSel_804D6CF5 - 1]->gobj);
 
-    if (mnCharSel_804D6CF5 == 1) {
+    if (icon_idx != CSS_GIGA_BOWSER_ICON_INDEX &&
+        mnCharSel_804D6CF5 == 1)
+    {
         lb_80011E24(mnCharSel_804D6CC0, &icon_jobj,
                     icons[icon_idx].joint_id_1p, -1);
-    } else {
+    } else if (icon_idx != CSS_GIGA_BOWSER_ICON_INDEX) {
         lb_80011E24(mnCharSel_804D6CC0, &icon_jobj,
                     icons[icon_idx].joint_id_vs, -1);
     }
-    HSD_ForeachAnim(icon_jobj, JOBJ_TYPE, TOBJ_MASK, HSD_AObjReqAnim,
-                    AOBJ_ARG_AF, 10.0);
+    if (icon_idx != CSS_GIGA_BOWSER_ICON_INDEX) {
+        HSD_ForeachAnim(icon_jobj, JOBJ_TYPE, TOBJ_MASK, HSD_AObjReqAnim,
+                        AOBJ_ARG_AF, 10.0);
+    }
 
     icons[icon_idx].anim_timer = 0xC;
 
@@ -2094,7 +2231,7 @@ s32 mnCharSel_8025FDEC(u8 door)
     css = mnCharSel_804D6CB0;
     c_kind = css->vs.start.players[player].ckind;
 
-    if (c_kind < CKind_Playable_Count) {
+    if (isCssCharacterKind(c_kind)) {
         if (c_kind != icons[mnCharSel_803F0DFC.doors[door].sel_icon].char_kind)
         {
             mnCharSel_803F0DFC.doors[door].costume = 0;
@@ -2102,7 +2239,9 @@ s32 mnCharSel_8025FDEC(u8 door)
 
         {
             CSSIcon* icon = icons;
-            for (icon_idx = 0; icon_idx < 0x19; icon_idx++) {
+            for (icon_idx = 0; icon_idx < CSS_CHARACTER_ICON_COUNT;
+                 icon_idx++)
+            {
                 if (css->vs.start.players[player].ckind ==
                     icon[icon_idx].char_kind)
                 {
@@ -2123,15 +2262,19 @@ s32 mnCharSel_8025FDEC(u8 door)
 
         mnCharSel_804A0BD0[door]->x5 = 0;
 
-        if (mnCharSel_804D6CF5 == 1) {
+        if (icon_idx != CSS_GIGA_BOWSER_ICON_INDEX &&
+            mnCharSel_804D6CF5 == 1)
+        {
             lb_80011E24(mnCharSel_804D6CC0, &sp10, icons[icon_idx].joint_id_1p,
                         -1);
-        } else {
+        } else if (icon_idx != CSS_GIGA_BOWSER_ICON_INDEX) {
             lb_80011E24(mnCharSel_804D6CC0, &sp10, icons[icon_idx].joint_id_vs,
                         -1);
         }
-        HSD_ForeachAnim(sp10, JOBJ_TYPE, TOBJ_MASK, HSD_AObjReqAnim,
-                        AOBJ_ARG_AF, 10.0);
+        if (icon_idx != CSS_GIGA_BOWSER_ICON_INDEX) {
+            HSD_ForeachAnim(sp10, JOBJ_TYPE, TOBJ_MASK, HSD_AObjReqAnim,
+                            AOBJ_ARG_AF, 10.0);
+        }
 
         icons[icon_idx].anim_timer = 0xC;
 
@@ -2163,10 +2306,14 @@ void mnCharSel_CostumeChange(int door, u32 input)
 {
     u8 prev_costume = mnCharSel_803F0DFC.doors[door].costume;
 
-    if (mnCharSel_803F0DFC.doors[door].sel_icon >= 0x19) {
+    if (mnCharSel_803F0DFC.doors[door].sel_icon >=
+        CSS_CHARACTER_ICON_COUNT)
+    {
         return;
     }
-    if (mnCharSel_803F0DFC.doors[door].sel_icon_prev >= 0x19) {
+    if (mnCharSel_803F0DFC.doors[door].sel_icon_prev >=
+        CSS_CHARACTER_ICON_COUNT)
+    {
         return;
     }
 
@@ -2435,7 +2582,7 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                         }
                     } else {
                         if (mnCharSel_803F0DFC.doors[cursor->x4].sel_icon >=
-                                0x19U &&
+                                CSS_CHARACTER_ICON_COUNT &&
                             mnCharSel_803F0DFC.doors[cursor->x4].p_kind != 3 &&
                             mnCharSel_8025FDEC(cursor->x4) != 0)
                         {
@@ -2552,7 +2699,8 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                 lbAudioAx_800237A8(0xB8, 0x7F, 0x40);
                             } else {
                                 mnCharSel_804A0BD0[door]->x5 = 0;
-                                mnCharSel_803F0DFC.doors[door].sel_icon = 0x19;
+                                mnCharSel_803F0DFC.doors[door].sel_icon =
+                                    CSS_RANDOM_ICON_INDEX;
                                 {
                                     s32 player_idx;
                                     if (mnCharSel_804D6CF5 == 1) {
@@ -2577,18 +2725,20 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                 struct CSSCharModel* m =
                                     mnCharSel_804A0BD0[door];
                                 if (m->xC < 6.0f && m->xC > -1.0f &&
-                                    ((m->x8 > -30.0f && m->x8 < -24.4f) ||
-                                     (m->x8 > 24.4f && m->x8 < 30.2f)))
+                                    m->x8 > -30.0f && m->x8 < -24.4f)
                                 {
                                     s32 icon_count;
-                                    for (icon_count = 0; icon_count < 25;
+                                    for (icon_count = 0;
+                                         icon_count < CSS_CHARACTER_ICON_COUNT;
                                          icon_count++)
                                     {
                                         if (icons[icon_count].state < 2) {
                                             break;
                                         }
                                     }
-                                    if (icon_count == 0x19) {
+                                    if (icon_count ==
+                                        CSS_CHARACTER_ICON_COUNT)
+                                    {
                                         mnCharSel_8025FB50(door, 0);
                                         while (true) {
                                             mnCharSel_803F0DFC.doors[door]
@@ -2616,7 +2766,7 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                 struct CSSCharModel* m2 =
                                     mnCharSel_804A0BD0[door];
                                 s32 i;
-                                for (i = 0; i < 0x19; i++) {
+                                for (i = 0; i < CSS_CHARACTER_ICON_COUNT; i++) {
                                     if (m2->x8 > icons[i].bound_l &&
                                         m2->x8 < icons[i].bound_r &&
                                         m2->xC < icons[i].bound_u &&
@@ -2655,10 +2805,14 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                                     mnCharSel_804D6CC0, &sp98,
                                                     icons[i].joint_id_vs, -1);
                                             }
-                                            HSD_ForeachAnim(sp98, JOBJ_TYPE,
-                                                            TOBJ_MASK,
-                                                            HSD_AObjReqAnim,
-                                                            AOBJ_ARG_AF, 10.0);
+                                            if (i !=
+                                                CSS_GIGA_BOWSER_ICON_INDEX)
+                                            {
+                                                HSD_ForeachAnim(
+                                                    sp98, JOBJ_TYPE, TOBJ_MASK,
+                                                    HSD_AObjReqAnim,
+                                                    AOBJ_ARG_AF, 10.0);
+                                            }
                                             icons[i].anim_timer = 0xC;
                                             mnCharSel_804A0BD0[door]->x5 = 0;
                                             HSD_GObjGXLink_803909D8(
@@ -2696,7 +2850,7 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                     }
                                 }
                                 mnCharSel_803F0DFC.doors[door].sel_icon_prev =
-                                    0x19;
+                                    CSS_RANDOM_ICON_INDEX;
                                 if (trigger & HSD_PAD_A) {
                                     lbAudioAx_80024030(3);
                                 } else {
@@ -3219,7 +3373,7 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                         mnCharSel_803F0DFC.doors[ci].p_kind;
                                     if (pk2 != 3 &&
                                         mnCharSel_803F0DFC.doors[ci].sel_icon <
-                                            0x19U &&
+                                            CSS_CHARACTER_ICON_COUNT &&
                                         (pk2 != 0 || (s32) cursor->x4 == ci))
                                     {
                                         struct CSSCharModel* mc =
@@ -3265,7 +3419,7 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                         (void) mnCharSel_803F0DFC.doors[cport5 = cursor->x4];
                         if (mnCharSel_803F0DFC.doors[cursor->x4].p_kind != 3 &&
                             mnCharSel_803F0DFC.doors[cursor->x4].sel_icon <
-                                0x19U)
+                                CSS_CHARACTER_ICON_COUNT)
                         {
                             f32 cy8 = cursor->x10;
                             if (cy8 > 0.2f && cy8 < 22.0f) {
@@ -3307,7 +3461,8 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                                 {
                                     u8 cport7 = cursor->x4;
                                     if (mnCharSel_803F0DFC.doors[cport7]
-                                            .sel_icon >= 0x19U)
+                                            .sel_icon >=
+                                        CSS_CHARACTER_ICON_COUNT)
                                     {
                                         mnCharSel_804A0BD0[cport7]->x5 =
                                             (u8) (next_port = cport7 + 1);
@@ -3395,7 +3550,8 @@ void fn_80262648(HSD_GObj* gobj)
         u8 door = model->x4;
 
         if ((p_kind = mnCharSel_803F0DFC.doors[door].p_kind) == 3 ||
-            mnCharSel_803F0DFC.doors[door].sel_icon >= 0x19U)
+            mnCharSel_803F0DFC.doors[door].sel_icon >=
+                CSS_CHARACTER_ICON_COUNT)
         {
             HSD_JObjSetFlagsAll(jobj, JOBJ_HIDDEN);
             return;
@@ -3461,7 +3617,8 @@ void fn_80262648(HSD_GObj* gobj)
 
                 for (j = 0; j < (s32) n_doors; j++) {
                     if (j != (s32) model->x4 && (*bdp)->x5 == 0 &&
-                        dp->p_kind != 3 && dp->sel_icon < 0x19U)
+                        dp->p_kind != 3 &&
+                        dp->sel_icon < CSS_CHARACTER_ICON_COUNT)
                     {
                         f32 dx;
                         f32 dy;
@@ -3628,7 +3785,8 @@ void fn_80262F44(HSD_GObj* gobj)
 
     if (mnCharSel_804D6CF5 == 1) {
         if (mnCharSel_804A0BC0[0]->x5 == 1 ||
-            mnCharSel_803F0DFC.doors[0].sel_icon >= 0x19)
+            mnCharSel_803F0DFC.doors[0].sel_icon >=
+                CSS_CHARACTER_ICON_COUNT)
         {
             mnCharSel_804D6CF7 = 0;
         } else {
@@ -3640,7 +3798,9 @@ void fn_80262F44(HSD_GObj* gobj)
 
         for (i = 0; i < (s32) mnCharSel_804D6CF5; i++) {
             if (mnCharSel_803F0DFC.doors[i].p_kind != 3) {
-                if (mnCharSel_803F0DFC.doors[i].sel_icon >= 0x19) {
+                if (mnCharSel_803F0DFC.doors[i].sel_icon >=
+                    CSS_CHARACTER_ICON_COUNT)
+                {
                     goto hide;
                 }
                 valid_count++;
@@ -3822,7 +3982,9 @@ void fn_802633B0(HSD_GObj* gobj)
     switch ((s32) tag->state) {
     case 1:
         mnCharSel_8025D1C4((s32) tag->port, 1);
-        if (mnCharSel_803F0DFC.doors[tag->port].sel_icon < 0x19U) {
+        if (mnCharSel_803F0DFC.doors[tag->port].sel_icon <
+            CSS_CHARACTER_ICON_COUNT)
+        {
             if (lbLang_IsSavedLanguageUS() != 0 &&
                 mnCharSel_803F0DFC.doors[tag->port].sel_icon == 0x16)
             {
@@ -3992,7 +4154,9 @@ void fn_802633B0(HSD_GObj* gobj)
                                 .char_kind));
                 }
                 tag->text->default_kerning = 1;
-                if (mnCharSel_803F0DFC.doors[tag->port].sel_icon < 0x19U) {
+                if (mnCharSel_803F0DFC.doors[tag->port].sel_icon <
+                    CSS_CHARACTER_ICON_COUNT)
+                {
                     tag->text->hidden = 0;
                 } else {
                     tag->text->hidden = 1;
@@ -4231,6 +4395,7 @@ s32 mnCharSel_802640A0(void)
     mnCharSel_804D6CDC = NULL;
     mnCharSel_804D6CE8 = NULL;
     mnCharSel_804D6CE4 = NULL;
+    mnCharSel_GigaBowserLabel = NULL;
     mnCharSel_804D6CF2 = 0x1E;
     mnCharSel_804D6CF3 = 0;
     {
@@ -4336,6 +4501,24 @@ s32 mnCharSel_802640A0(void)
     HSD_ForeachAnim(mnCharSel_804D6CC0, JOBJ_TYPE, ALL_TYPE_MASK,
                     HSD_AObjStopAnim, AOBJ_ARG_AOV, NULL);
 
+    mnCharSel_GigaBowserLabel = HSD_SisLib_803A6754(0, ctx);
+    mnCharSel_GigaBowserLabel->pos_x = 26.9f;
+    mnCharSel_GigaBowserLabel->pos_y = -3.4f;
+    mnCharSel_GigaBowserLabel->pos_z = 0.0f;
+    mnCharSel_GigaBowserLabel->box_size_x = 96.0f;
+    mnCharSel_GigaBowserLabel->box_size_y = 24.0f;
+    mnCharSel_GigaBowserLabel->default_alignment = 1;
+    mnCharSel_GigaBowserLabel->default_fitting = 1;
+    mnCharSel_GigaBowserLabel->font_size.x = 0.04f;
+    mnCharSel_GigaBowserLabel->font_size.y = 0.04f;
+    HSD_SisLib_803A6B98(mnCharSel_GigaBowserLabel, 0.0f, 0.0f, "GIGA");
+    mnCharSel_GigaBowserLabel->hidden = 1;
+
+    gobj = GObj_Create(4, 5, 0x80);
+    /* Draw after the stock CSS model so its Random-cell artwork cannot cover
+     * the unlocked Giga Bowser tile. */
+    GObj_SetupGXLink(gobj, mnCharSel_RenderGigaBowserIcon, 1, 0x81);
+
     if (gm_IsCKindUnlocked(CKind_Luigi) == 0) {
         row_a = 2;
         row_b = 0x13;
@@ -4360,7 +4543,17 @@ s32 mnCharSel_802640A0(void)
     icons[row_b].bound_u = ICONROWHT_TOP_TOP;
     icons[row_b].bound_d = ICONROWHT_MID_TOP;
 
-    for (icon = 0; icon < 0x19; icon++) {
+    for (icon = 0; icon < CSS_CHARACTER_ICON_COUNT; icon++) {
+        if (icon == CSS_GIGA_BOWSER_ICON_INDEX) {
+            icons[icon].state = gmGigaBowser_IsCssVisible(
+                mnCharSel_804D6CB0->match_type,
+                gmMainLib_GetSaveData()->giga_bowser_flags);
+            icons[icon].anim_timer = 0;
+            if (icons[icon].state != 0) {
+                icons[icon].state = ICONSTATE_UNLOCKED;
+            }
+            continue;
+        }
         icons[icon].state = gm_IsCKindUnlocked(icons[icon].char_kind);
         icons[icon].anim_timer = 0;
         if (mnCharSel_804D6CF5 == 1) {
@@ -4443,11 +4636,11 @@ s32 mnCharSel_802640A0(void)
         HSD_ForeachAnim(mnCharSel_804D6CC4, JOBJ_TYPE, ALL_TYPE_MASK,
                         HSD_AObjStopAnim, AOBJ_ARG_AOV, NULL);
         ck = mnCharSel_804D6CB0->vs.start.players[mnCharSel_804D6CF1].ckind;
-        if ((s8) ck >= CKind_Playable_Count || gm_IsCKindUnlocked(ck) == 0) {
+        if (!isCssCharacterKind((s8) ck) || gm_IsCKindUnlocked(ck) == 0) {
             u8* char_kinds;
             s32 icon_off;
             do {
-                i = HSD_Randi(0x19);
+                i = HSD_Randi(CSS_CHARACTER_ICON_COUNT);
             } while (icons[i].state == 0);
             char_kinds = &icons[0].char_kind;
             icon_off = getIconOffset(i);
@@ -4545,7 +4738,7 @@ s32 mnCharSel_802640A0(void)
                 } else {
                     player = i;
                 }
-                for (found = 0; found < 0x19; found++) {
+                for (found = 0; found < CSS_CHARACTER_ICON_COUNT; found++) {
                     if (mnCharSel_804D6CB0->vs.start.players[player].ckind ==
                             icons[found].char_kind &&
                         gm_IsCKindUnlocked(
@@ -4555,7 +4748,7 @@ s32 mnCharSel_802640A0(void)
                         break;
                     }
                 }
-                if (found >= 0x19) {
+                if (found >= CSS_CHARACTER_ICON_COUNT) {
                     u8* slot_type;
                     mnCharSel_804D6CB0->vs.start.players[player].ckind =
                         CKind_Playable_Count;

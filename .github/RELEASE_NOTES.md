@@ -6,6 +6,17 @@ the image you supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.8.5
+
+- Expanded the roster with a new secret playable character. The final Event
+  Match and tougher Adventure clears hold clues; a later VS match may bring a
+  challenger. Win that fight to unlock the newcomer permanently.
+- Improved performance when fighting Giga Bowser by keeping his bump effects
+  on the Vita GPU path. This also preserves his existing appearance and
+  Bowser-to-Giga transformations.
+- Shortened Mewtwo's challenger requirement from 20 hours to one hour of
+  combined human-player VS play time.
+
 ## Changes in Vita v0.8.4
 
 - Added an opt-in, in-game self-updater for published GitHub Releases.

@@ -15,6 +15,7 @@
 #include <dolphin/gx.h>
 
 #include "vita_platform.h"
+#include "profiler_live.h"
 #include <psp2/kernel/processmgr.h>
 #include "gxm_game.h"
 #include <vita2d.h>
@@ -258,6 +259,7 @@ void melee_vita_prof_add(int zone, u64 us)
     if ((unsigned) zone < VPZ_COUNT) {
         s_vpz_us[zone] += us;
         ++s_vpz_calls[zone];
+        melee_vita_profiler_record_duration((unsigned int) zone, us);
     }
 }
 
@@ -3012,7 +3014,11 @@ static bool draw_bump_display_list_gpu(
     started = sceKernelGetProcessTimeWide();
     plan_result = fill_vertex_key_uniforms(
         &key.legacy, &uniforms, false, &key.plan);
-    s_prof_fill_us += sceKernelGetProcessTimeWide() - started;
+    {
+        const u64 elapsed = sceKernelGetProcessTimeWide() - started;
+        s_prof_fill_us += elapsed;
+        melee_vita_profiler_record_duration(19u, elapsed);
+    }
     if (plan_result != MELEE_VITA_BUMP_PLAN_OK || key.plan.mask == 0u) {
         ++s_bump_dl_stats.reject_plan;
         log_bump_reject("plan", (u32) plan_result);
@@ -3031,7 +3037,14 @@ static bool draw_bump_display_list_gpu(
         }
     }
     if (e != NULL && e->validated_frame != s_array_epoch) {
+#ifdef MELEE_VITA_PROFILER
+        started = sceKernelGetProcessTimeWide();
+#endif
         const u32 h = bump_entry_content_hash(e);
+#ifdef MELEE_VITA_PROFILER
+        melee_vita_profiler_record_duration(
+            18u, sceKernelGetProcessTimeWide() - started);
+#endif
         e->validated_frame = s_array_epoch;
         if (h != e->content_hash) {
             BumpDlCacheEntry** link = &s_bump_dl_cache[bucket];
@@ -3048,7 +3061,11 @@ static bool draw_bump_display_list_gpu(
         started = sceKernelGetProcessTimeWide();
         e = build_bump_dl_entry(
             list, bytes, state_hash, scope_generation);
-        s_prof_decode_us += sceKernelGetProcessTimeWide() - started;
+        {
+            const u64 elapsed = sceKernelGetProcessTimeWide() - started;
+            s_prof_decode_us += elapsed;
+            melee_vita_profiler_record_duration(20u, elapsed);
+        }
         if (e == NULL) {
             ++s_bump_dl_stats.reject_build;
             log_bump_reject("geometry", bytes);
@@ -3073,7 +3090,11 @@ static bool draw_bump_display_list_gpu(
     started = sceKernelGetProcessTimeWide();
     plan_result = fill_vertex_key_uniforms(
         &key.legacy, &uniforms, e->has_mtxidx != 0, &key.plan);
-    s_prof_fill_us += sceKernelGetProcessTimeWide() - started;
+    {
+        const u64 elapsed = sceKernelGetProcessTimeWide() - started;
+        s_prof_fill_us += elapsed;
+        melee_vita_profiler_record_duration(19u, elapsed);
+    }
     if (plan_result != MELEE_VITA_BUMP_PLAN_OK || key.plan.mask == 0u) {
         ++s_bump_dl_stats.reject_plan;
         log_bump_reject("plan-after-build", (u32) plan_result);
@@ -3092,7 +3113,11 @@ static bool draw_bump_display_list_gpu(
             draw, &key, &uniforms, e->vertices, e->indices,
             e->tri_count, cull);
         ++s_prof_draws;
-        s_prof_draw_us += sceKernelGetProcessTimeWide() - started;
+        {
+            const u64 elapsed = sceKernelGetProcessTimeWide() - started;
+            s_prof_draw_us += elapsed;
+            melee_vita_profiler_record_duration(21u, elapsed);
+        }
         s_prof_vertices += e->vertex_count;
         if (!ok) {
             ++s_bump_dl_stats.reject_submit;
@@ -3376,8 +3401,19 @@ static void call_display_list(
                 decode_attribute(vertex, entry->attr, entry->format, source, little_endian);
             }
         }
-        s_prof_decode_us += sceKernelGetProcessTimeWide() - decode_start;
+        {
+            const u64 elapsed = sceKernelGetProcessTimeWide() - decode_start;
+            s_prof_decode_us += elapsed;
+            melee_vita_profiler_record_duration(22u, elapsed);
+        }
+#ifdef MELEE_VITA_PROFILER
+        const u64 submit_start = sceKernelGetProcessTimeWide();
+#endif
         submit_decoded(primitive, s_decode_vertices, count);
+#ifdef MELEE_VITA_PROFILER
+        melee_vita_profiler_record_duration(
+            23u, sceKernelGetProcessTimeWide() - submit_start);
+#endif
     }
 }
 
@@ -3762,6 +3798,7 @@ void melee_vita_prof_log_window(const char* label)
 
 void GXCopyDisp(void* destination, GXBool clear)
 {
+    melee_vita_profiler_mark_frame(s_stats.draws, s_stats.tris_in);
     const u32 color = (u32) s_gx.clear_color.r |
                       (u32) s_gx.clear_color.g << 8 |
                       (u32) s_gx.clear_color.b << 16 |
@@ -3807,6 +3844,23 @@ void GXCopyDisp(void* destination, GXBool clear)
             melee_vita_log_info("[DLCACHE] hits/frame=%u builds=%u rebuilds=%u fallbacks=%u entries=%u hash=%.1fms",
                                 s_dl_stats.hits / 120u, s_dl_stats.builds, s_dl_stats.rebuilds,
                                 s_dl_stats.fallbacks, s_dl_stats.entries, s_dl_stats.hash_us / 120.0 / 1000.0);
+#ifdef MELEE_VITA_RENDER_TRACE
+            melee_vita_log_info("[BUMP/DLCACHE] hits/frame=%.1f builds=%u rebuilds=%u entries=%u reject_scope=%u reject_plan=%u reject_nbt=%u reject_build=%u reject_primitive=%u reject_submit=%u",
+                                s_bump_dl_stats.hits / 120.0, s_bump_dl_stats.builds,
+                                s_bump_dl_stats.rebuilds, s_bump_dl_stats.entries,
+                                s_bump_dl_stats.reject_scope, s_bump_dl_stats.reject_plan,
+                                s_bump_dl_stats.reject_nbt, s_bump_dl_stats.reject_build,
+                                s_bump_dl_stats.reject_primitive, s_bump_dl_stats.reject_submit);
+            s_bump_dl_stats.hits = 0;
+            s_bump_dl_stats.builds = 0;
+            s_bump_dl_stats.rebuilds = 0;
+            s_bump_dl_stats.reject_scope = 0;
+            s_bump_dl_stats.reject_plan = 0;
+            s_bump_dl_stats.reject_nbt = 0;
+            s_bump_dl_stats.reject_build = 0;
+            s_bump_dl_stats.reject_primitive = 0;
+            s_bump_dl_stats.reject_submit = 0;
+#endif
             s_dl_stats.hits = s_dl_stats.builds = s_dl_stats.rebuilds = s_dl_stats.fallbacks = 0;
             s_dl_stats.hash_us = 0;
             evict_dl_cache(600u);

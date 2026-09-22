@@ -1,7 +1,10 @@
 #include "gmapproach.h"
 
+#include <melee/ft/forward.h>
+
 #include "gm_unsplit.h"
 #include "gmscene.h"
+#include "giga_bowser_approach_silhouette.inc"
 #include <melee/lb/lbarchive.h>
 #include <melee/lb/lbaudio_ax.h>
 #include <melee/lb/lbspdisplay.h>
@@ -14,6 +17,8 @@
 #include <sysdolphin/baselib/gobjobject.h>
 #include <sysdolphin/baselib/gobjproc.h>
 #include <sysdolphin/baselib/jobj.h>
+#include <sysdolphin/baselib/mobj.h>
+#include <sysdolphin/baselib/tobj.h>
 
 static struct {
     HSD_Archive* x0;
@@ -22,9 +27,54 @@ static struct {
     u16 xA;
     u16 xC;
     u8 xE;
+    bool is_giga_bowser;
 } gm_80480D98;
 
 UNK_T gmVsMelee_ApproachData[2];
+
+static HSD_ImageDesc gmApproach_GigaBowserSilhouetteDesc;
+
+static void gmApproach_UseGigaBowserSilhouette(HSD_JObj* jobj)
+{
+    HSD_JObj* silhouette = jobj == NULL ? NULL : jobj->child;
+    HSD_TObj* tobj;
+
+    silhouette = silhouette == NULL ? NULL : silhouette->next;
+    silhouette = silhouette == NULL ? NULL : silhouette->next;
+    if (silhouette == NULL || silhouette->u.dobj == NULL ||
+        silhouette->u.dobj->mobj == NULL)
+    {
+        return;
+    }
+    tobj = silhouette->u.dobj->mobj->tobj;
+    if (tobj == NULL) {
+        return;
+    }
+
+    DP_SET(gmApproach_GigaBowserSilhouetteDesc.image_ptr,
+           gmApproach_GigaBowserSilhouetteTexture);
+    gmApproach_GigaBowserSilhouetteDesc.width = 80;
+    gmApproach_GigaBowserSilhouetteDesc.height = 112;
+    gmApproach_GigaBowserSilhouetteDesc.format = GX_TF_RGBA8;
+    gmApproach_GigaBowserSilhouetteDesc.mipmap = 0;
+    gmApproach_GigaBowserSilhouetteDesc.minLOD = 0.0F;
+    gmApproach_GigaBowserSilhouetteDesc.maxLOD = 0.0F;
+    tobj->imagedesc = &gmApproach_GigaBowserSilhouetteDesc;
+    /* Crop the transparent margins of the custom silhouette while retaining
+     * the stock warning panel's geometry and animation. */
+    tobj->scale.x = 1.45F;
+    tobj->scale.y = 1.45F;
+    tobj->translate.x = -0.155F;
+    /* The silhouette occupies the lower half of its texture; centre that
+     * painted region rather than the full transparent canvas. */
+    tobj->translate.y = -0.32F;
+    tobj->flags |= TEX_MTX_DIRTY;
+    /* The stock approach portraits are opaque images selected by a texture
+     * animation.  Our standalone RGBA8 image needs its own alpha enabled or
+     * the transparent canvas is drawn as a solid rectangle. */
+    tobj->flags = (tobj->flags & ~TEX_ALPHAMAP_MASK) | TEX_ALPHAMAP_REPLACE;
+    silhouette->u.dobj->mobj->rendermode |= RENDER_XLU | RENDER_NO_ZUPDATE;
+}
 
 static void fn_801AD920(HSD_GObj* gobj)
 {
@@ -83,9 +133,16 @@ static void fn_801AD920(HSD_GObj* gobj)
         var_r0_2 = 0;
         break;
     }
-    HSD_TObjReqAnimAll(var_r0->u.dobj->mobj->tobj, var_r0_2);
-    HSD_AObjSetRate(var_r0->u.dobj->mobj->tobj->aobj, 0.0F);
+    if (!gm_80480D98.is_giga_bowser) {
+        HSD_TObjReqAnimAll(var_r0->u.dobj->mobj->tobj, var_r0_2);
+        HSD_AObjSetRate(var_r0->u.dobj->mobj->tobj->aobj, 0.0F);
+    }
     HSD_JObjAnimAll(jobj);
+    if (gm_80480D98.is_giga_bowser) {
+        /* NtAppro has no Giga Bowser frame.  Keep its native model, camera,
+         * timing, and material, and replace only the silhouette image. */
+        gmApproach_UseGigaBowserSilhouette(jobj);
+    }
 }
 
 static void gm_801ADB04(void)
@@ -117,6 +174,9 @@ static void gm_801ADB04(void)
     gm_8016895C(jobj, GM_SCENE_MODEL(spC, 0), 0);
     HSD_JObjReqAnimAll(jobj, 0.0F);
     HSD_JObjAnimAll(jobj);
+    if (gm_80480D98.is_giga_bowser) {
+        gmApproach_UseGigaBowserSilhouette(jobj);
+    }
     HSD_GObj_SetupProc(gobj, fn_801AD920, 1);
 }
 
@@ -135,8 +195,9 @@ void gm_Scene_Approach_OnEnter(void* arg0_)
     s8* arg0 = arg0_;
     int var_r0;
 
-    gm_801ADB04();
     var_r0 = arg0[0];
+    gm_80480D98.is_giga_bowser = var_r0 == CKind_GKoops;
+    gm_801ADB04();
     if (var_r0 != 3 && var_r0 != 7 && var_r0 != 9 && var_r0 != 10 &&
         var_r0 != 15 && var_r0 != 20 && var_r0 != 21 && var_r0 != 22 &&
         var_r0 != 23 && var_r0 != 24 && var_r0 != 25)

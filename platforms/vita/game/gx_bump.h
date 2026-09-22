@@ -40,6 +40,7 @@ bool melee_vita_bump_stage(
 
 void melee_vita_bump_scope_begin(void);
 bool melee_vita_bump_scope_register(const void* identity);
+bool melee_vita_bump_scope_register_or_begin(const void* identity);
 void melee_vita_bump_scope_unregister(const void* identity);
 uint32_t melee_vita_bump_scope_generation(const void* identity);
 

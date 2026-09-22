@@ -8,6 +8,7 @@
 #include "forward.h"
 #include <dolphin/pad.h>
 #include <melee/gm/gm_unsplit.h>
+#include <melee/gm/giga_bowser_rules.h>
 #include <melee/gm/gmmain_lib.h>
 #include <melee/lb/lbarchive.h>
 #include <melee/lb/lbaudio_ax.h>
@@ -209,8 +210,16 @@ void un_802FE6A8(void)
         PAD_STACK(0x14);
 
         HSD_SisLib_803A611C(2, 0, 9, 20, 0, 14, 0, 18);
-        un_803F9D48.x20 =
-            HSD_SisLib_803A5ACC(2, 0, 105.0, 202.0, 0.0, 435.0, 75.0);
+        /* Unlock notices normally point this object at an archived SIS entry.
+         * Giga Bowser's new notice is runtime text, so give the shared object
+         * the dynamic buffer required by HSD_SisLib_803A7664/803A6B98 while
+         * retaining the original prize-message layout. */
+        un_803F9D48.x20 = HSD_SisLib_803A6754(2, 0);
+        un_803F9D48.x20->pos_x = 105.0f;
+        un_803F9D48.x20->pos_y = 202.0f;
+        un_803F9D48.x20->pos_z = 0.0f;
+        un_803F9D48.x20->box_size_x = 435.0f;
+        un_803F9D48.x20->box_size_y = 75.0f;
         un_803F9D48.x20->default_fitting = 1;
         un_803F9D48.x20->default_alignment = 1;
         un_803F9D48.x24 = HSD_SisLib_803A6754(2, 0);
@@ -290,7 +299,21 @@ void un_802FE918(int a, int b, int c)
     i = 0;
 found:
     un_803F9D48.x4 = i;
-    if (a == 0x3E) {
+    if (a == GM_GIGA_BOWSER_NOTIFICATION_ID) {
+        HSD_SisLib_803A7664(un_803F9D48.x20);
+        /* Keep the dynamic message in the stock prize-card text box.  SIS
+         * positions are relative to this box, not absolute screen pixels. */
+        un_803F9D48.x20->pos_x = 105.0f;
+        un_803F9D48.x20->box_size_x = 435.0f;
+        /* Fitting handles the long first line; shrinking the whole text object
+         * also shrinks its box and makes the notice unreadable. */
+        un_803F9D48.x20->font_size.x = 1.0f;
+        un_803F9D48.x20->font_size.y = 1.0f;
+        HSD_SisLib_803A6B98(un_803F9D48.x20, 217.5f, 8.0f,
+                            "A monstrous power has awakened...");
+        HSD_SisLib_803A6B98(un_803F9D48.x20, 217.5f, 42.0f,
+                            "Giga Bowser has been unlocked!");
+    } else if (a == 0x3E) {
         u16 v_x6;
         un_802FE3F8(a, 2, (s16*) &un_803F9D48.x6, (s16*) &un_803F9D48.x8);
         v_x6 = un_803F9D48.x6;

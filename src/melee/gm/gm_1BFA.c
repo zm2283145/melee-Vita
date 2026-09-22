@@ -4,13 +4,17 @@
 
 #include "forward.h"
 #include "gm_unsplit.h"
+#include "giga_bowser_rules.h"
 #include "gmmain_lib.h"
 #include "gmvsmelee.h"
 #include "types.h"
 #include <melee/if/if_2FD9.h>
+#include <melee/gr/forward.h>
 #include <melee/lb/inlines.h>
 #include <melee/lb/lb_00B0.h>
+#include <melee/lb/lbdvd.h>
 #include <melee/lb/lbtime.h>
+#include <melee/lb/types.h>
 #include <melee/ty/toy.h>
 #include <sysdolphin/baselib/memory.h>
 
@@ -67,8 +71,28 @@ void gm_ModeState_Approach_OnEnter(GameModeState* arg0)
 {
     VsApproachData* vs = gm_GetGameModeStateEnterData(arg0);
     ChallengerData* challenger = gm_GetChallengerData();
+    struct GameCache* cache = &lbDvd_GetPreloadCacheScene()->game_cache;
+    int i;
+
     vs->cpu_ckind = challenger->cpu_ckind;
     vs->human_slot = challenger->human_slot;
+
+    /* The approach scene is the loading screen for the challenger battle.
+     * Describe that next battle here so its stage and both fighter animation
+     * archives are resident before the VS scene starts. */
+    cache->stkind = challenger->cpu_ckind == CKind_GKoops
+                        ? St_Kind_Last
+                        : gm_GetChallengerStKind(
+                              gm_CKindToSelKind(challenger->cpu_ckind));
+    for (i = 0; i < ARRAY_SIZE(cache->entries); i++) {
+        cache->entries[i].char_id = ChKind_None;
+        cache->entries[i].color = 0;
+        cache->entries[i].x5 = 0;
+    }
+    cache->entries[0].char_id = challenger->human_ckind;
+    cache->entries[0].color = challenger->human_color;
+    cache->entries[1].char_id = challenger->cpu_ckind;
+    cache->entries[1].color = 0;
     lbCardGame_SetupArchive();
 }
 
@@ -81,8 +105,10 @@ void gm_ModeState_ApproachVs_OnEnter(GameModeState* state)
     start->rules.timer_enabled = false;
     start->rules.match_kind = MatchKind_Stock;
     start->rules.x0_3 = 2;
-    start->rules.stkind =
-        gm_GetChallengerStKind(gm_CKindToSelKind(challenger->cpu_ckind));
+    start->rules.stkind = challenger->cpu_ckind == CKind_GKoops
+                              ? St_Kind_Last
+                              : gm_GetChallengerStKind(
+                                    gm_CKindToSelKind(challenger->cpu_ckind));
     gm_SetupHumanPlayer(&start->players[0], challenger->human_ckind,
                         challenger->human_color, 1, challenger->human_slot);
     gm_SetupCpuPlayer(&start->players[1], challenger->cpu_ckind, 0, 1, 1);
@@ -101,6 +127,14 @@ void onExitVs(GameModeState* state)
 {
     MatchExitInfo* mei = gm_GetGameModeStateExitData(state);
     ChallengerData* challenger = gm_GetChallengerData();
+#ifdef MELEE_VITA_MODERN_DEBUG_MENU
+    if (gm_IsGigaBowserChallengerTest()) {
+        gm_EndGigaBowserChallengerTest();
+        gm_SetPendingGameMode(challenger->curr_mode);
+        gm_SetNewGameModePending();
+        return;
+    }
+#endif
     gm_80162968(mei->match_end.frame_count / GM_FPS);
     gm_8016247C(mei->match_end.player_standings[0].xE);
     if (mei->match_end.outcome != OUTCOME_NO_CONTEST &&
@@ -108,7 +142,7 @@ void onExitVs(GameModeState* state)
         mei->match_end.player_standings[0].stocks != 0)
     {
         gm_UnlockCKind(challenger->cpu_ckind);
-    } else {
+    } else if (challenger->cpu_ckind != CKind_GKoops) {
         gmMainLib_8015DB2C(gm_CKindToUnlockIndex(challenger->cpu_ckind));
     }
     gm_80173EEC();
@@ -188,6 +222,13 @@ void gm_ModeState_Prize_OnEnter(GameModeState* arg0)
                 var_r30 += 1;
             }
         }
+    }
+    if (gm_IsCKindUnlocked(CKind_GKoops) &&
+        gm_8017219C(GM_GIGA_BOWSER_NOTIFICATION_ID))
+    {
+        var_r31 = gm_801BFC60(GM_GIGA_BOWSER_NOTIFICATION_ID, var_r30, 0,
+                              lbTime_GetTimeInSeconds(), var_r31);
+        var_r30 += 1;
     }
     var_r26 = p3;
     var_r26 += 0x44;

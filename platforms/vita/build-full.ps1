@@ -20,6 +20,10 @@ param(
     [switch]$EnableModernDebugMenu,
     [switch]$EnableDirectSnag,
     [switch]$EnableRenderTrace,
+    [switch]$EnableLiveProfiler,
+    [string]$ProfilerLibrary,
+    [ValidatePattern('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')]
+    [string]$ProfilerHost = '10.1.1.146',
     [switch]$UseCpuVertexPath,
     [string]$VitaBuildNumber = $env:MELEE_VITA_BUILD_NUMBER,
     [switch]$EnableUpdater,
@@ -153,6 +157,22 @@ if ($EnableUpdater) {
 if ($EnableDirectSnag -and -not $EnableDebugMenu) {
     throw '-EnableDirectSnag requires -EnableDebugMenu.'
 }
+if ($EnableLiveProfiler) {
+    if (-not $ProfilerLibrary) {
+        $ProfilerLibrary = Join-Path $VitaDebuggerDirectory 'profiler/build/vita/libvitaprofiler.a'
+    }
+    $ProfilerLibrary = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ProfilerLibrary)
+    $ProfilerHeader = Join-Path $VitaDebuggerDirectory 'profiler/include/vitaprofiler.h'
+    foreach ($dependency in @($ProfilerLibrary, $ProfilerHeader)) {
+        if (-not (Test-Path -LiteralPath $dependency -PathType Leaf)) {
+            throw "Missing live profiler dependency: $dependency"
+        }
+    }
+    $ProfilerOctets = $ProfilerHost.Split('.') | ForEach-Object { [int]$_ }
+    if (@($ProfilerOctets | Where-Object { $_ -lt 0 -or $_ -gt 255 }).Count -ne 0) {
+        throw 'Invalid live profiler IPv4 address.'
+    }
+}
 if ($Configuration -eq 'Debug') {
     $VitaDebuggerDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($VitaDebuggerDirectory)
     $KuBridgeLibrary = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($KuBridgeLibrary)
@@ -228,6 +248,7 @@ $platformSources = @(
     'platforms/vita/game/pad.c',
     'platforms/vita/game/pc_stubs.c',
     'platforms/vita/game/jpeg_hw.c',
+    'platforms/vita/game/profiler_live.c',
     'platforms/vita/game/thp.c',
     'platforms/vita/game/vi.c',
     'platforms/vita/game/widescreen.c'
@@ -260,6 +281,13 @@ if ($Configuration -eq 'Debug') {
 }
 if ($EnableRenderTrace) {
     $common += '-DMELEE_VITA_RENDER_TRACE=1'
+}
+if ($EnableLiveProfiler) {
+    $common += '-DMELEE_VITA_PROFILER=1'
+    $common += "-I$(Join-Path $VitaDebuggerDirectory 'profiler/include')"
+    for ($i = 0; $i -lt 4; $i++) {
+        $common += "-DMELEE_VITA_PROFILER_HOST_$(@('A','B','C','D')[$i])=$($ProfilerOctets[$i])"
+    }
 }
 $common += '-DMELEE_VITA_GPU_BUMP_DL=1'
 if ($UseCpuVertexPath) {
@@ -339,6 +367,10 @@ if ($EnableUpdater) {
         '-lSceNet_stub', '-lSceNetCtl_stub', '-lSceRtc_stub',
         '-lSceIofilemgr_stub', '-lScePromoterUtil_stub', '-lSceAppUtil_stub'
     )
+}
+if ($EnableLiveProfiler) {
+    $link += @($ProfilerLibrary, '-lSceNet_stub', '-lSceNetCtl_stub',
+               '-lSceNetPs_stub')
 }
 $link += @(
     '-lSceCtrl_stub', '-lSceDisplay_stub', '-lSceAudio_stub', '-lSceJpeg_stub', '-lSceKernelThreadMgr_stub',

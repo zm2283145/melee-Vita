@@ -23,6 +23,11 @@
 #include <sysdolphin/baselib/gobj.h>
 #include <sysdolphin/baselib/state.h>
 
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+extern bool melee_vita_bump_scope_register_or_begin(const void* identity);
+extern void melee_vita_bump_scope_unregister(const void* identity);
+#endif
+
 static U8Vec4 ftDrawCommon_804D3A88 = { 0xFF, 0xFF, 0xFF, 0x80 };
 static U8Vec4 ftDrawCommon_804D3A8C = { 0x80, 0x80, 0xFF, 0x80 };
 static U8Vec4 ftDrawCommon_804D3A90 = { 0x80, 0x80, 0x80, 0x80 };
@@ -379,6 +384,14 @@ static inline void ftDrawCommon_80080E18_inline2(HSD_GObj* gobj, Fighter* old)
 void ftDrawCommon_80080E18(HSD_GObj* gobj, int arg1)
 {
     Fighter* fp = gobj->user_data;
+
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    if (fp->kind == Ft_Kind_GKoops) {
+        (void) melee_vita_bump_scope_register_or_begin(gobj);
+    } else {
+        melee_vita_bump_scope_unregister(gobj);
+    }
+#endif
 
     if (!fp->x221F_b3 && ftLib_80086A8C(gobj)) {
         switch (Camera_80031060()) {

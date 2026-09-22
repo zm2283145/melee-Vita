@@ -1104,7 +1104,7 @@ static const struct {
         { 0x0C, 0x6 }, { 0x0D, 0x9 }, { 0x0E, 0x4 }, { 0x0F, 0x9 },
         { 0x10, 0xA }, { 0x11, 0xC }, { 0x12, 0xD }, { 0x13, 0xD },
         { 0x14, 0x2 }, { 0x15, 0xD }, { 0x16, 0x6 }, { 0x17, 0x7 },
-        { 0x18, 0x9 }, { 0x19, 0xD }, { 0 },         { 0 },
+        { 0x18, 0x9 }, { 0x19, 0xD }, { CKind_GKoops, 0x6 }, { 0 },
         { 0 },         { 0 },         { 0 },         { 0 },
         { 0 },         { 0 },
     },
@@ -1554,7 +1554,7 @@ void fn_80176BCC(HSD_GObj* gobj)
 static inline int fn_80176BF0_inline(u8 arg1)
 {
     int i;
-    for (i = 0; i < 33; i++) { ///< @todo `ARRAY_SIZE(lbl_803B7B18)`
+    for (i = 0; i < ARRAY_SIZE(lbl_803B7B18.lookup); i++) {
         if (arg1 == lbl_803B7B18.lookup[i][0]) {
             return lbl_803B7B18.lookup[i][1];
         }

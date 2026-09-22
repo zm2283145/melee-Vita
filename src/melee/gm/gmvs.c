@@ -1635,7 +1635,10 @@ void fn_8016D8AC(int arg0, struct PlayerInitData* arg1)
     Player_SetTeam(arg0, arg1->team);
     Player_SetFlagsBit0(arg0, arg1->rumble_enabled);
     Player_SetNametagSlotID(arg0, arg1->nametag);
-    if (arg1->xC_b1) {
+    /* Giga Bowser has no normal entry motion.  Existing Event and Adventure
+     * setup clears this flag for him; do the same for every VS-style path so
+     * challenger, human, and CPU selections start in his normal idle state. */
+    if (arg1->xC_b1 && arg1->ckind != CKind_GKoops) {
         tmp->state.unk_A += 5;
         Player_SetFlagsBit3(arg0, 1);
         Player_SetUnk4C(arg0, tmp->state.unk_A);

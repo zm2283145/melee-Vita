@@ -636,6 +636,12 @@ void gmMainLib_8015D8FC(u32 arg0)
     thing[arg0 / 32] |= (1 << (arg0 % 32));
 }
 
+void gmMainLib_SetNotificationPending(u32 notification_id)
+{
+    gmMainLib_8015D888(notification_id);
+    gmMainLib_8015D8FC(notification_id);
+}
+
 void gmMainLib_8015D924(u32 arg0)
 {
     u32* thing = &gmMainLib_GetCardData()->save_data.x1B4C[0];

@@ -2543,6 +2543,16 @@ void gxr_log_stats(void)
         (unsigned long long) (s_stats.source_us / 1000u),
         (unsigned long long) (s_stats.register_us / 1000u),
         (unsigned long long) (s_stats.vertex_patch_us / 1000u));
+#ifdef MELEE_VITA_RENDER_TRACE
+    melee_vita_log_info(
+        "[GXR/BUMP/STATS] draws=%u fallback=%u compiled=%u cached=%u compile_failed=%u program_limit=%u uniform_reject=%u",
+        s_bump_stats.draws, s_bump_stats.fallback,
+        s_bump_stats.compiled, s_bump_stats.cache_loaded,
+        s_bump_stats.compile_failed, s_bump_stats.program_limit,
+        s_bump_stats.uniform_reject);
+    s_bump_stats.draws = 0;
+    s_bump_stats.fallback = 0;
+#endif
     s_stats.draws = 0;
     s_stats.fallback = 0;
 }

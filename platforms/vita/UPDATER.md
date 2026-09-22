@@ -106,8 +106,8 @@ The release must contain exactly one asset named
 
 ```text
 format=1
-version=0.8.4
-asset=SmashMeleevita-0.8.4.vpk
+version=0.8.5
+asset=SmashMeleevita-0.8.5.vpk
 size=1048576
 sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 signature=<128 hexadecimal characters>

@@ -129,8 +129,30 @@ int main(void)
         }
         assert(!melee_vita_bump_scope_register(
             &identities[MELEE_VITA_BUMP_SCOPE_MAX_IDENTITIES]));
+        assert(!melee_vita_bump_scope_register_or_begin(
+            &identities[MELEE_VITA_BUMP_SCOPE_MAX_IDENTITIES]));
+        assert(melee_vita_bump_scope_generation(&identities[1]) != 0u);
         melee_vita_bump_scope_unregister(&identities[0]);
         assert(melee_vita_bump_scope_generation(&identities[0]) == 0u);
+    }
+
+    melee_vita_bump_scope_begin();
+    assert(!melee_vita_bump_scope_register_or_begin(NULL));
+    assert(melee_vita_bump_scope_register_or_begin(&identities[0]));
+    {
+        const uint32_t generation =
+            melee_vita_bump_scope_generation(&identities[0]);
+        assert(generation != 0u);
+        assert(melee_vita_bump_scope_register_or_begin(&identities[1]));
+        assert(melee_vita_bump_scope_generation(&identities[1]) ==
+               generation);
+        melee_vita_bump_scope_unregister(&identities[0]);
+        melee_vita_bump_scope_unregister(&identities[1]);
+        assert(melee_vita_bump_scope_generation(&identities[1]) == 0u);
+        assert(melee_vita_bump_scope_register_or_begin(&identities[0]));
+        assert(melee_vita_bump_scope_generation(&identities[0]) !=
+               generation);
+        melee_vita_bump_scope_unregister(&identities[0]);
     }
 
     memset(&plan, 0xa5, sizeof(plan));

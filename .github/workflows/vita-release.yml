@@ -47,6 +47,10 @@ jobs:
             platforms/vita/tests/allstar_return_selection_test.c \
             -o "$RUNNER_TEMP/allstar-return-selection-test"
           "$RUNNER_TEMP/allstar-return-selection-test"
+          cc -std=c11 -Wall -Wextra -Werror -Isrc \
+            platforms/vita/tests/giga_bowser_unlock_test.c \
+            -o "$RUNNER_TEMP/giga-bowser-unlock-test"
+          "$RUNNER_TEMP/giga-bowser-unlock-test"
           cc -std=c11 -Wall -Wextra -Werror -Iplatforms/vita/game \
             platforms/vita/tests/opening_timeline_test.c \
             -o "$RUNNER_TEMP/opening-timeline-test"
@@ -56,6 +60,10 @@ jobs:
             platforms/vita/tests/trophy_lottery_save_test.c \
             -o "$RUNNER_TEMP/trophy-lottery-save-test"
           "$RUNNER_TEMP/trophy-lottery-save-test"
+          cc -std=c11 -Wall -Wextra -Werror -Iplatforms/vita/game \
+            platforms/vita/tests/save_progress_compat_test.c \
+            -o "$RUNNER_TEMP/save-progress-compat-test"
+          "$RUNNER_TEMP/save-progress-compat-test"
           cc -std=c11 -Wall -Wextra -Werror \
             -Iplatforms/vita -Isrc \
             platforms/vita/tests/poke_floats_texture_test.c \

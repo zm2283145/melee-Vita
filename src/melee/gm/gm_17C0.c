@@ -3,6 +3,7 @@
 #include <sysdolphin/baselib/forward.h>
 
 #include "forward.h"
+#include "gm_16F1.h"
 #include "gm_18A1.h"
 #include "gm_unsplit.h"
 #include "gmmain_lib.h"
@@ -474,7 +475,18 @@ void gm_8017CBAC(UnkAdventureData* arg0, gmm_x0_528_t* arg1, u8 arg2)
     lbCardNew_AllocWorkArea();
     lbCardGame_LoadArchive(0);
     lbCardGame_UpdatePowerTime();
-    gm_SetPendingGameMode(arg2);
+    if (arg2 == GM_ADVENTURE && arg0->x0.x0.cpu_level >= 2 &&
+        gm_IsGigaBowserChallengerEligible())
+    {
+        /* The Adventure clear record above is now persistent, so start the
+         * same approach/battle flow used by the other unlockable fighters. */
+        gm_InitChallengerData(
+            arg0->x0.x0.ckind, arg0->x0.x0.color, arg0->x0.x0.slot,
+            arg0->x0.x0.nametag, CKind_GKoops, arg2);
+        gm_SetPendingGameMode(GM_CHALLENGER_APPROACH);
+    } else {
+        gm_SetPendingGameMode(arg2);
+    }
     gm_SetNewGameModePending();
 }
 

@@ -12,6 +12,7 @@
 #include <stddef.h>
 
 #include "forward.h"
+#include "giga_bowser_rules.h"
 #include "gm_1601.static.h"
 #include "gm_unsplit.h"
 #include "gmmain_lib.h"
@@ -175,7 +176,7 @@ static struct {
     { 0x04, 0x01, 0x02, 0x03 }, { 0x05, 0x01, 0x02, 0x03 },
 };
 
-static struct ResultAnimEntry lbl_803D53A8[0x1B] = {
+static struct ResultAnimEntry lbl_803D53A8[] = {
     {
         CKind_Captain,
         "GmRstMCa.dat",
@@ -281,12 +282,16 @@ static struct ResultAnimEntry lbl_803D53A8[0x1B] = {
         "GmRstMFe.dat",
     },
     {
+        CKind_GKoops,
+        "GmRstMKp.dat",
+    },
+    {
         ChKind_None,
         NULL,
     },
 };
 
-static struct VictoryTheme ckind_victory_themes[0x1B] = {
+static struct VictoryTheme ckind_victory_themes[] = {
     {
         CKind_Captain,
         0x11,
@@ -390,6 +395,10 @@ static struct VictoryTheme ckind_victory_themes[0x1B] = {
     {
         CKind_Ganon,
         0x15,
+    },
+    {
+        CKind_GKoops,
+        0x16,
     },
     {
         ChKind_None,
@@ -511,6 +520,9 @@ char* gm_80160438(s32 ckind)
 
 s32 gm_80160474(CharacterKind ckind, GameModeKind mode)
 {
+    if (ckind == CKind_GKoops) {
+        ckind = CKind_Koopa;
+    }
     switch (mode) {
     case GM_CLASSIC_GOVER:
     case GM_CLASSIC:
@@ -526,6 +538,10 @@ s32 gm_80160474(CharacterKind ckind, GameModeKind mode)
 char* gm_801604DC(CharacterKind ckind, GameModeKind mode)
 {
     int var_r3;
+
+    if (ckind == CKind_GKoops) {
+        ckind = CKind_Koopa;
+    }
 
     switch (mode) {
     case GM_CLASSIC_GOVER:
@@ -546,6 +562,10 @@ char* gm_801604DC(CharacterKind ckind, GameModeKind mode)
 char* gm_80160564(CharacterKind ckind, GameModeKind mode)
 {
     int var_r3;
+
+    if (ckind == CKind_GKoops) {
+        ckind = CKind_Koopa;
+    }
 
     switch (mode) {
     case GM_CLASSIC_GOVER:
@@ -2148,6 +2168,12 @@ u8 gm_SelKindToCKind(u8 selkind)
 
 u8 gm_CKindToSelKind(u8 ckind)
 {
+    /* Legacy records and one-player trophies only have the original 25
+     * selection slots. Keep Giga's fighter kind and unlock state distinct,
+     * but use Bowser's valid slot for those legacy lookups. */
+    if (ckind == CKind_GKoops) {
+        return SELKIND_KOOPA;
+    }
     return ckind_to_selkind_map[ckind];
 }
 
@@ -2381,10 +2407,17 @@ int gm_801647F8(u8 arg0)
 /// Is a specific character unlocked?
 bool gm_IsCKindUnlocked(u8 ckind)
 {
+    u16* unlocked_chars_bitmask = gmMainLib_GetUnlockedCharactersBitmaskPtr();
+    if (ckind == CKind_GKoops) {
+        return gmGigaBowser_IsUnlocked(
+            gmMainLib_GetSaveData()->giga_bowser_flags);
+    }
     if (pc_is_unlock_all_enabled()) {
         return true;
     }
-    u16* unlocked_chars_bitmask = gmMainLib_GetUnlockedCharactersBitmaskPtr();
+    if (ckind >= ARRAY_SIZE(ckind_to_selkind_map)) {
+        return false;
+    }
     u8 selkind = ckind_to_selkind_map[ckind];
     u8 unlock_bit = gm_SelKindToUnlockIndex(selkind);
 
@@ -2405,6 +2438,18 @@ void gm_UnlockCKind(CharacterKind ckind)
     u8 notify_val;
 
     char_unlock_mask = gmMainLib_GetUnlockedCharactersBitmaskPtr();
+    if (ckind == CKind_GKoops) {
+        u8* flags = &gmMainLib_GetSaveData()->giga_bowser_flags;
+        if (!gmGigaBowser_IsUnlocked(*flags)) {
+            gmMainLib_SetNotificationPending(
+                GM_GIGA_BOWSER_NOTIFICATION_ID);
+        }
+        *flags = gmGigaBowser_ApplyChallengerResult(*flags, true);
+        return;
+    }
+    if ((u8) ckind >= ARRAY_SIZE(ckind_to_selkind_map)) {
+        return;
+    }
     selkind = ckind_to_selkind_map[(u8) ckind];
 
     unlock_idx = gm_SelKindToUnlockIndex(selkind);
@@ -2429,6 +2474,14 @@ void gm_80164A0C(u8 ckind)
 {
     u16* unlockable_character_bitfield =
         gmMainLib_GetUnlockedCharactersBitmaskPtr();
+    if (ckind == CKind_GKoops) {
+        gmMainLib_GetSaveData()->giga_bowser_flags &=
+            ~GM_GIGA_BOWSER_SAVE_FLAG_UNLOCKED;
+        return;
+    }
+    if (ckind >= ARRAY_SIZE(ckind_to_selkind_map)) {
+        return;
+    }
     s32 selkind = ckind_to_selkind_map[ckind];
     u8 idx = gm_SelKindToUnlockIndex(selkind);
     if (idx != NUM_UNLOCKABLE_CHARACTERS) {
@@ -4220,6 +4273,9 @@ u8 gm_GetNumCostumesForCKind(u8 ckind)
         HSD_Randi(0);
         HSD_Randi(0);
         HSD_Randi(0);
+    }
+    if (ckind == CKind_GKoops) {
+        return 1;
     }
     if (ckind >= ARRAY_SIZE(lbl_803D51A0)) {
         return 0;

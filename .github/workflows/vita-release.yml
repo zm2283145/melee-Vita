@@ -29,7 +29,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build python3 curl bzip2 xz-utils
+            build-essential cmake ninja-build python3 python3-cryptography \
+            curl bzip2 xz-utils
           echo "VITASDK=$RUNNER_TEMP/vitasdk" >> "$GITHUB_ENV"
 
       - name: Install pinned Vita toolchain and libraries
@@ -95,11 +96,22 @@ jobs:
             -o "$RUNNER_TEMP/title-build-label-test"
           "$RUNNER_TEMP/title-build-label-test"
 
+      - name: Run updater regression tests
+        shell: pwsh
+        run: |
+          ./platforms/vita/test-updater.ps1 `
+            -HostCompiler /usr/bin/g++ `
+            -VitaSdk $env:VITASDK
+
       - name: Build full game
         shell: pwsh
         run: |
           $env:PATH = "$env:VITASDK/bin:$env:PATH"
+          $publicKey = (
+            Get-Content platforms/vita/updater/public-key.hex -Raw
+          ).Trim()
           ./platforms/vita/build-full.ps1 -Configuration Release -Jobs 2 `
+            -EnableUpdater -UpdaterPublicKeyHex $publicKey `
             -VitaBuildNumber "${{ github.run_number }}.${{ github.run_attempt }}"
 
       - name: Verify release has no debug symbols or logger
@@ -119,11 +131,26 @@ jobs:
             echo "::error::Release ELF is missing the hidden debug-menu gate"
             exit 1
           fi
+          arm-vita-eabi-readelf --sections \
+            build-vita/full/updater-helper/updater.elf > build-vita/helper-sections.txt
+          arm-vita-eabi-readelf --all \
+            build-vita/full/updater-helper/updater.elf > build-vita/helper-imports.txt
+          if grep -Eq '\.debug_|\.zdebug_' build-vita/helper-sections.txt; then
+            echo "::error::Updater helper ELF still contains debug sections"
+            exit 1
+          fi
+          if grep -Eq 'Sce(Gxm|Pgf|Display|CommonDialog|Ctrl)|vita2d' \
+              build-vita/helper-imports.txt; then
+            echo "::error::Updater helper is not strictly headless"
+            exit 1
+          fi
 
       - name: Package release assets
         run: |
           mkdir -p dist
+          version=$(python3 -c 'import json; print(json.load(open("platforms/vita/version.json"))["release"])')
           cp build-vita/full/SmashMeleevita.vpk dist/SmashMeleevita.vpk
+          cp build-vita/full/SmashMeleevita.vpk "dist/SmashMeleevita-${version}.vpk"
           cp README.md dist/README-Vita.md
           cp platforms/vita/DEBUG-TOOLS.md dist/DEBUG-TOOLS.md
           cp platforms/vita/version.json dist/version.json
@@ -149,8 +176,61 @@ jobs:
               assert fields["TITLE_ID"] == b"MLVITA002", "Title ID must remain compatible"
               with open("dist/version.json") as version_file:
                   assert fields["APP_VER"].decode("ascii") == json.load(version_file)["app"]
+              assert {
+                  "updater/eboot.bin",
+                  "updater/sce_sys/param.sfo",
+                  "updater/sce_sys/package/head.bin",
+              } <= set(vpk.namelist()), "Updater helper package is incomplete"
           PY
-          (cd dist && sha256sum SmashMeleevita.vpk README-Vita.md DEBUG-TOOLS.md version.json LICENSE.md COPYING COMMIT.txt > SHA256SUMS.txt)
+
+      - name: Sign updater manifest
+        if: github.event_name != 'pull_request'
+        env:
+          VITA_UPDATER_PRIVATE_KEY_PEM: ${{ secrets.VITA_UPDATER_PRIVATE_KEY_PEM }}
+        run: |
+          if [[ -z "$VITA_UPDATER_PRIVATE_KEY_PEM" ]]; then
+            echo "::error::VITA_UPDATER_PRIVATE_KEY_PEM is not configured"
+            exit 1
+          fi
+          key="$RUNNER_TEMP/vita-updater-private.pem"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$VITA_UPDATER_PRIVATE_KEY_PEM" > "$key"
+          chmod 600 "$key"
+          version=$(python3 -c 'import json; print(json.load(open("dist/version.json"))["release"])')
+          python3 platforms/vita/updater/sign-manifest.py \
+            --version "$version" \
+            --asset "dist/SmashMeleevita-${version}.vpk" \
+            --private-key "$key" \
+            --output dist/melee-update-manifest.txt
+          python3 - "$key" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+          manifest = pathlib.Path("dist/melee-update-manifest.txt").read_bytes()
+          lines = manifest.splitlines(keepends=True)
+          assert len(lines) == 6 and all(line.endswith(b"\n") for line in lines)
+          public_key = bytes.fromhex(
+              pathlib.Path("platforms/vita/updater/public-key.hex").read_text().strip()
+          )
+          signature = bytes.fromhex(lines[5].decode("ascii").strip().split("=", 1)[1])
+          Ed25519PublicKey.from_public_bytes(public_key).verify(
+              signature, b"".join(lines[:5])
+          )
+          PY
+
+      - name: Create checksums
+        run: |
+          (
+            cd dist
+            sha256sum \
+              SmashMeleevita*.vpk README-Vita.md DEBUG-TOOLS.md version.json \
+              LICENSE.md COPYING COMMIT.txt \
+              $(test ! -f melee-update-manifest.txt || echo melee-update-manifest.txt) \
+              > SHA256SUMS.txt
+          )
 
       - uses: actions/upload-artifact@v4
         with:
@@ -182,7 +262,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           version=$(python3 -c 'import json; print(json.load(open("dist/version.json"))["release"])')
-          tag="vita-v${version}-build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          tag="v${version}"
+          if existing=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ "$existing" != "true" ]]; then
+              echo "::error::Published release $tag already exists; bump platforms/vita/version.json"
+              exit 1
+            fi
+            gh release delete "$tag" --cleanup-tag --yes
+          fi
           cat > release-notes.md <<EOF
           Experimental native PS Vita port. This is an unpublished draft for maintainer review.
 
@@ -197,6 +284,15 @@ jobs:
           Expect stuttering while shaders compile at runtime. Cached shaders reduce
           repeat compilation as you play, but performance and compatibility remain
           experimental. Back up saves before updating.
+
+          ## In-game updater
+
+          This build includes the opt-in Melee Vita self-updater. It checks only
+          published GitHub Releases and requires an Ed25519-signed manifest plus
+          exact VPK size and SHA-256 verification. A temporary headless helper
+          backs up and replaces the stopped application, relaunches Melee, and
+          removes itself only after the new build confirms a healthy startup.
+          Saves, the writable shader cache, and the game image are preserved.
 
           ## Hidden Debug Tools
 
@@ -220,6 +316,15 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Smash Melee Vita ${version} (experimental build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT})" \
             --notes-file release-notes.md \
-            --draft --prerelease \
+            --draft \
+            "dist/SmashMeleevita-${version}.vpk" dist/melee-update-manifest.txt \
             dist/SmashMeleevita.vpk dist/README-Vita.md dist/DEBUG-TOOLS.md dist/version.json \
             dist/LICENSE.md dist/COPYING dist/COMMIT.txt dist/SHA256SUMS.txt
+          mkdir release-verify
+          gh release download "$tag" --dir release-verify \
+            --pattern "SmashMeleevita-${version}.vpk" \
+            --pattern melee-update-manifest.txt
+          cmp "dist/SmashMeleevita-${version}.vpk" \
+            "release-verify/SmashMeleevita-${version}.vpk"
+          cmp dist/melee-update-manifest.txt \
+            release-verify/melee-update-manifest.txt

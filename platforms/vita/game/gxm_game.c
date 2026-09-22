@@ -1357,6 +1357,12 @@ static void exec_present(const void* payload)
         vita2d_draw_rectangle(960.0f - p->bar - 1.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
     }
     vita2d_end_drawing();
+#ifdef MELEE_VITA_UPDATER
+    {
+        extern void melee_vita_updater_render_dialog(void);
+        melee_vita_updater_render_dialog();
+    }
+#endif
     vita2d_swap_buffers();
 }
 

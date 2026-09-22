@@ -95,6 +95,28 @@ It never publishes a release automatically and does not build the PC targets.
 `vita-port` must remain the default branch for the built-in Actions token to
 create drafts when the Vita workflows differ from those on other branches.
 
+## Opt-in VitaShell-style self-updater
+
+See [UPDATER.md](UPDATER.md) for the feasibility result, security model,
+release manifest, rollback behavior, and unresolved hardware questions. A
+downloaded non-installed process cannot survive Melee exiting, so the opt-in
+proof of concept embeds and temporarily promotes a dedicated helper title,
+`MLVUPD001`. The updated game removes the helper only after a 300-frame health
+acknowledgement.
+
+Updater builds require `libsodium`, `curl-mbedtls`, and `libarchive`, plus a
+real Ed25519 release public key:
+
+```powershell
+vdpm install libsodium curl-mbedtls libarchive
+.\platforms\vita\build-full.ps1 -Configuration Release -EnableUpdater `
+  -UpdaterPublicKeyHex '<64 hex characters>'
+```
+
+This path uses VitaShell's unsafe auth ID and internal PAF/promoter APIs. It is
+intentionally disabled by default and must be tested on a disposable
+HENkaku/taiHEN setup before distribution.
+
 ## Opt-in Debug build
 
 Debug builds are for development only and are **not** used by release CI.

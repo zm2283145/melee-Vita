@@ -21,7 +21,10 @@ param(
     [switch]$EnableDirectSnag,
     [switch]$EnableRenderTrace,
     [switch]$UseCpuVertexPath,
-    [string]$VitaBuildNumber = $env:MELEE_VITA_BUILD_NUMBER
+    [string]$VitaBuildNumber = $env:MELEE_VITA_BUILD_NUMBER,
+    [switch]$EnableUpdater,
+    [ValidatePattern('^[0-9A-Fa-f]{64}$')]
+    [string]$UpdaterPublicKeyHex
 )
 
 $ErrorActionPreference = 'Stop'
@@ -122,6 +125,31 @@ $build = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath
 if ($EnableDebugger -and $Configuration -ne 'Debug') {
     throw '-EnableDebugger requires -Configuration Debug.'
 }
+if ($EnableUpdater -and $Configuration -ne 'Release') {
+    throw '-EnableUpdater requires -Configuration Release.'
+}
+if ($EnableUpdater -and -not $UpdaterPublicKeyHex) {
+    throw '-EnableUpdater requires a 64-hex-character Ed25519 -UpdaterPublicKeyHex.'
+}
+if ($EnableUpdater) {
+    $headTemplate = Join-Path $PSScriptRoot 'updater/head.bin'
+    foreach ($dependency in @(
+        (Join-Path $VitaSdk 'arm-vita-eabi/include/curl/curl.h'),
+        (Join-Path $VitaSdk 'arm-vita-eabi/include/sodium.h'),
+        (Join-Path $VitaSdk 'arm-vita-eabi/include/archive.h'),
+        (Join-Path $VitaSdk 'arm-vita-eabi/lib/libcurl.a'),
+        (Join-Path $VitaSdk 'arm-vita-eabi/lib/libsodium.a'),
+        (Join-Path $VitaSdk 'arm-vita-eabi/lib/libarchive.a'),
+        $headTemplate
+    )) {
+        if (-not (Test-Path -LiteralPath $dependency -PathType Leaf)) {
+            throw "Missing updater dependency: $dependency. Install curl-mbedtls, libsodium, and libarchive with vdpm."
+        }
+    }
+    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+        throw 'Python is required to generate Vita package headers.'
+    }
+}
 if ($EnableDirectSnag -and -not $EnableDebugMenu) {
     throw '-EnableDirectSnag requires -EnableDebugMenu.'
 }
@@ -204,6 +232,14 @@ $platformSources = @(
     'platforms/vita/game/vi.c',
     'platforms/vita/game/widescreen.c'
 )
+if ($EnableUpdater) {
+    $platformSources += @(
+        'platforms/vita/updater/update_core.cpp',
+        'platforms/vita/updater/update_crypto_sodium.cpp',
+        'platforms/vita/updater/update_vita.cpp',
+        'platforms/vita/updater/update_runtime.cpp'
+    )
+}
 
 $common = @(
     '-std=gnu11',
@@ -239,6 +275,18 @@ $commonCpp = @(
     "-I$(Join-Path $root 'src/sdk_include')",
     '-fno-exceptions', '-fno-rtti', '-fno-short-enums', '-c'
 ) + $configurationFlags
+if ($EnableUpdater) {
+    $updaterDefines = @(
+        '-DMELEE_VITA_UPDATER=1',
+        '-DMELEE_UPDATE_USE_SODIUM=1',
+        '-DCURL_STATICLIB=1',
+        "-DMELEE_VITA_VERSION=`"$($version.release)`"",
+        "-DMELEE_UPDATE_PUBLIC_KEY_HEX=`"$($UpdaterPublicKeyHex.ToLowerInvariant())`"",
+        "-I$(Join-Path $root 'platforms/vita/updater')"
+    )
+    $common = $updaterDefines + $common
+    $commonCpp = @('-Wall', '-Wextra', '-Werror') + $updaterDefines + $commonCpp
+}
 
 if ($EnableDebugger) { $common = @('-DMELEE_VITA_WAIT_FOR_DEBUGGER=1') + $common }
 Write-Host "Melee Vita platform C compiler flags: $($common -join ' ')"
@@ -282,6 +330,16 @@ if ($Configuration -eq 'Debug') {
         '-lSceNet_stub', '-lSceNetCtl_stub', '-lSceNetPs_stub'
     )
 }
+if ($EnableUpdater) {
+    $link += @(
+        '-Wl,--start-group',
+        '-lcurl', '-lmbedtls', '-lmbedx509', '-lmbedcrypto',
+        '-larchive', '-lsodium', '-lbz2', '-lzstd', '-lz',
+        '-Wl,--end-group',
+        '-lSceNet_stub', '-lSceNetCtl_stub', '-lSceRtc_stub',
+        '-lSceIofilemgr_stub', '-lScePromoterUtil_stub', '-lSceAppUtil_stub'
+    )
+}
 $link += @(
     '-lSceCtrl_stub', '-lSceDisplay_stub', '-lSceAudio_stub', '-lSceJpeg_stub', '-lSceKernelThreadMgr_stub',
     '-lvita2d', '-lSceGxm_stub', '-lSceDisplay_stub', '-lSceAppMgr_stub',
@@ -296,21 +354,91 @@ if ($Configuration -eq 'Release') {
     Invoke-VitaTool 'arm-vita-eabi-strip' @('--strip-debug', $elf)
 }
 Invoke-VitaTool 'vita-elf-create' @($elf, $velf)
-Invoke-VitaTool 'vita-make-fself' @('-c', $velf, $eboot)
+if ($EnableUpdater) {
+    Invoke-VitaTool 'vita-make-fself' @(
+        '-a', '0x2808000000000000', '-c', $velf, $eboot
+    )
+} else {
+    Invoke-VitaTool 'vita-make-fself' @('-c', $velf, $eboot)
+}
 Invoke-VitaTool 'vita-mksfoex' @(
     '-s', 'TITLE_ID=MLVITA002', '-s', "APP_VER=$($version.app)",
     'Smash Melee Vita', $sfo
 )
 $livearea = Join-Path $PSScriptRoot 'livearea'
-Invoke-VitaTool 'vita-pack-vpk' @(
+$vpkArguments = @(
     '-s', $sfo, '-b', $eboot,
     '-a', "$(Join-Path $livearea 'icon0.png')=sce_sys/icon0.png",
     '-a', "$(Join-Path $livearea 'pic0.png')=sce_sys/pic0.png",
     '-a', "$(Join-Path $livearea 'bg.png')=sce_sys/livearea/contents/bg.png",
     '-a', "$(Join-Path $livearea 'startup.png')=sce_sys/livearea/contents/startup.png",
     '-a', "$(Join-Path $livearea 'template.xml')=sce_sys/livearea/contents/template.xml",
-    '-a', "$(Join-Path $PSScriptRoot 'shadercache/warm5.bin')=shadercache/warm5.bin",
-    $vpk
+    '-a', "$(Join-Path $PSScriptRoot 'shadercache/warm5.bin')=shadercache/warm5.bin"
 )
+if ($EnableUpdater) {
+    $helperDirectory = Join-Path $build 'updater-helper'
+    $helperObjectsDirectory = Join-Path $helperDirectory 'obj'
+    New-Item -ItemType Directory -Force -Path $helperObjectsDirectory | Out-Null
+    $helperSources = @(
+        'platforms/vita/updater/update_helper.cpp',
+        'platforms/vita/updater/update_core.cpp',
+        'platforms/vita/updater/update_crypto_sodium.cpp',
+        'platforms/vita/updater/update_vita.cpp'
+    )
+    $helperCpp = @($commonCpp | Where-Object { $_ -ne '-fno-short-enums' }) +
+        '-fshort-enums'
+    $helperObjects = foreach ($relative in $helperSources) {
+        $source = Join-Path $root $relative
+        $object = Join-Path $helperObjectsDirectory (
+            (($relative -replace '[:\\/]', '__') -replace '\.cpp$', '.o')
+        )
+        Invoke-VitaTool 'arm-vita-eabi-g++' ($helperCpp + @($source, '-o', $object))
+        $object
+    }
+    $helperElf = Join-Path $helperDirectory 'updater.elf'
+    $helperVelf = Join-Path $helperDirectory 'updater.velf'
+    $helperEboot = Join-Path $helperDirectory 'eboot.bin'
+    $helperSfo = Join-Path $helperDirectory 'param.sfo'
+    $helperHead = Join-Path $helperDirectory 'head.bin'
+    Invoke-VitaTool 'arm-vita-eabi-g++' (
+        @('-fshort-enums', '-Wl,-q', '-Wl,--gc-sections') + $helperObjects + @(
+            '-Wl,--start-group',
+            '-larchive', '-lsodium', '-lbz2', '-lzstd', '-lz',
+            '-lstdc++',
+            '-Wl,--end-group',
+            '-lSceAppMgr_stub', '-lScePromoterUtil_stub',
+            '-lSceSysmodule_stub', '-lSceProcessmgr_stub',
+            '-lSceSysmem_stub', '-lSceLibKernel_stub',
+            '-lSceKernelThreadMgr_stub', '-lm',
+            '-o', $helperElf
+        )
+    )
+    Invoke-VitaTool 'arm-vita-eabi-strip' @('--strip-debug', $helperElf)
+    Invoke-VitaTool 'vita-elf-create' @($helperElf, $helperVelf)
+    Invoke-VitaTool 'vita-make-fself' @('-c', $helperVelf, $helperEboot)
+    Invoke-VitaTool 'vita-mksfoex' @(
+        '-s', 'TITLE_ID=MLVUPD001', '-s', "APP_VER=$($version.app)",
+        'Melee Vita Updater', $helperSfo
+    )
+    $mainHead = Join-Path $build 'head.bin'
+    & python (Join-Path $PSScriptRoot 'updater/make-head-bin.py') `
+        --template $headTemplate --title-id MLVITA002 --output $mainHead
+    if ($LASTEXITCODE -ne 0) {
+        throw "Generating the Melee package head failed with exit code $LASTEXITCODE"
+    }
+    & python (Join-Path $PSScriptRoot 'updater/make-head-bin.py') `
+        --template $headTemplate --title-id MLVUPD001 --output $helperHead
+    if ($LASTEXITCODE -ne 0) {
+        throw "Generating the updater package head failed with exit code $LASTEXITCODE"
+    }
+    $vpkArguments += @(
+        '-a', "$mainHead=sce_sys/package/head.bin",
+        '-a', "$helperEboot=updater/eboot.bin",
+        '-a', "$helperSfo=updater/sce_sys/param.sfo",
+        '-a', "$helperHead=updater/sce_sys/package/head.bin"
+    )
+}
+$vpkArguments += $vpk
+Invoke-VitaTool 'vita-pack-vpk' $vpkArguments
 
 Write-Output $vpk

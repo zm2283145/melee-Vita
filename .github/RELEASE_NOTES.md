@@ -6,6 +6,20 @@ the image you supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.8.4
+
+- Added an opt-in, in-game self-updater for published GitHub Releases.
+- Update checks run asynchronously and silently continue when the Vita is
+  offline.
+- Updates require an Ed25519-signed manifest and exact VPK size and SHA-256
+  verification before installation.
+- A temporary, strictly headless helper safely backs up and replaces the
+  stopped game, automatically relaunches Melee, and removes itself after the
+  updated game confirms a healthy startup.
+- Failed promotions restore the previous application package. Saves,
+  `GALE01.iso`, and the writable shader cache remain outside the transaction
+  and are never replaced.
+
 ## Changes in Vita v0.7.1
 
 - Trophy Gallery trophies and gameplay objects now receive their intended

@@ -7,6 +7,10 @@
 #include <dolphin/mtx.h>
 #include <melee/gm/forward.h>
 #include <melee/gm/gm_1A3F.h>
+#ifdef TARGET_VITA
+#include <gxm_game.h>
+#include <melee/mn/mnvitadebug.h>
+#endif
 #include <sysdolphin/baselib/cobj.h>
 #include <sysdolphin/baselib/fog.h>
 #include <sysdolphin/baselib/gobj.h>
@@ -267,6 +271,12 @@ void DevText_DrawAll(HSD_GObj* gobj, int pass)
 
     if ((unsigned int) pass == HSD_RP_BOTTOMHALF) {
         DevText* text = devtext_drawlist;
+#ifdef TARGET_VITA
+        if (mnVitaDebug_IsActive()) {
+            melee_vita_gxm_require_full_resolution(
+                MELEE_VITA_NATIVE_REASON_DEBUG_UI);
+        }
+#endif
         HSD_FogSet(NULL);
         DevText_SetupCObj();
 #ifdef MELEE_VITA_MODERN_DEBUG_MENU

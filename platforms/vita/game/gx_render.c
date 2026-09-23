@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "gx_render.h"
 #include "fragment_alpha_key.h"
+#include "gxr_shader_cache.h"
 #include "point_sprite.h"
 #include "../vita_log.h"
 
@@ -68,6 +69,7 @@ typedef struct GxrProgram {
     const SceGxmProgramParameter* fog_color;
     const SceGxmProgramParameter* fog_params;
     bool failed;
+    bool blocked;
     struct GxrFragment* fragments;
     struct GxrProgram* next;
 } GxrProgram;
@@ -99,6 +101,8 @@ static bool arena_init(void);
 
 static struct {
     u32 draws, compiled, cache_loaded, compile_failed, fallback;
+    u32 ram_hits, warm_writable_hits, warm_packaged_hits, disk_hits;
+    u32 compile_attempts, compile_success;
     u64 compile_us, cache_io_us, source_us, register_us, vertex_patch_us;
 } s_stats;
 
@@ -108,14 +112,6 @@ static struct {
     u64 compile_us, cache_io_us, source_us, register_us, vertex_patch_us;
 } s_bump_stats;
 
-typedef struct GxrWarmHeader {
-    u32 magic;
-    u32 kind;
-    u32 size;
-    u32 reserved;
-    u64 hash;
-} GxrWarmHeader;
-
 typedef struct GxrWarmPending {
     u64 hash;
     const SceGxmProgram* program;
@@ -124,13 +120,15 @@ typedef struct GxrWarmPending {
     struct GxrWarmPending* next;
 } GxrWarmPending;
 
-#define GXR_WARM_MAGIC 0x35525847u
 #define GXR_WARM_MAX_SIZE (16u * 1024u * 1024u)
 static u8* s_warm_cache;
 static u32 s_warm_cache_size;
 static u8* s_builtin_warm_cache;
 static u32 s_builtin_warm_cache_size;
 static GxrWarmPending* s_warm_pending;
+static GxrWarmIndexEntry s_warm_index_entries[GXR_WARM_INDEX_CAPACITY];
+static GxrWarmIndex s_warm_index;
+static GxrShaderCompilePolicy s_compile_policy;
 
 /* ---------------------------------------------------------------- utils */
 
@@ -144,67 +142,90 @@ static u64 fnv1a(const void* data, size_t size, u64 hash)
     return hash;
 }
 
-static const SceGxmProgram* find_warm_cache_buffer(
-const u8* cache, u32 cache_size, u64 hash, bool vertex)
+static bool validate_warm_program(
+    const void* program, u32 size, void* user)
 {
-u32 offset = 0;
-while (offset + sizeof(GxrWarmHeader) <= cache_size) {
-        const GxrWarmHeader* header =
-        (const GxrWarmHeader*) (cache + offset);
-    const u32 padded = (header->size + 3u) & ~3u;
-    offset += sizeof(*header);
-    if (header->magic != GXR_WARM_MAGIC ||
-        header->size == 0u || header->size > 1024u * 1024u ||
-        padded > cache_size - offset)
-        break;
-    if (header->hash == hash && header->kind == (vertex ? 1u : 0u)) {
-        const SceGxmProgram* program =
-            (const SceGxmProgram*) (cache + offset);
-        if (sceGxmProgramCheck(program) >= 0) return program;
+    (void) size;
+    (void) user;
+    return sceGxmProgramCheck((const SceGxmProgram*) program) >= 0;
+}
+
+static const SceGxmProgram* find_warm_cached(
+    u64 hash, bool vertex, GxrWarmSource* source)
+{
+    const SceGxmProgram* program = gxr_warm_index_lookup(
+        &s_warm_index, hash, vertex, NULL, source);
+    if (program != NULL || s_warm_index.unindexed == 0u) return program;
+    program = gxr_warm_cache_scan(
+        s_warm_cache, s_warm_cache_size, hash, vertex, NULL);
+    if (program != NULL) {
+        if (source != NULL) *source = GXR_WARM_SOURCE_WRITABLE;
+        return program;
     }
-    offset += padded;
-}
-return NULL;
-}
-
-static const SceGxmProgram* find_warm_cached(u64 hash, bool vertex)
-{
-const SceGxmProgram* program =
-    find_warm_cache_buffer(s_warm_cache, s_warm_cache_size, hash, vertex);
-return program != NULL ? program :
-    find_warm_cache_buffer(s_builtin_warm_cache,
-                           s_builtin_warm_cache_size, hash, vertex);
+    program = gxr_warm_cache_scan(
+        s_builtin_warm_cache, s_builtin_warm_cache_size,
+        hash, vertex, NULL);
+    if (program != NULL && source != NULL)
+        *source = GXR_WARM_SOURCE_PACKAGED;
+    return program;
 }
 
-static void load_warm_cache_file(const char* path, u8** cache, u32* cache_size)
+static void load_warm_cache_file(
+    const char* path, GxrWarmSource source, u8** cache, u32* cache_size)
 {
-SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
-SceOff size;
-if (fd < 0) return;
-size = sceIoLseek(fd, 0, SCE_SEEK_END);
-sceIoLseek(fd, 0, SCE_SEEK_SET);
-if (size > 0 && size <= GXR_WARM_MAX_SIZE) {
-    *cache = malloc((size_t) size);
-    if (*cache != NULL && sceIoRead(fd, *cache, (SceSize) size) == size)
-        *cache_size = (u32) size;
-    else {
+    GxrWarmError error;
+    SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+    SceOff size;
+    if (fd < 0) return;
+    size = sceIoLseek(fd, 0, SCE_SEEK_END);
+    sceIoLseek(fd, 0, SCE_SEEK_SET);
+    if (size > 0 && size <= GXR_WARM_MAX_SIZE) {
+        *cache = malloc((size_t) size);
+        if (*cache != NULL &&
+            sceIoRead(fd, *cache, (SceSize) size) == size) {
+            *cache_size = (u32) size;
+        } else {
+            free(*cache);
+            *cache = NULL;
+        }
+    } else if (size != 0) {
+        melee_vita_log_info(
+            "[GXR] warm cache rejected path=%s bytes=%lld",
+            path, (long long) size);
+    }
+    sceIoClose(fd);
+    if (*cache_size != 0u &&
+        gxr_warm_index_add_buffer(
+            &s_warm_index, *cache, *cache_size, source,
+            validate_warm_program, NULL, &error) != GXR_WARM_OK) {
+        melee_vita_log_info(
+            "[GXR] malformed warm cache path=%s offset=%u reason=%s",
+            path, error.offset, gxr_warm_status_name(error.status));
         free(*cache);
         *cache = NULL;
+        *cache_size = 0u;
     }
-}
-sceIoClose(fd);
 }
 
 static void load_warm_cache(void)
 {
-load_warm_cache_file(GXR_WARM_CACHE, &s_warm_cache, &s_warm_cache_size);
-load_warm_cache_file(GXR_BUILTIN_WARM_CACHE,
-                     &s_builtin_warm_cache, &s_builtin_warm_cache_size);
+gxr_warm_index_init(
+    &s_warm_index, s_warm_index_entries, GXR_WARM_INDEX_CAPACITY);
+load_warm_cache_file(
+    GXR_WARM_CACHE, GXR_WARM_SOURCE_WRITABLE,
+    &s_warm_cache, &s_warm_cache_size);
+load_warm_cache_file(
+    GXR_BUILTIN_WARM_CACHE, GXR_WARM_SOURCE_PACKAGED,
+    &s_builtin_warm_cache, &s_builtin_warm_cache_size);
 #ifndef MELEE_VITA_RELEASE
 if (s_warm_cache_size != 0u || s_builtin_warm_cache_size != 0u)
-    melee_vita_log_info("[GXR] warm shader cache loaded data=%uKB builtin=%uKB",
+    melee_vita_log_info(
+                        "[GXR] warm shader cache loaded data=%uKB builtin=%uKB "
+                        "indexed=%u duplicates=%u unindexed=%u",
                         s_warm_cache_size / 1024u,
-                        s_builtin_warm_cache_size / 1024u);
+                        s_builtin_warm_cache_size / 1024u,
+                        s_warm_index.count, s_warm_index.duplicates,
+                        s_warm_index.unindexed);
 #endif
 }
 
@@ -212,7 +233,7 @@ static void note_warm_cache(u64 hash, bool vertex,
                         const SceGxmProgram* program, u32 size)
 {
 GxrWarmPending* pending;
-if (find_warm_cached(hash, vertex) != NULL) return;
+if (find_warm_cached(hash, vertex, NULL) != NULL) return;
 for (pending = s_warm_pending; pending != NULL; pending = pending->next)
     if (pending->hash == hash && pending->vertex == vertex) return;
 pending = malloc(sizeof(*pending));
@@ -714,9 +735,15 @@ static const char k_color_copy_source[] =
 static SceGxmProgram* load_cached(u64 hash, bool vertex)
 {
     const u64 started = sceKernelGetProcessTimeWide();
-    const SceGxmProgram* warm = find_warm_cached(hash, vertex);
+    GxrWarmSource warm_source = GXR_WARM_SOURCE_NONE;
+    const SceGxmProgram* warm =
+        find_warm_cached(hash, vertex, &warm_source);
     char path[128];
     if (warm != NULL) {
+        if (warm_source == GXR_WARM_SOURCE_WRITABLE)
+            ++s_stats.warm_writable_hits;
+        else if (warm_source == GXR_WARM_SOURCE_PACKAGED)
+            ++s_stats.warm_packaged_hits;
         s_stats.cache_io_us += sceKernelGetProcessTimeWide() - started;
         return (SceGxmProgram*) warm;
     }
@@ -740,7 +767,10 @@ static SceGxmProgram* load_cached(u64 hash, bool vertex)
         }
     }
     sceIoClose(fd);
-    if (program != NULL) note_warm_cache(hash, vertex, program, (u32) size);
+    if (program != NULL) {
+        ++s_stats.disk_hits;
+        note_warm_cache(hash, vertex, program, (u32) size);
+    }
     s_stats.cache_io_us += sceKernelGetProcessTimeWide() - started;
     return program;
 }
@@ -768,10 +798,22 @@ static const SceGxmProgram* obtain_program(const char* source, bool vertex,
         ++s_stats.cache_loaded;
         return cached;
     }
+    if (!gxr_shader_compile_policy_allow(
+            &s_compile_policy, GXR_SHADER_COMPILER_NORMAL)) {
+        const u32 blocked =
+            gxr_shader_compile_policy_blocked(&s_compile_policy);
+        if (blocked <= 4u || (blocked & (blocked - 1u)) == 0u)
+            melee_vita_log_info(
+                "[GXR] sealed shader miss blocked hash=%016llx "
+                "vertex=%u blocked=%u",
+                (unsigned long long) hash, vertex ? 1u : 0u, blocked);
+        return NULL;
+    }
     const u64 started = sceKernelGetProcessTimeWide();
     /* vitaShaRK reads the source length from *size and writes the program
      * size back through the same pointer. */
     u32 size = (u32) strlen(source);
+    ++s_stats.compile_attempts;
     SceGxmProgram* compiled = shark_compile_shader_extended(
         source, &size, vertex ? SHARK_VERTEX_SHADER : SHARK_FRAGMENT_SHADER,
         SHARK_OPT_DEFAULT, SHARK_ENABLE, SHARK_ENABLE, SHARK_ENABLE);
@@ -802,6 +844,7 @@ static const SceGxmProgram* obtain_program(const char* source, bool vertex,
     shark_clear_output();
     if (copy == NULL) return NULL;
     ++s_stats.compiled;
+    ++s_stats.compile_success;
     store_cached(hash, vertex, copy, size);
     return copy;
 }
@@ -832,6 +875,7 @@ static SceGxmProgram* load_bump_cached(u64 hash)
                         "[GXR/BUMP] invalid disk cache hash=%016llx",
                         (unsigned long long) hash);
             }
+            if (program != NULL) ++s_stats.disk_hits;
         }
         sceIoClose(fd);
     }
@@ -867,8 +911,20 @@ static void store_bump_cached(
 static const SceGxmProgram* compile_bump_program(
     const char* source, u64 hash)
 {
+    if (!gxr_shader_compile_policy_allow(
+            &s_compile_policy, GXR_SHADER_COMPILER_BUMP)) {
+        const u32 blocked =
+            gxr_shader_compile_policy_blocked(&s_compile_policy);
+        if (blocked <= 4u || (blocked & (blocked - 1u)) == 0u)
+            melee_vita_log_info(
+                "[GXR/BUMP] sealed shader miss blocked hash=%016llx "
+                "blocked=%u",
+                (unsigned long long) hash, blocked);
+        return NULL;
+    }
     const u64 started = sceKernelGetProcessTimeWide();
     u32 size = (u32) strlen(source);
+    ++s_stats.compile_attempts;
     SceGxmProgram* compiled = shark_compile_shader_extended(
         source, &size, SHARK_VERTEX_SHADER, SHARK_OPT_DEFAULT,
         SHARK_ENABLE, SHARK_ENABLE, SHARK_ENABLE);
@@ -901,6 +957,7 @@ static const SceGxmProgram* compile_bump_program(
     shark_clear_output();
     if (copy == NULL) return NULL;
     ++s_bump_stats.compiled;
+    ++s_stats.compile_success;
     store_bump_cached(hash, copy, size);
     return copy;
 }
@@ -998,6 +1055,7 @@ int gxr_init(void)
 {
     if (s_ready || s_failed) return s_ready ? 0 : -1;
     s_failed = true;
+    gxr_shader_compile_policy_init(&s_compile_policy, true);
     if (shark_init(NULL) < 0) {
         melee_vita_log_info("[GXR] shark_init failed (libshacccg.suprx missing?)");
         return -1;
@@ -1100,12 +1158,28 @@ int gxr_init(void)
 
     s_ready = true;
     s_failed = false;
+#ifdef MELEE_VITA_SHADER_CACHE_SEAL
+    gxr_set_runtime_shader_compilation_enabled(false);
+#endif
     melee_vita_log_info("[GXR] shader renderer ready (vertex attrs=%u)",
                         attribute_count);
     return 0;
 }
 
 bool gxr_available(void) { return s_ready; }
+
+void gxr_set_runtime_shader_compilation_enabled(bool enabled)
+{
+    gxr_shader_compile_policy_set(&s_compile_policy, enabled);
+    melee_vita_log_info(
+        "[GXR] runtime shader compilation %s",
+        enabled ? "enabled" : "sealed");
+}
+
+bool gxr_runtime_shader_compilation_enabled(void)
+{
+    return s_compile_policy.enabled;
+}
 
 static GxrProgram* find_program(const GxrShaderKey* key)
 {
@@ -1114,9 +1188,22 @@ static GxrProgram* find_program(const GxrShaderKey* key)
         hash_seed ^= UINT64_C(0xbbe8f48b562f9d7d);
     const u64 hash = fnv1a(key, sizeof(*key), hash_seed);
     GxrProgram** bucket = &s_programs[hash % GXR_PROGRAM_BUCKETS];
-    for (GxrProgram* p = *bucket; p != NULL; p = p->next)
-        if (p->hash == hash && memcmp(&p->key, key, sizeof(*key)) == 0)
+    for (GxrProgram** link = bucket; *link != NULL;) {
+        GxrProgram* p = *link;
+        if (p->hash == hash && memcmp(&p->key, key, sizeof(*key)) == 0) {
+            if (p->blocked) {
+                if (s_compile_policy.enabled) {
+                    *link = p->next;
+                    free(p);
+                    break;
+                }
+                return p;
+            }
+            ++s_stats.ram_hits;
             return p;
+        }
+        link = &p->next;
+    }
 
     GxrProgram* p = calloc(1, sizeof(*p));
     if (p == NULL) return NULL;
@@ -1140,6 +1227,11 @@ static GxrProgram* find_program(const GxrShaderKey* key)
         }
         s_stats.source_us += sceKernelGetProcessTimeWide() - started;
         p->program = obtain_program(buffer, false, hash);
+        if (p->program == NULL && !s_compile_policy.enabled) {
+            p->blocked = true;
+            p->failed = true;
+            return p;
+        }
     }
     const u64 register_started = sceKernelGetProcessTimeWide();
     if (p->program == NULL ||
@@ -1450,6 +1542,7 @@ typedef struct GxrVtxProgram {
     u64 hash;
     GxrVtxKey key;
     bool failed;
+    bool blocked;
     bool point;
     u8 point_tex_mask;
     SceGxmShaderPatcherId id;
@@ -1465,6 +1558,7 @@ typedef struct GxrBumpVtxProgram {
     u64 hash;
     GxrBumpVtxKey key;
     bool failed;
+    bool blocked;
     SceGxmShaderPatcherId id;
     const SceGxmProgram* program;
     SceGxmVertexProgram* vertex;
@@ -1746,11 +1840,24 @@ static GxrVtxProgram* find_vertex_program_kind(const GxrVtxKey* key,
         ? melee_vita_point_gpu_program_hash(nonpoint_hash, point_tex_mask)
         : nonpoint_hash;
     GxrVtxProgram** bucket = &s_vtx_programs[hash % GXR_PROGRAM_BUCKETS];
-    for (GxrVtxProgram* p = *bucket; p != NULL; p = p->next)
+    for (GxrVtxProgram** link = bucket; *link != NULL;) {
+        GxrVtxProgram* p = *link;
         if (p->hash == hash && p->point == point &&
             p->point_tex_mask == point_tex_mask &&
-            memcmp(&p->key, key, sizeof(*key)) == 0)
+            memcmp(&p->key, key, sizeof(*key)) == 0) {
+            if (p->blocked) {
+                if (s_compile_policy.enabled) {
+                    *link = p->next;
+                    free(p);
+                    break;
+                }
+                return p;
+            }
+            ++s_stats.ram_hits;
             return p;
+        }
+        link = &p->next;
+    }
     GxrVtxProgram* p = calloc(1, sizeof(*p));
     if (p == NULL) return NULL;
     p->hash = hash;
@@ -1775,6 +1882,10 @@ static GxrVtxProgram* find_vertex_program_kind(const GxrVtxKey* key,
         }
         s_stats.source_us += sceKernelGetProcessTimeWide() - started;
         p->program = obtain_program(buffer, true, hash);
+        if (p->program == NULL && !s_compile_policy.enabled) {
+            p->blocked = true;
+            return p;
+        }
     }
     SceGxmShaderPatcher* patcher = gxr_patcher();
     const u64 register_started = sceKernelGetProcessTimeWide();
@@ -1846,9 +1957,23 @@ static GxrBumpVtxProgram* find_bump_vertex_program(
         &key->legacy, sizeof(key->legacy), &key->plan);
     GxrBumpVtxProgram** bucket =
         &s_bump_vtx_programs[hash % GXR_PROGRAM_BUCKETS];
-    for (GxrBumpVtxProgram* p = *bucket; p != NULL; p = p->next)
-        if (p->hash == hash && memcmp(&p->key, key, sizeof(*key)) == 0)
+    for (GxrBumpVtxProgram** link = bucket; *link != NULL;) {
+        GxrBumpVtxProgram* p = *link;
+        if (p->hash == hash && memcmp(&p->key, key, sizeof(*key)) == 0) {
+            if (p->blocked) {
+                if (s_compile_policy.enabled) {
+                    *link = p->next;
+                    free(p);
+                    --s_bump_vtx_program_count;
+                    break;
+                }
+                return p;
+            }
+            ++s_stats.ram_hits;
             return p;
+        }
+        link = &p->next;
+    }
     if (s_bump_vtx_program_count >= GXR_BUMP_PROGRAM_LIMIT) {
         if (s_bump_stats.program_limit++ < 8u)
             melee_vita_log_info(
@@ -1882,6 +2007,10 @@ static GxrBumpVtxProgram* find_bump_vertex_program(
         s_bump_stats.source_us +=
             sceKernelGetProcessTimeWide() - started;
         p->program = compile_bump_program(buffer, hash);
+        if (p->program == NULL && !s_compile_policy.enabled) {
+            p->blocked = true;
+            return p;
+        }
     }
     SceGxmShaderPatcher* patcher = gxr_patcher();
     const u64 register_started = sceKernelGetProcessTimeWide();
@@ -2326,7 +2455,13 @@ static void exec_draw(const void* payload)
         s_rt_state.epoch = g_melee_vita_gxm_state_epoch;
     }
     if (!s_rt_state.valid) {
-        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
+        const f32 half_width =
+            (f32) melee_vita_gxm_render_width() * 0.5f;
+        const f32 half_height =
+            (f32) melee_vita_gxm_render_height() * 0.5f;
+        sceGxmSetViewport(
+            context, half_width, half_width, half_height, -half_height,
+            0.0f, 1.0f);
         s_rt_state.fragment = NULL;
         s_rt_state.vertex = NULL;
         s_rt_state.cull = 0xff;
@@ -2533,16 +2668,25 @@ bool gxr_copy_color(const SceGxmTexture* texture,
 
 void gxr_log_stats(void)
 {
+    const u32 blocked =
+        gxr_shader_compile_policy_blocked(&s_compile_policy);
     melee_vita_log_info(
-        "[GXR] draws=%u compiled=%u cached=%u failed=%u fallback=%u "
-        "compile_ms=%llu cache_io_ms=%llu source_ms=%llu register_ms=%llu vertex_patch_ms=%llu",
-        s_stats.draws, s_stats.compiled, s_stats.cache_loaded,
-        s_stats.compile_failed, s_stats.fallback,
-        (unsigned long long) (s_stats.compile_us / 1000u),
+        "[GXR] draws=%u ram_hits=%u warm_data=%u warm_packaged=%u "
+        "disk_hits=%u compile_attempts=%u compile_success=%u blocked=%u "
+        "failed=%u fallback=%u compile_ms=%llu cache_io_ms=%llu "
+        "source_ms=%llu register_ms=%llu vertex_patch_ms=%llu sealed=%u",
+        s_stats.draws, s_stats.ram_hits, s_stats.warm_writable_hits,
+        s_stats.warm_packaged_hits, s_stats.disk_hits,
+        s_stats.compile_attempts, s_stats.compile_success, blocked,
+        s_stats.compile_failed + s_bump_stats.compile_failed,
+        s_stats.fallback + s_bump_stats.fallback,
+        (unsigned long long)
+            ((s_stats.compile_us + s_bump_stats.compile_us) / 1000u),
         (unsigned long long) (s_stats.cache_io_us / 1000u),
         (unsigned long long) (s_stats.source_us / 1000u),
         (unsigned long long) (s_stats.register_us / 1000u),
-        (unsigned long long) (s_stats.vertex_patch_us / 1000u));
+        (unsigned long long) (s_stats.vertex_patch_us / 1000u),
+        s_compile_policy.enabled ? 0u : 1u);
 #ifdef MELEE_VITA_RENDER_TRACE
     melee_vita_log_info(
         "[GXR/BUMP/STATS] draws=%u fallback=%u compiled=%u cached=%u compile_failed=%u program_limit=%u uniform_reject=%u",

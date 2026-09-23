@@ -3,6 +3,7 @@
 #define MELEE_VITA_GXM_GAME_H
 
 #include <dolphin/types.h>
+#include "gxm_resolution.h"
 
 struct vita2d_texture;
 
@@ -45,6 +46,11 @@ typedef struct MeleeVitaRenderState {
 
 int melee_vita_gxm_init(void);
 void melee_vita_gxm_shutdown(void);
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+extern int g_melee_vita_menu_resolution_option;
+extern int g_melee_vita_gameplay_resolution_option;
+bool melee_vita_gxm_apply_resolution_options(void);
+#endif
 void melee_vita_gxm_draw_triangles(const MeleeVitaScreenVertex* vertices,
                                    u32 count,
                                    const MeleeVitaTextureSource* texture,
@@ -74,6 +80,9 @@ void melee_vita_gxm_prepare_texture_invalidation(void);
 void melee_vita_gxm_invalidate_textures(void);
 void melee_vita_gxm_mark_texture_data_dirty(void);
 void melee_vita_gxm_wait_idle(void);
+void melee_vita_gxm_require_full_resolution(u32 reason);
+u32 melee_vita_gxm_render_width(void);
+u32 melee_vita_gxm_render_height(void);
 void melee_vita_gxm_queue_overlay(struct vita2d_texture* texture,
                                   u32 width, u32 height);
 void melee_vita_gxm_queue_overlay_full_width(

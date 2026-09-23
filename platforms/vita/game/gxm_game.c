@@ -14,8 +14,66 @@
 #include <psp2/kernel/sysmem.h>
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+
+#ifndef MELEE_VITA_INTERNAL_WIDTH
+#define MELEE_VITA_INTERNAL_WIDTH MELEE_VITA_DISPLAY_WIDTH
+#endif
+#ifndef MELEE_VITA_INTERNAL_HEIGHT
+#define MELEE_VITA_INTERNAL_HEIGHT MELEE_VITA_DISPLAY_HEIGHT
+#endif
+#ifndef MELEE_VITA_GAMEPLAY_INTERNAL_WIDTH
+#define MELEE_VITA_GAMEPLAY_INTERNAL_WIDTH MELEE_VITA_INTERNAL_WIDTH
+#endif
+#ifndef MELEE_VITA_GAMEPLAY_INTERNAL_HEIGHT
+#define MELEE_VITA_GAMEPLAY_INTERNAL_HEIGHT MELEE_VITA_INTERNAL_HEIGHT
+#endif
+#if MELEE_VITA_INTERNAL_WIDTH < 320 || MELEE_VITA_INTERNAL_WIDTH > 960 || \
+    (MELEE_VITA_INTERNAL_WIDTH % 16) != 0
+#error "MELEE_VITA_INTERNAL_WIDTH must be 320..960 and 16-pixel aligned"
+#endif
+#if MELEE_VITA_INTERNAL_HEIGHT < 240 || MELEE_VITA_INTERNAL_HEIGHT > 544 || \
+    (MELEE_VITA_INTERNAL_HEIGHT % 8) != 0
+#error "MELEE_VITA_INTERNAL_HEIGHT must be 240..544 and 8-pixel aligned"
+#endif
+#if MELEE_VITA_GAMEPLAY_INTERNAL_WIDTH < 320 || \
+    MELEE_VITA_GAMEPLAY_INTERNAL_WIDTH > 960 || \
+    (MELEE_VITA_GAMEPLAY_INTERNAL_WIDTH % 16) != 0
+#error "MELEE_VITA_GAMEPLAY_INTERNAL_WIDTH must be 320..960 and 16-pixel aligned"
+#endif
+#if MELEE_VITA_GAMEPLAY_INTERNAL_HEIGHT < 240 || \
+    MELEE_VITA_GAMEPLAY_INTERNAL_HEIGHT > 544 || \
+    (MELEE_VITA_GAMEPLAY_INTERNAL_HEIGHT % 8) != 0
+#error "MELEE_VITA_GAMEPLAY_INTERNAL_HEIGHT must be 240..544 and 8-pixel aligned"
+#endif
+#ifndef MELEE_VITA_DEFAULT_MENU_RESOLUTION_OPTION
+#if MELEE_VITA_INTERNAL_WIDTH == 720 && MELEE_VITA_INTERNAL_HEIGHT == 408
+#define MELEE_VITA_DEFAULT_MENU_RESOLUTION_OPTION MELEE_VITA_RESOLUTION_75
+#elif MELEE_VITA_INTERNAL_WIDTH == 576 && MELEE_VITA_INTERNAL_HEIGHT == 328
+#define MELEE_VITA_DEFAULT_MENU_RESOLUTION_OPTION MELEE_VITA_RESOLUTION_60
+#elif MELEE_VITA_INTERNAL_WIDTH == 480 && MELEE_VITA_INTERNAL_HEIGHT == 272
+#define MELEE_VITA_DEFAULT_MENU_RESOLUTION_OPTION MELEE_VITA_RESOLUTION_50
+#else
+#define MELEE_VITA_DEFAULT_MENU_RESOLUTION_OPTION MELEE_VITA_RESOLUTION_NATIVE
+#endif
+#endif
+#ifndef MELEE_VITA_DEFAULT_GAMEPLAY_RESOLUTION_OPTION
+#if MELEE_VITA_GAMEPLAY_INTERNAL_WIDTH == 720 && \
+    MELEE_VITA_GAMEPLAY_INTERNAL_HEIGHT == 408
+#define MELEE_VITA_DEFAULT_GAMEPLAY_RESOLUTION_OPTION MELEE_VITA_RESOLUTION_75
+#elif MELEE_VITA_GAMEPLAY_INTERNAL_WIDTH == 576 && \
+    MELEE_VITA_GAMEPLAY_INTERNAL_HEIGHT == 328
+#define MELEE_VITA_DEFAULT_GAMEPLAY_RESOLUTION_OPTION MELEE_VITA_RESOLUTION_60
+#elif MELEE_VITA_GAMEPLAY_INTERNAL_WIDTH == 480 && \
+    MELEE_VITA_GAMEPLAY_INTERNAL_HEIGHT == 272
+#define MELEE_VITA_DEFAULT_GAMEPLAY_RESOLUTION_OPTION MELEE_VITA_RESOLUTION_50
+#else
+#define MELEE_VITA_DEFAULT_GAMEPLAY_RESOLUTION_OPTION \
+    MELEE_VITA_RESOLUTION_NATIVE
+#endif
+#endif
 
 static int s_initialized;
 static int s_texture_invalidation_pending;
@@ -23,6 +81,27 @@ static u32 s_texture_content_generation = 1;
 static void* s_main_color_data;
 static u32 s_main_color_stride;
 static void* s_main_depth_data;
+typedef struct MeleeVitaResolutionTarget {
+    vita2d_texture* texture;
+    SceGxmSyncObject* sync;
+} MeleeVitaResolutionTarget;
+static MeleeVitaResolutionTarget
+    s_resolution_targets[MELEE_VITA_RESOLUTION_OPTION_COUNT];
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+int g_melee_vita_menu_resolution_option =
+    MELEE_VITA_DEFAULT_MENU_RESOLUTION_OPTION;
+int g_melee_vita_gameplay_resolution_option =
+    MELEE_VITA_DEFAULT_GAMEPLAY_RESOLUTION_OPTION;
+#endif
+static int s_menu_resolution_option =
+    MELEE_VITA_DEFAULT_MENU_RESOLUTION_OPTION;
+static int s_gameplay_resolution_option =
+    MELEE_VITA_DEFAULT_GAMEPLAY_RESOLUTION_OPTION;
+static int s_active_resolution_option = MELEE_VITA_RESOLUTION_NATIVE;
+static vita2d_texture* s_active_internal_target;
+static bool s_rendering_internal;
+static u32 s_render_width = MELEE_VITA_DISPLAY_WIDTH;
+static u32 s_render_height = MELEE_VITA_DISPLAY_HEIGHT;
 
 #define VITA_MAIN_SCENES_PER_FRAME 8u
 
@@ -40,7 +119,10 @@ int __wrap_sceGxmCreateRenderTarget(
         return __real_sceGxmCreateRenderTarget(params, render_target);
     }
     adjusted = *params;
-    if (adjusted.width == 960u && adjusted.height == 544u &&
+    if (((adjusted.width == 960u && adjusted.height == 544u) ||
+         (adjusted.width == 720u && adjusted.height == 408u) ||
+         (adjusted.width == 576u && adjusted.height == 328u) ||
+         (adjusted.width == 480u && adjusted.height == 272u)) &&
         adjusted.scenesPerFrame < VITA_MAIN_SCENES_PER_FRAME) {
         /* EFB copies end and resume the display scene. libvita2d declares one
          * scene per frame, but GXM requires this field to cover every resume. */
@@ -67,9 +149,23 @@ int __wrap_sceGxmBeginScene(
     const SceGxmColorSurface* color_surface,
     const SceGxmDepthStencilSurface* depth_stencil)
 {
+    SceGxmSyncObject* fragment_sync = fragment_sync_object;
+    if (fragment_sync == NULL) {
+        int option;
+        for (option = MELEE_VITA_RESOLUTION_75;
+             option < MELEE_VITA_RESOLUTION_OPTION_COUNT; ++option) {
+            MeleeVitaResolutionTarget* target =
+                &s_resolution_targets[option];
+            if (target->texture != NULL &&
+                render_target == target->texture->gxm_rtgt) {
+                fragment_sync = target->sync;
+                break;
+            }
+        }
+    }
     const int result = __real_sceGxmBeginScene(
         context, flags, render_target, valid_region, vertex_sync_object,
-        fragment_sync_object, color_surface, depth_stencil);
+        fragment_sync, color_surface, depth_stencil);
     if (result >= 0 && color_surface != NULL && depth_stencil != NULL) {
         s_main_color_data = sceGxmColorSurfaceGetData(color_surface);
         s_main_color_stride =
@@ -480,6 +576,7 @@ typedef struct RqFrame {
     u32 gpu_used;
     SceUID gpu_uid;
     u32 clear_color;
+    u32 native_reasons;
 } RqFrame;
 
 static RqFrame s_frames[2];
@@ -519,12 +616,112 @@ static void rt_default_depth(void)
     sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_DISABLED);
 }
 
+static void rt_set_viewport(u32 width, u32 height, bool clear_depth)
+{
+    const f32 half_width = (f32) width * 0.5f;
+    const f32 half_height = (f32) height * 0.5f;
+    sceGxmSetViewport(
+        vita2d_get_context(), half_width, half_width,
+        half_height, -half_height, clear_depth ? 1.0f : 0.0f,
+        clear_depth ? 0.0f : 1.0f);
+}
+
+static u32 effective_native_reasons(u32 native_reasons)
+{
+    bool scaled_shadow_frames = false;
+    bool scaled_gx_copy_frames = false;
+#ifdef MELEE_VITA_SCALED_SHADOW_FRAMES
+    scaled_shadow_frames = true;
+#endif
+#ifdef MELEE_VITA_SCALED_GX_COPY_FRAMES
+    scaled_gx_copy_frames = true;
+#endif
+    return melee_vita_resolution_filter_native_reasons(
+        native_reasons, scaled_shadow_frames, scaled_gx_copy_frames);
+}
+
+static bool resolution_target_create(int option)
+{
+    MeleeVitaResolutionTarget* target;
+    u32 width;
+    u32 height;
+    int sync_result;
+
+    if (option == MELEE_VITA_RESOLUTION_NATIVE)
+        return true;
+    if (!melee_vita_resolution_option_dimensions(option, &width, &height))
+        return false;
+    target = &s_resolution_targets[option];
+    if (target->texture != NULL)
+        return true;
+    target->texture = vita2d_create_empty_texture_rendertarget(
+        width, height, SCE_GXM_TEXTURE_FORMAT_A8B8G8R8);
+    if (target->texture == NULL) {
+        melee_vita_log_info(
+            "[GXM] internal EFB allocation failed for %ux%u; setting unchanged",
+            width, height);
+        return false;
+    }
+    sync_result = sceGxmSyncObjectCreate(&target->sync);
+    if (sync_result < 0) {
+        melee_vita_log_info(
+            "[GXM] internal EFB sync creation failed for %ux%u: 0x%08x",
+            width, height, (u32) sync_result);
+        vita2d_free_texture(target->texture);
+        target->texture = NULL;
+        target->sync = NULL;
+        return false;
+    }
+    vita2d_texture_set_filters(
+        target->texture, SCE_GXM_TEXTURE_FILTER_LINEAR,
+        SCE_GXM_TEXTURE_FILTER_LINEAR);
+    melee_vita_log_info(
+        "[GXM] internal EFB target ready %ux%u", width, height);
+    return true;
+}
+
+static bool resolution_scaling_enabled(void)
+{
+    return s_menu_resolution_option != MELEE_VITA_RESOLUTION_NATIVE ||
+           s_gameplay_resolution_option != MELEE_VITA_RESOLUTION_NATIVE;
+}
+
 static void rt_begin_scene(u32 clear_color, int clear)
 {
     SceGxmContext* context;
-    vita2d_start_drawing();
+    const u32 raw_native_reasons =
+        s_exec_frame != NULL ? s_exec_frame->native_reasons : 0u;
+    const u32 native_reasons =
+        effective_native_reasons(raw_native_reasons);
+    int option = s_menu_resolution_option;
+    s_active_internal_target = NULL;
+    if (melee_vita_resolution_is_gameplay_frame(raw_native_reasons))
+        option = s_gameplay_resolution_option;
+    if (native_reasons == 0u &&
+        option > MELEE_VITA_RESOLUTION_NATIVE &&
+        option < MELEE_VITA_RESOLUTION_OPTION_COUNT) {
+        s_active_internal_target = s_resolution_targets[option].texture;
+    }
+    s_rendering_internal = s_active_internal_target != NULL;
+    s_active_resolution_option = s_rendering_internal
+        ? option : MELEE_VITA_RESOLUTION_NATIVE;
+    if (!melee_vita_resolution_option_dimensions(
+            s_active_resolution_option, &s_render_width, &s_render_height)) {
+        s_active_resolution_option = MELEE_VITA_RESOLUTION_NATIVE;
+        s_active_internal_target = NULL;
+        s_rendering_internal = false;
+        s_render_width = MELEE_VITA_DISPLAY_WIDTH;
+        s_render_height = MELEE_VITA_DISPLAY_HEIGHT;
+    }
+    if (s_rendering_internal) {
+        vita2d_pool_reset();
+        vita2d_start_drawing_advanced(s_active_internal_target, 0u);
+    } else {
+        vita2d_start_drawing();
+    }
     ++g_melee_vita_gxm_state_epoch;
     context = vita2d_get_context();
+    rt_set_viewport(s_render_width, s_render_height, false);
     if (clear) {
         /* GXCopyDisp(..., GX_TRUE) clears the EFB depth buffer as well as
          * color.  Force the clear quad to the far plane so depth from the
@@ -533,10 +730,10 @@ static void rt_begin_scene(u32 clear_color, int clear)
         sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
         sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
         sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
-        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 1.0f, 0.0f);
+        rt_set_viewport(s_render_width, s_render_height, true);
         vita2d_set_clear_color(clear_color);
         vita2d_clear_screen();
-        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
+        rt_set_viewport(s_render_width, s_render_height, false);
     }
     rt_default_depth();
 }
@@ -623,6 +820,121 @@ void* melee_vita_rq_alloc_gpu(u32 size, u32 align)
 
 void melee_vita_gxm_begin_frame(void) {}
 
+void melee_vita_gxm_require_full_resolution(u32 reason)
+{
+    RqFrame* frame;
+    if (!resolution_scaling_enabled() || reason == 0u) return;
+    frame = &s_frames[s_record];
+    frame->native_reasons |= reason;
+}
+
+u32 melee_vita_gxm_render_width(void) { return s_render_width; }
+u32 melee_vita_gxm_render_height(void) { return s_render_height; }
+
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+#define VITA_RESOLUTION_CONFIG_PATH "ux0:data/melee/resolution-settings.bin"
+#define VITA_RESOLUTION_CONFIG_TEMP_PATH \
+    "ux0:data/melee/resolution-settings.tmp"
+#define VITA_RESOLUTION_CONFIG_MAGIC 0x31525356u
+#define VITA_RESOLUTION_CONFIG_VERSION 1u
+
+typedef struct MeleeVitaResolutionConfig {
+    u32 magic;
+    u32 version;
+    s32 menu_option;
+    s32 gameplay_option;
+} MeleeVitaResolutionConfig;
+
+static void resolution_config_load(void)
+{
+    MeleeVitaResolutionConfig config;
+    FILE* file = fopen(VITA_RESOLUTION_CONFIG_PATH, "rb");
+    bool valid;
+    if (file == NULL)
+        return;
+    valid = fread(&config, sizeof(config), 1u, file) == 1u &&
+            fgetc(file) == EOF &&
+            config.magic == VITA_RESOLUTION_CONFIG_MAGIC &&
+            config.version == VITA_RESOLUTION_CONFIG_VERSION &&
+            config.menu_option >= MELEE_VITA_RESOLUTION_NATIVE &&
+            config.menu_option < MELEE_VITA_RESOLUTION_OPTION_COUNT &&
+            config.gameplay_option >= MELEE_VITA_RESOLUTION_NATIVE &&
+            config.gameplay_option < MELEE_VITA_RESOLUTION_OPTION_COUNT;
+    fclose(file);
+    if (!valid) {
+        melee_vita_log_info(
+            "[GXM] ignored malformed resolution settings; using build defaults");
+        return;
+    }
+    g_melee_vita_menu_resolution_option = config.menu_option;
+    g_melee_vita_gameplay_resolution_option = config.gameplay_option;
+}
+
+static void resolution_config_save(void)
+{
+    const MeleeVitaResolutionConfig config = {
+        VITA_RESOLUTION_CONFIG_MAGIC,
+        VITA_RESOLUTION_CONFIG_VERSION,
+        g_melee_vita_menu_resolution_option,
+        g_melee_vita_gameplay_resolution_option,
+    };
+    FILE* file = fopen(VITA_RESOLUTION_CONFIG_TEMP_PATH, "wb");
+    bool valid = file != NULL;
+    if (valid)
+        valid = fwrite(&config, sizeof(config), 1u, file) == 1u;
+    if (file != NULL && fclose(file) != 0)
+        valid = false;
+    if (valid) {
+        remove(VITA_RESOLUTION_CONFIG_PATH);
+        valid = rename(
+                    VITA_RESOLUTION_CONFIG_TEMP_PATH,
+                    VITA_RESOLUTION_CONFIG_PATH) == 0;
+    }
+    if (!valid) {
+        remove(VITA_RESOLUTION_CONFIG_TEMP_PATH);
+        melee_vita_log_info("[GXM] failed to persist resolution settings");
+    }
+}
+
+bool melee_vita_gxm_apply_resolution_options(void)
+{
+    const int requested_menu = g_melee_vita_menu_resolution_option;
+    const int requested_gameplay =
+        g_melee_vita_gameplay_resolution_option;
+    u32 menu_width;
+    u32 menu_height;
+    u32 gameplay_width;
+    u32 gameplay_height;
+
+    if (!s_initialized ||
+        !melee_vita_resolution_option_dimensions(
+            requested_menu, &menu_width, &menu_height) ||
+        !melee_vita_resolution_option_dimensions(
+            requested_gameplay, &gameplay_width, &gameplay_height)) {
+        g_melee_vita_menu_resolution_option = s_menu_resolution_option;
+        g_melee_vita_gameplay_resolution_option =
+            s_gameplay_resolution_option;
+        return false;
+    }
+    rq_wait_idle();
+    vita2d_wait_rendering_done();
+    if (!resolution_target_create(requested_menu) ||
+        !resolution_target_create(requested_gameplay)) {
+        g_melee_vita_menu_resolution_option = s_menu_resolution_option;
+        g_melee_vita_gameplay_resolution_option =
+            s_gameplay_resolution_option;
+        return false;
+    }
+    s_menu_resolution_option = requested_menu;
+    s_gameplay_resolution_option = requested_gameplay;
+    resolution_config_save();
+    melee_vita_log_info(
+        "[GXM] live resolution menu=%ux%u gameplay=%ux%u",
+        menu_width, menu_height, gameplay_width, gameplay_height);
+    return true;
+}
+#endif
+
 int melee_vita_gxm_init(void)
 {
     int result;
@@ -631,6 +943,37 @@ int melee_vita_gxm_init(void)
     if (result == 0) return -1;
     vita2d_set_vblank_wait(0);
     vita2d_set_clear_color(RGBA8(0, 0, 0, 255));
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+    resolution_config_load();
+    s_menu_resolution_option = g_melee_vita_menu_resolution_option;
+    s_gameplay_resolution_option =
+        g_melee_vita_gameplay_resolution_option;
+#endif
+    if (!resolution_target_create(s_menu_resolution_option))
+        s_menu_resolution_option = MELEE_VITA_RESOLUTION_NATIVE;
+    if (!resolution_target_create(s_gameplay_resolution_option))
+        s_gameplay_resolution_option = MELEE_VITA_RESOLUTION_NATIVE;
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+    g_melee_vita_menu_resolution_option = s_menu_resolution_option;
+    g_melee_vita_gameplay_resolution_option =
+        s_gameplay_resolution_option;
+#endif
+    {
+        u32 menu_width;
+        u32 menu_height;
+        u32 gameplay_width;
+        u32 gameplay_height;
+        melee_vita_resolution_option_dimensions(
+            s_menu_resolution_option, &menu_width, &menu_height);
+        melee_vita_resolution_option_dimensions(
+            s_gameplay_resolution_option,
+            &gameplay_width, &gameplay_height);
+        melee_vita_log_info(
+            "[GXM] resolution menu=%ux%u gameplay=%ux%u; "
+            "presentation remains %ux%u",
+            menu_width, menu_height, gameplay_width, gameplay_height,
+            MELEE_VITA_DISPLAY_WIDTH, MELEE_VITA_DISPLAY_HEIGHT);
+    }
     for (u32 i = 0; i < 2u; ++i) {
         void* base = NULL;
         s_frames[i].gpu_uid = sceKernelAllocMemBlock("melee_rq", SCE_KERNEL_MEMBLOCK_TYPE_USER_RW_UNCACHE,
@@ -672,6 +1015,20 @@ void melee_vita_gxm_shutdown(void)
     sceKernelWaitThreadEnd(s_rq_thread, NULL, NULL);
     vita2d_wait_rendering_done();
     free_textures();
+    for (int option = MELEE_VITA_RESOLUTION_75;
+         option < MELEE_VITA_RESOLUTION_OPTION_COUNT; ++option) {
+        MeleeVitaResolutionTarget* target =
+            &s_resolution_targets[option];
+        if (target->texture != NULL) {
+            vita2d_free_texture(target->texture);
+            target->texture = NULL;
+        }
+        if (target->sync != NULL) {
+            sceGxmSyncObjectDestroy(target->sync);
+            target->sync = NULL;
+        }
+    }
+    s_active_internal_target = NULL;
     vita2d_fini();
     s_initialized = 0;
 }
@@ -925,18 +1282,23 @@ static void* render_fb(void)
 static void clear_copy_region(f32 x, f32 y, f32 width, f32 height)
 {
     SceGxmContext* context = vita2d_get_context();
+    const f32 scale_x =
+        (f32) s_render_width / (f32) MELEE_VITA_DISPLAY_WIDTH;
+    const f32 scale_y =
+        (f32) s_render_height / (f32) MELEE_VITA_DISPLAY_HEIGHT;
     ++g_melee_vita_gxm_state_epoch;
     sceGxmSetFrontDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
     sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
     sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
     sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
     /* zScale 0 / zOffset 1 writes the far plane, as a GX clear does. */
-    sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 1.0f, 0.0f);
+    rt_set_viewport(s_render_width, s_render_height, true);
     vita2d_set_blend_mode_add(0);
-    vita2d_draw_rectangle(x, y, width > 0.0f ? width : 1.0f,
-                          height > 0.0f ? height : 1.0f,
+    vita2d_draw_rectangle(x * scale_x, y * scale_y,
+                          width > 0.0f ? width * scale_x : 1.0f,
+                          height > 0.0f ? height * scale_y : 1.0f,
                           s_exec_frame->clear_color);
-    sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
+    rt_set_viewport(s_render_width, s_render_height, false);
     rt_default_depth();
 }
 
@@ -975,11 +1337,12 @@ static void exec_copy(const void* payload)
         if (depth_copy)
             texture_error = sceGxmTextureInitTiled(
                 &source.gxm_tex, fb, SCE_GXM_TEXTURE_FORMAT_U24X8_DS,
-                960, 544, 0);
+                s_render_width, s_render_height, 0);
         else
             texture_error = sceGxmTextureInitLinearStrided(
                 &source.gxm_tex, fb, SCE_GXM_TEXTURE_FORMAT_A8B8G8R8,
-                960, 544, s_main_color_stride * sizeof(u32));
+                s_render_width, s_render_height,
+                s_main_color_stride * sizeof(u32));
         if (texture_error < 0) {
             melee_vita_log_info(
                 "[GXCOPY] source texture init failed fmt=0x%x error=0x%08x",
@@ -1012,7 +1375,7 @@ static void exec_copy(const void* payload)
                 melee_vita_log_info("[GXCOPY] color copy draw unavailable");
         }
         sceGxmEndScene(context, NULL, NULL);
-        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
+        rt_set_viewport(s_render_width, s_render_height, false);
     }
     /* GXCopyTex(clear) clears the rectangle it copied, not the whole frame:
      * clearing everything would wipe a scene that was already drawn (the
@@ -1054,6 +1417,8 @@ static void exec_target(const void* payload)
     if (t->begin) {
         if (t->target == NULL || t->target->gxm_rtgt == NULL) return;
         vita2d_end_drawing();
+        s_render_width = t->width;
+        s_render_height = t->height;
         sceGxmBeginScene(context, 0, t->target->gxm_rtgt, NULL, NULL, NULL,
                          &t->target->gxm_sfc, NULL);
         ++g_melee_vita_gxm_state_epoch;
@@ -1069,7 +1434,6 @@ static void exec_target(const void* payload)
         vita2d_draw_rectangle(0.0f, 0.0f, 960.0f, 544.0f, t->clear_color);
     } else {
         sceGxmEndScene(context, NULL, NULL);
-        sceGxmSetViewport(context, 480.0f, 480.0f, 272.0f, -272.0f, 0.0f, 1.0f);
         rt_begin_scene(s_exec_frame->clear_color, 0);
     }
 }
@@ -1101,7 +1465,11 @@ void melee_vita_gxm_queue_copy(struct vita2d_texture* target, u32 width, u32 hei
                                int clear)
 {
     RqCopy* c = melee_vita_rq_push(exec_copy, sizeof(RqCopy));
-    if (c == NULL) return;
+    if (c == NULL) {
+        melee_vita_gxm_require_full_resolution(
+            MELEE_VITA_NATIVE_REASON_UNSUPPORTED_COPY);
+        return;
+    }
     memset(c, 0, sizeof(*c));
     c->target = target;
     c->width = width;
@@ -1109,7 +1477,14 @@ void melee_vita_gxm_queue_copy(struct vita2d_texture* target, u32 width, u32 hei
     c->x0 = x0; c->y0 = y0; c->sx = sx; c->sy = sy;
     c->format = format;
     c->clear = clear ? 1u : 0u;
-    if (gxr_available()) {
+    if (target == NULL || width == 0u || height == 0u ||
+        x0 < 0.0f || y0 < 0.0f || sx <= 0.0f || sy <= 0.0f ||
+        x0 + (f32) width * sx > (f32) MELEE_VITA_DISPLAY_WIDTH ||
+        y0 + (f32) height * sy > (f32) MELEE_VITA_DISPLAY_HEIGHT ||
+        !gxr_available()) {
+        melee_vita_gxm_require_full_resolution(
+            MELEE_VITA_NATIVE_REASON_UNSUPPORTED_COPY);
+    } else {
         static const u16 quad_indices[6] = { 0, 1, 2, 2, 3, 0 };
         const f32 u0 = x0 / 960.0f;
         const f32 v0 = y0 / 544.0f;
@@ -1145,6 +1520,9 @@ void melee_vita_gxm_queue_copy(struct vita2d_texture* target, u32 width, u32 hei
             c->vertices[3].tex[0][0] = u0;
             c->vertices[3].tex[0][1] = v1;
             memcpy(c->indices, quad_indices, sizeof(quad_indices));
+        } else {
+            melee_vita_gxm_require_full_resolution(
+                MELEE_VITA_NATIVE_REASON_UNSUPPORTED_COPY);
         }
     }
 }
@@ -1153,7 +1531,11 @@ void melee_vita_gxm_queue_copy_clear(f32 x, f32 y, f32 width, f32 height)
 {
     RqCopyClear* clear = melee_vita_rq_push(exec_copy_clear,
                                             sizeof(RqCopyClear));
-    if (clear == NULL) return;
+    if (clear == NULL) {
+        melee_vita_gxm_require_full_resolution(
+            MELEE_VITA_NATIVE_REASON_UNSUPPORTED_COPY);
+        return;
+    }
     clear->x = x;
     clear->y = y;
     clear->width = width;
@@ -1252,6 +1634,9 @@ void melee_vita_gxm_draw_triangles(const MeleeVitaScreenVertex* vertices,
     vita2d_texture* texture;
     u32 i;
     if (!s_initialized || vertices == NULL || count < 3) return;
+    if (source != NULL && source->chroma_u != NULL)
+        melee_vita_gxm_require_full_resolution(
+            MELEE_VITA_NATIVE_REASON_THP);
     texture = get_texture(source);
     if (texture != NULL) {
         vita2d_texture_vertex* output = melee_vita_rq_alloc_gpu(count * sizeof(*output), 16);
@@ -1318,6 +1703,7 @@ static void queue_overlay(vita2d_texture* texture, u32 width, u32 height,
     RqOverlay* overlay;
     if (!s_initialized || width == 0u || height == 0u)
         return;
+    melee_vita_gxm_require_full_resolution(MELEE_VITA_NATIVE_REASON_THP);
     overlay = melee_vita_rq_push(exec_overlay, sizeof(*overlay));
     if (overlay == NULL) return;
     overlay->texture = texture;
@@ -1344,6 +1730,8 @@ void melee_vita_gxm_queue_overlay_full_width(vita2d_texture* texture,
 
 typedef struct RqPresent {
     f32 bar;
+    GxrVertex* vertices;
+    u16* indices;
 } RqPresent;
 
 static void exec_present(const void* payload)
@@ -1357,6 +1745,32 @@ static void exec_present(const void* payload)
         vita2d_draw_rectangle(960.0f - p->bar - 1.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
     }
     vita2d_end_drawing();
+    if (s_rendering_internal && s_active_internal_target != NULL) {
+        vita2d_texture* presented_target = s_active_internal_target;
+        s_rendering_internal = false;
+        s_active_internal_target = NULL;
+        s_active_resolution_option = MELEE_VITA_RESOLUTION_NATIVE;
+        s_render_width = MELEE_VITA_DISPLAY_WIDTH;
+        s_render_height = MELEE_VITA_DISPLAY_HEIGHT;
+        vita2d_start_drawing();
+        ++g_melee_vita_gxm_state_epoch;
+        rt_set_viewport(
+            MELEE_VITA_DISPLAY_WIDTH, MELEE_VITA_DISPLAY_HEIGHT, false);
+        rt_default_depth();
+        vita2d_set_blend_mode_add(0);
+        vita2d_draw_rectangle(
+            0.0f, 0.0f, (f32) MELEE_VITA_DISPLAY_WIDTH,
+            (f32) MELEE_VITA_DISPLAY_HEIGHT, RGBA8(0, 0, 0, 255));
+        if (p->vertices == NULL || p->indices == NULL ||
+            !gxr_copy_color(
+                &presented_target->gxm_tex, p->vertices, p->indices)) {
+            static u32 logged;
+            if (logged++ < 4u)
+                melee_vita_log_info(
+                    "[GXM] internal EFB presentation draw unavailable");
+        }
+        vita2d_end_drawing();
+    }
 #ifdef MELEE_VITA_UPDATER
     {
         extern void melee_vita_updater_render_dialog(void);
@@ -1369,11 +1783,84 @@ static void exec_present(const void* payload)
 void melee_vita_gxm_present(u32 clear_color)
 {
     extern int melee_vita_widescreen_active(void);
+    static u32 native_copy_frames, native_readback_frames;
+    static u32 native_shadow_frames, native_thp_frames;
+    static u32 native_unsupported_copy_frames;
+    static u32 native_debug_ui_frames;
+    static u32 scaled_copy_frames, scaled_shadow_frames;
+    RqFrame* recorded;
     RqPresent* p;
+    u32 native_reasons;
     if (!s_initialized) return;
+    recorded = &s_frames[s_record];
     p = melee_vita_rq_push(exec_present, sizeof(RqPresent));
-    if (p != NULL)
-        p->bar = melee_vita_widescreen_active() ? 0.0f : (960.0f - 544.0f * (73.0f / 60.0f)) * 0.5f;
+    if (p != NULL) {
+        static const u16 quad_indices[6] = { 0, 1, 2, 2, 3, 0 };
+        memset(p, 0, sizeof(*p));
+        p->bar = melee_vita_widescreen_active()
+            ? 0.0f
+            : (960.0f - 544.0f * (73.0f / 60.0f)) * 0.5f;
+        if (resolution_scaling_enabled() && !gxr_available()) {
+            recorded->native_reasons |= MELEE_VITA_NATIVE_REASON_READBACK;
+        } else if (resolution_scaling_enabled()) {
+            p->vertices = gxr_alloc_vertices(4u);
+            p->indices = gxr_alloc_indices(6u);
+            if (p->vertices == NULL || p->indices == NULL) {
+                recorded->native_reasons |=
+                    MELEE_VITA_NATIVE_REASON_READBACK;
+                p->vertices = NULL;
+                p->indices = NULL;
+            } else {
+                memset(p->vertices, 0, 4u * sizeof(*p->vertices));
+                p->vertices[0].position[0] = -1.0f;
+                p->vertices[0].position[1] = 1.0f;
+                p->vertices[1].position[0] = 1.0f;
+                p->vertices[1].position[1] = 1.0f;
+                p->vertices[2].position[0] = 1.0f;
+                p->vertices[2].position[1] = -1.0f;
+                p->vertices[3].position[0] = -1.0f;
+                p->vertices[3].position[1] = -1.0f;
+                for (u32 i = 0u; i < 4u; ++i) {
+                    p->vertices[i].position[3] = 1.0f;
+                    p->vertices[i].color[0][0] =
+                    p->vertices[i].color[0][1] =
+                    p->vertices[i].color[0][2] =
+                    p->vertices[i].color[0][3] =
+                    p->vertices[i].color[1][0] =
+                    p->vertices[i].color[1][1] =
+                    p->vertices[i].color[1][2] =
+                    p->vertices[i].color[1][3] = 1.0f;
+                }
+                p->vertices[0].tex[0][0] = 0.0f;
+                p->vertices[0].tex[0][1] = 0.0f;
+                p->vertices[1].tex[0][0] = 1.0f;
+                p->vertices[1].tex[0][1] = 0.0f;
+                p->vertices[2].tex[0][0] = 1.0f;
+                p->vertices[2].tex[0][1] = 1.0f;
+                p->vertices[3].tex[0][0] = 0.0f;
+                p->vertices[3].tex[0][1] = 1.0f;
+                memcpy(
+                    p->indices, quad_indices, sizeof(quad_indices));
+            }
+        }
+    }
+    native_reasons = effective_native_reasons(recorded->native_reasons);
+    if (native_reasons & MELEE_VITA_NATIVE_REASON_COPY)
+        ++native_copy_frames;
+    else if (recorded->native_reasons & MELEE_VITA_NATIVE_REASON_COPY)
+        ++scaled_copy_frames;
+    if (native_reasons & MELEE_VITA_NATIVE_REASON_READBACK)
+        ++native_readback_frames;
+    if (native_reasons & MELEE_VITA_NATIVE_REASON_SHADOW)
+        ++native_shadow_frames;
+    else if (recorded->native_reasons & MELEE_VITA_NATIVE_REASON_SHADOW)
+        ++scaled_shadow_frames;
+    if (native_reasons & MELEE_VITA_NATIVE_REASON_THP)
+        ++native_thp_frames;
+    if (native_reasons & MELEE_VITA_NATIVE_REASON_UNSUPPORTED_COPY)
+        ++native_unsupported_copy_frames;
+    if (native_reasons & MELEE_VITA_NATIVE_REASON_DEBUG_UI)
+        ++native_debug_ui_frames;
     {
         /* Hand the recorded frame to the render thread once it has finished
          * the previous one; this wait is the only game/render sync point. */
@@ -1387,6 +1874,7 @@ void melee_vita_gxm_present(u32 clear_color)
     s_frames[s_record].size = 0;
     s_frames[s_record].gpu_used = 0;
     s_frames[s_record].clear_color = s_next_clear_color;
+    s_frames[s_record].native_reasons = 0u;
     s_next_clear_color = clear_color;
 
     ++s_frame_counter;
@@ -1410,8 +1898,27 @@ void melee_vita_gxm_present(u32 clear_color)
         if ((s_frame_counter % 300u) == 0u) {
             melee_vita_log_info("[GXR] textures live=%u uploads=%u failures=%u",
                                 count, s_texture_uploads, s_texture_failures);
+            if (resolution_scaling_enabled())
+                melee_vita_log_info(
+                    "[GXM] menu-option=%d gameplay-option=%d "
+                    "native-fallback frames "
+                    "copy=%u readback=%u shadow=%u thp=%u unsupported-copy=%u "
+                    "debug-ui=%u "
+                    "scaled-copy=%u scaled-shadow=%u",
+                    s_menu_resolution_option,
+                    s_gameplay_resolution_option,
+                    native_copy_frames, native_readback_frames,
+                    native_shadow_frames, native_thp_frames,
+                    native_unsupported_copy_frames, native_debug_ui_frames,
+                    scaled_copy_frames,
+                    scaled_shadow_frames);
             s_texture_uploads = 0;
             s_texture_failures = 0;
+            native_copy_frames = native_readback_frames = 0u;
+            native_shadow_frames = native_thp_frames = 0u;
+            native_unsupported_copy_frames = 0u;
+            native_debug_ui_frames = 0u;
+            scaled_copy_frames = scaled_shadow_frames = 0u;
         }
     }
     s_texture_invalidation_pending = 0;

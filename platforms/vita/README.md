@@ -67,6 +67,154 @@ reproducible and never require a networked Vita. This cache stores compiled
 shader programs only; decoded trophy textures and archive data remain
 session-local and are still released during scene teardown.
 
+### Opt-in sealed shader cache experiment
+
+Release builds normally compile a missing shader at runtime. A trained-cache
+test build can instead seal runtime compilation after the fixed renderer
+programs and both writable and packaged warm caches have loaded:
+
+```powershell
+.\platforms\vita\build-full.ps1 -Configuration Release -Jobs 8 `
+  -EnableShaderCacheSeal
+```
+
+The switch is default-off. Cache hits in the renderer's RAM tables, the
+indexed `warm5.bin` caches, and individual `.gxp` files continue to work after
+the seal. A genuine miss is rejected and falls back through the existing
+renderer path without calling vitaShaRK. `[GXR]` diagnostics are emitted every
+300 frames and report RAM, writable/packaged warm-cache and disk hits, runtime
+compile attempts/success/time, blocked misses, and renderer fallbacks. Train
+and package the cache with sealing disabled before evaluating this mode.
+Code with a controlled loading/gameplay boundary can use
+`gxr_set_runtime_shader_compilation_enabled(false)` after prewarming and pass
+`true` again during a training/loading phase; blocked entries are then retried
+rather than treated as permanent compiler failures.
+
+The monolithic warm-cache format is unchanged. At startup each record is
+bounds-checked and validated with `sceGxmProgramCheck`, then placed in a
+bounded in-memory index. Writable records take deterministic precedence over
+packaged records, and the first duplicate within a file wins. Malformed input
+is logged with its byte offset and rejected; index-capacity overflow retains
+the validated linear-scan fallback for unindexed records.
+
+### Opt-in internal-resolution experiment
+
+`-InternalResolutionScale` accepts `100` (the default), `75`, `60`, or `50`.
+Non-native values render the main EFB into an aligned offscreen target and
+scale it to the unchanged 960x544 display surface:
+
+```powershell
+.\platforms\vita\build-full.ps1 -Configuration Release -Jobs 8 `
+  -InternalResolutionScale 75
+```
+
+The 75% setting is 720x408, 60% uses the nearest alignment-safe 576x328
+dimensions, and 50% is 480x272. Build-time and runtime guards require widths
+aligned to 16 pixels, heights aligned to 8 pixels, and dimensions within
+320x240 through 960x544. Presentation, pillarboxing, and the game's 640x480 UI
+coordinate mapping remain native.
+
+GX EFB copies/readback-style copies, shadow passes, and THP/YUV frames
+automatically force the complete recorded frame back to native resolution
+before the render thread begins it. They never return a reduced-resolution
+success-shaped result. The periodic `[GXM]` diagnostic reports how many frames
+fell back for each reason.
+
+`-EnableScaledShadowFrames` is a separate default-off gameplay experiment that
+requires a non-native internal scale. It keeps frames containing the
+self-contained offscreen shadow pass at the selected internal resolution.
+GX-copy/readback and THP/YUV frames still fall back to native 960x544:
+
+```powershell
+.\platforms\vita\build-full.ps1 -Configuration Release -Jobs 8 `
+  -InternalResolutionScale 50 -EnableScaledShadowFrames
+```
+
+`-EnableScaledGxCopyFrames` is a further default-off gameplay experiment. It
+allows supported `GXCopyTex` frames to remain at the selected internal
+resolution, scales partial EFB clears into the internal target, and retains a
+native fallback for invalid copy bounds or unavailable copy resources:
+
+```powershell
+.\platforms\vita\build-full.ps1 -Configuration Release -Jobs 8 `
+  -InternalResolutionScale 50 -EnableScaledShadowFrames `
+  -EnableScaledGxCopyFrames
+```
+
+Readback and THP/YUV frames remain native even with both gameplay switches.
+Keep these switches separate from `-EnableShaderCacheSeal` when measuring each
+experiment.
+
+`-GameplayInternalResolutionScale` optionally selects a second internal target
+for frames containing supported GX copies or shadow passes. For example, this
+keeps ordinary menu frames at approximately 60% (576x328) while rendering
+gameplay-class frames at 75% (720x408):
+
+```powershell
+.\platforms\vita\build-full.ps1 -Configuration Release -Jobs 8 `
+  -InternalResolutionScale 60 -GameplayInternalResolutionScale 75 `
+  -EnableScaledShadowFrames -EnableScaledGxCopyFrames
+```
+
+The setting is default-off (`0`) and must differ from
+`-InternalResolutionScale`. If the second target cannot be created, those
+gameplay-class frames fall back to native resolution rather than silently using
+the menu target.
+
+`-EnableRuntimeResolutionMenu` adds separate **Menu Resolution** and
+**Gameplay Resolution** selectors to the hidden Vita Debug menu and to the
+normal **Options -> Vita Options** item, which replaces the GameCube-specific
+Screen Display label and description on Vita. Vita Options opens a styled
+modal resolution panel over the existing Options screen instead of entering
+the deflicker screen. While the panel is open, D-pad input is consumed by it:
+up/down selects a row, left/right changes its value, and Cross or Circle closes
+it. The underlying Melee menu cannot move until the panel closes.
+
+The modal's second page remaps Cross, Circle, Square, Triangle, L, R, Select,
+and Start to the GameCube A, B, X, Y, L, R, Z, and Start actions. L/R switches
+pages. The Display page renders touchable minus and plus buttons beside each
+percentage. On the Controls page, select a Melee action with touch or the
+D-pad and Cross, then press the Vita button to assign. All physical buttons,
+including Cross and Circle, are captured instead of interpreted as Close
+while the prompt is active; the touchscreen Cancel button remains available.
+Triangle restores defaults when capture is inactive. Assigning an action
+already used by another physical button swaps the two assignments, so every
+action remains reachable. The mapping applies live and persists in
+`ux0:data/melee/control-settings.bin`; malformed files restore defaults.
+Reset to Default Controls and Close are part of D-pad row navigation as well
+as dedicated touchscreen targets.
+
+The Vita Options overlay uses a 936x520 full-screen-style panel patterned after
+the Vita save-editor layout: large Display and Controls tabs, explicit touch
+buttons, a full-width mapping list, Reset to Default Controls, and Close.
+It remains a SisLib/GXM overlay so it does not introduce a competing VitaGL
+rendering context.
+
+Each selector offers Native, 75% (720x408), 60% (576x328), and 50%
+(480x272). Changes are applied live after the render thread becomes idle; a
+game restart is not required. Targets are allocated on first use and retained
+in a four-entry bounded table. If allocation or sync-object creation fails,
+the previous setting remains active and the failure is logged. Valid
+selections persist in `ux0:data/melee/resolution-settings.bin`; malformed
+settings are rejected in favor of the build defaults.
+
+The runtime menu is also default-off and requires both scaled-shadow and
+scaled-GX-copy support:
+
+```powershell
+.\platforms\vita\build-full.ps1 -Configuration Release -Jobs 8 `
+  -InternalResolutionScale 60 -GameplayInternalResolutionScale 75 `
+  -EnableScaledShadowFrames -EnableScaledGxCopyFrames `
+  -EnableRuntimeResolutionMenu
+```
+
+Readback, THP/YUV, native movie-overlay, and unsupported GX-copy frames
+continue to force native 960x544 regardless of the live selections. Native
+movies therefore avoid the extra EFB scale pass that can make video fall behind
+audio. The Vita Debug menu also renders at native resolution so its late
+DevText overlay cannot be hidden by the EFB presentation pass; the selected
+scales resume when the debug route closes.
+
 No game image or proprietary shader compiler module is needed at build time.
 Neither belongs in source control, CI artifacts, or the VPK.
 

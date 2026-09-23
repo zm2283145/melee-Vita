@@ -178,10 +178,30 @@ s32 HSD_SisLib_803A67EC(u8* data, u8* string)
             sisEndKerning(data, &out_idx, has_kerning);
             sjis_hi = 0x81;
             sjis_lo = 0x7C;
+        } else if (cur_char == '+') {
+            sisEndKerning(data, &out_idx, has_kerning);
+            sjis_hi = 0x81;
+            sjis_lo = 0x7B;
+        } else if (cur_char == '/') {
+            sisEndKerning(data, &out_idx, has_kerning);
+            sjis_hi = 0x81;
+            sjis_lo = 0x5E;
+        } else if (cur_char == '[') {
+            sisEndKerning(data, &out_idx, has_kerning);
+            sjis_hi = 0x81;
+            sjis_lo = 0x6D;
+        } else if (cur_char == ']') {
+            sisEndKerning(data, &out_idx, has_kerning);
+            sjis_hi = 0x81;
+            sjis_lo = 0x6E;
         } else if (cur_char == '.') {
             sisBeginLine(data, &out_idx, has_kerning);
             sjis_hi = 0x81;
             sjis_lo = 0x44;
+        } else if (cur_char == '%') {
+            sisEndKerning(data, &out_idx, has_kerning);
+            sjis_hi = 0x81;
+            sjis_lo = 0x93;
         } else if ((cur_char >= '0') && (cur_char <= '9')) {
             sisBeginLine(data, &out_idx, has_kerning);
             sjis_hi = 0x82;

@@ -55,6 +55,11 @@ static u8 mnCharSel_804D50E0[3] = { 0, 1, 3 };
 
 #include "giga_bowser_css_icon.inc"
 #include "giga_bowser_classic_portrait.inc"
+#include "giga_bowser_csp_re.inc"
+#include "giga_bowser_csp_bu.inc"
+#include "giga_bowser_csp_bk.inc"
+#include "giga_bowser_csp_ye.inc"
+#include "giga_bowser_csp_wh.inc"
 
 typedef struct DISC_STRUCT MnSelectChrModels {
     /* 0x0 */ StaticModelDesc background;
@@ -93,7 +98,12 @@ static HSD_Text* mnCharSel_804D6CE0;
 static HSD_Text* mnCharSel_804D6CE4;
 static HSD_Text* mnCharSel_804D6CE8;
 static HSD_Text* mnCharSel_GigaBowserLabel;
-static HSD_ImageDesc mnCharSel_GigaBowserPortraitDesc;
+static HSD_ImageDesc mnCharSel_GigaBowserPortraitDesc[6];
+static const u8* const mnCharSel_GigaBowserPortraits[6] = {
+    mnCharSel_GigaBowserClassicPortrait, mnCharSel_GigaBowserPortraitRe,
+    mnCharSel_GigaBowserPortraitBu, mnCharSel_GigaBowserPortraitBk,
+    mnCharSel_GigaBowserPortraitYe, mnCharSel_GigaBowserPortraitWh,
+};
 static u32 mnCharSel_804D6CEC;
 static s8 mnCharSel_804D6CF0;
 static s8 mnCharSel_804D6CF1;
@@ -1049,27 +1059,48 @@ static inline HSD_JObj* animateJointLeadingPad(HSD_JObj* root, u8 joint,
     return jobj;
 }
 
-static void mnCharSel_UseGigaBowserPortrait(HSD_JObj* jobj, bool classic)
+static bool mnCharSel_UseGigaBowserPortrait(HSD_JObj* jobj, u8 color)
 {
+    HSD_JObj* child;
+    HSD_DObj* dobj;
     HSD_TObj* tobj;
-    if (jobj == NULL || jobj->u.dobj == NULL ||
-        jobj->u.dobj->mobj == NULL ||
-        (tobj = jobj->u.dobj->mobj->tobj) == NULL)
-    {
-        return;
+    HSD_ImageDesc* desc;
+
+    if (jobj == NULL) {
+        return false;
     }
-    DP_SET(mnCharSel_GigaBowserPortraitDesc.image_ptr,
-           classic ? mnCharSel_GigaBowserClassicPortrait :
-                     mnCharSel_GigaBowserIconTexture);
-    mnCharSel_GigaBowserPortraitDesc.width = classic ? 80 : 64;
-    mnCharSel_GigaBowserPortraitDesc.height = classic ? 110 : 56;
-    mnCharSel_GigaBowserPortraitDesc.format = GX_TF_RGBA8;
-    mnCharSel_GigaBowserPortraitDesc.mipmap = 0;
-    mnCharSel_GigaBowserPortraitDesc.minLOD = 0.0F;
-    mnCharSel_GigaBowserPortraitDesc.maxLOD = 0.0F;
-    tobj->imagedesc = &mnCharSel_GigaBowserPortraitDesc;
-    tobj->flags = (tobj->flags & ~TEX_ALPHAMAP_MASK) | TEX_ALPHAMAP_REPLACE;
-    jobj->u.dobj->mobj->rendermode |= RENDER_XLU | RENDER_NO_ZUPDATE;
+    for (dobj = HSD_JObjGetDObj(jobj); dobj != NULL; dobj = dobj->next) {
+        if (dobj->mobj == NULL) {
+            continue;
+        }
+        for (tobj = dobj->mobj->tobj; tobj != NULL; tobj = tobj->next) {
+            if (tobj->imagedesc == NULL) {
+                continue;
+            }
+            if (color >= 6) {
+                color = 0;
+            }
+            desc = &mnCharSel_GigaBowserPortraitDesc[color];
+            DP_SET(desc->image_ptr, mnCharSel_GigaBowserPortraits[color]);
+            desc->width = 80;
+            desc->height = 110;
+            desc->format = GX_TF_RGBA8;
+            desc->mipmap = 0;
+            desc->minLOD = 0.0F;
+            desc->maxLOD = 0.0F;
+            tobj->imagedesc = desc;
+            tobj->flags = (tobj->flags & ~TEX_ALPHAMAP_MASK) |
+                          TEX_ALPHAMAP_REPLACE;
+            dobj->mobj->rendermode |= RENDER_XLU | RENDER_NO_ZUPDATE;
+            return true;
+        }
+    }
+    for (child = jobj->child; child != NULL; child = child->next) {
+        if (mnCharSel_UseGigaBowserPortrait(child, color)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void mnCharSel_8025D5AC(int door, int frame, bool hidden)
@@ -1096,7 +1127,8 @@ void mnCharSel_8025D5AC(int door, int frame, bool hidden)
                 mnCharSel_803F0DFC.doors[door].sel_icon ==
                     CSS_GIGA_BOWSER_ICON_INDEX)
             {
-                mnCharSel_UseGigaBowserPortrait(sp5C, true);
+                mnCharSel_UseGigaBowserPortrait(
+                    sp5C, mnCharSel_803F0DFC.doors[door].costume);
             }
             return;
         }
@@ -1112,7 +1144,8 @@ void mnCharSel_8025D5AC(int door, int frame, bool hidden)
                 CSS_GIGA_BOWSER_ICON_INDEX)
         {
             /* The large 1P character portrait lives on joint 0x2D. */
-            mnCharSel_UseGigaBowserPortrait(sp50, true);
+            mnCharSel_UseGigaBowserPortrait(
+                sp50, mnCharSel_803F0DFC.doors[door].costume);
         }
         if (hidden) {
             frame = 0xB9;
@@ -1133,7 +1166,8 @@ void mnCharSel_8025D5AC(int door, int frame, bool hidden)
         mnCharSel_803F0DFC.doors[door].sel_icon ==
             CSS_GIGA_BOWSER_ICON_INDEX)
     {
-        mnCharSel_UseGigaBowserPortrait(sp48, false);
+        mnCharSel_UseGigaBowserPortrait(
+            sp48, mnCharSel_803F0DFC.doors[door].costume);
     }
 
     sp44 = animateJoint(mnCharSel_804D6CC0,

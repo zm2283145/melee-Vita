@@ -9,6 +9,12 @@ the [main Vita README](../../README.md).
 compiles the Melee/HSD sources, the native Vita platform layer, and the THP
 decoder, then creates a SELF and a VPK with LiveArea assets.
 
+The VPK bundles five alternate Giga Bowser costume archives from the supplied
+mod pack. When the game first needs them, it copies missing archives to
+`ux0:data/melee/costumes/`. The normal costume and all other fighter data
+continue to load from the user's ISO. Existing files in the costume directory
+are kept, so an eboot-only swap can also use a previously installed set.
+
 Required on the build machine:
 
 - PowerShell **7 or newer** (`pwsh`) and Python 3 (`python` on Windows,

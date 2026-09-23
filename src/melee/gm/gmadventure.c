@@ -2,6 +2,7 @@
 
 #include "forward.h"
 #include "gm_unsplit.h"
+#include "giga_bowser_rules.h"
 #include "gmmain_lib.h"
 #include "gmregcommon.h"
 #include <melee/gr/ground.h>
@@ -13,6 +14,9 @@ extern UNK_T gmClassic_80470708[];
 extern DebugGameOverData gmClassic_80470850;
 extern MatchExitInfo gmClassic_8047086C;
 extern StartMeleeData gmClassic_80472AF8;
+
+_Static_assert(GM_GIGA_BOWSER_BOWSER_CKIND == CKind_Koopa,
+               "Brinstar fallback must use normal Bowser");
 
 typedef struct CutsceneData {
     u8 x0; ///< CharacterKind
@@ -1344,7 +1348,7 @@ void gm_801B4430(GameModeState* scene)
     } else {
         var_r0 = temp_r3->x0.x0.ckind;
     }
-    temp_r30->x0 = var_r0;
+    temp_r30->x0 = gmGigaBowser_AdventureCutsceneKind(scene->id, var_r0);
     temp_r30->x1 = temp_r31->color;
 }
 

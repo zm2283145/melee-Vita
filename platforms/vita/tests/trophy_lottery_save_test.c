@@ -224,6 +224,23 @@ static void test_malformed_coins_fail_closed(void)
     assert(tyFigupon_ValidatedCoinTotal(UINT_MAX) == 0);
 }
 
+static void test_owned_trophy_category_is_not_awarded_twice(void)
+{
+    assert(melee_vita_trophy_category_already_awarded(1U << 4, 4, 0, 0));
+    assert(!melee_vita_trophy_category_already_awarded(0, 4, 0, 0));
+    assert(!melee_vita_trophy_category_already_awarded(1U << 4, 4, 1, 0));
+    assert(!melee_vita_trophy_category_already_awarded(1U << 4, 4, 0, 1));
+}
+
+static void test_completed_trophy_notices_stay_earned(void)
+{
+    assert(melee_vita_keep_completed_trophy_notification(0x24, true, 293));
+    assert(!melee_vita_keep_completed_trophy_notification(0x24, false, 293));
+    assert(!melee_vita_keep_completed_trophy_notification(0x24, true, 292));
+    assert(!melee_vita_keep_completed_trophy_notification(0x16, true, 293));
+    assert(!melee_vita_keep_completed_trophy_notification(0x42, true, 293));
+}
+
 int main(void)
 {
     test_native_data_is_unchanged();
@@ -233,5 +250,7 @@ int main(void)
     test_ambiguous_and_invalid_data_is_untouched();
     test_decimal_digits_are_capacity_bounded();
     test_malformed_coins_fail_closed();
+    test_owned_trophy_category_is_not_awarded_twice();
+    test_completed_trophy_notices_stay_earned();
     return 0;
 }

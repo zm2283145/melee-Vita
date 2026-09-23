@@ -502,7 +502,16 @@ $vpkArguments = @(
     '-a', "$(Join-Path $livearea 'template.xml')=sce_sys/livearea/contents/template.xml",
     '-a', "$(Join-Path $PSScriptRoot 'shadercache/warm5.bin')=shadercache/warm5.bin"
 )
-if ($EnableUpdater) {
+# These five costume archives come from the user's supplied Giga Bowser mod pack.
+# The game copies them from app0: to ux0:data/melee/costumes when needed.
+foreach ($costume in @('Re', 'Bu', 'Bk', 'Ye', 'Wh')) {
+    $name = "PlGk$costume.dat"
+    $source = Join-Path $PSScriptRoot "assets/giga_bowser_costumes/$name"
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+        throw "Missing Giga Bowser costume asset: $source"
+    }
+    $vpkArguments += @('-a', "$source=costumes/$name")
+}if ($EnableUpdater) {
     $helperDirectory = Join-Path $build 'updater-helper'
     $helperObjectsDirectory = Join-Path $helperDirectory 'obj'
     New-Item -ItemType Directory -Force -Path $helperObjectsDirectory | Out-Null

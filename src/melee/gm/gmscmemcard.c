@@ -183,6 +183,24 @@ static void gmVita_NormalizeStadiumRecords(GmSaveData* save)
     gmVita_NormalizeFighterMask(&save->unk_28.x4);
     gmVita_NormalizeFighterMask(&save->unk_30.x8);
 }
+
+static void gmVita_NormalizeModeScores(GmSaveData* save)
+{
+    u32 scores[SELKIND_COUNT][3];
+    int i;
+
+    for (i = 0; i < SELKIND_COUNT; i++) {
+        scores[i][0] = (u32) save->x1F2C[i].x7C.x88;
+        scores[i][1] = (u32) save->x1F2C[i].x7C.x8C;
+        scores[i][2] = (u32) save->x1F2C[i].x7C.x90;
+    }
+    if (!melee_vita_normalize_mode_scores(scores, SELKIND_COUNT)) return;
+    for (i = 0; i < SELKIND_COUNT; i++) {
+        save->x1F2C[i].x7C.x88 = (s32) scores[i][0];
+        save->x1F2C[i].x7C.x8C = (s32) scores[i][1];
+        save->x1F2C[i].x7C.x90 = (s32) scores[i][2];
+    }
+}
 #endif
 
 /* 1AEE6C */ static void gm_801AEE6C(int, int, int);
@@ -438,6 +456,7 @@ void gm_Scene_MemCard_OnFrame(void)
             save->x186A = progress.unlocked_stages;
             save->x1A68 = (s64) progress.completed_events;
             gmVita_NormalizeStadiumRecords(save);
+            gmVita_NormalizeModeScores(save);
             Toy_NormalizeImportedSaveData();
         }
 #endif

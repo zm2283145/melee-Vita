@@ -829,7 +829,11 @@ void Fighter_80068E64(Fighter_GObj* gobj)
     Fighter* fp = GET_FIGHTER(gobj);
 
     if (stage_info.grkind == Gr_Kind_Flatzone) {
-        fp->x34_scale.z = p_ftCommonData->x7E4_scaleZ;
+        /* The stock Flat Zone squash hides Giga Bowser's far limbs.
+         * Keep him visibly flat without collapsing his large model. */
+        fp->x34_scale.z = fp->kind == Ft_Kind_GKoops
+                               ? 0.5F
+                               : p_ftCommonData->x7E4_scaleZ;
     } else {
         fp->x34_scale.z = 1.0f;
     }

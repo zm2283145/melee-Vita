@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include "melee/gm/giga_bowser_rules.h"
+#include "melee/ft/kinds/ftGigaKoopa/costume_metadata.h"
 
 static void test_event_51_eligibility(void)
 {
@@ -46,8 +47,20 @@ static void test_css_visibility(void)
     assert(gmGigaBowser_IsCssVisible(0x0B, unlocked));
     assert(gmGigaBowser_IsCssVisible(0x0C, unlocked));
     assert(gmGigaBowser_IsCssVisible(0x0D, unlocked));
-    assert(gmGigaBowser_IsCssVisible(0x17, unlocked));
+    for (uint8_t mode = 0x0F; mode <= 0x17; mode++) {
+        assert(!gmGigaBowser_IsCssVisible(mode, 0));
+        assert(gmGigaBowser_IsCssVisible(mode, unlocked));
+    }
     assert(!gmGigaBowser_IsCssVisible(0x0E, unlocked));
+}
+
+static void test_brin_start_cutscene_uses_bowser_only_for_giga(void)
+{
+    assert(gmGigaBowser_AdventureCutsceneKind(0x1A,
+           GM_GIGA_BOWSER_CSS_CKIND) == 5);
+    assert(gmGigaBowser_AdventureCutsceneKind(0x1A, 1) == 1);
+    assert(gmGigaBowser_AdventureCutsceneKind(0x19,
+           GM_GIGA_BOWSER_CSS_CKIND) == GM_GIGA_BOWSER_CSS_CKIND);
 }
 
 static void test_css_maps_to_giga_bowser_fighter(void)
@@ -57,12 +70,22 @@ static void test_css_maps_to_giga_bowser_fighter(void)
     assert(gmGigaBowser_FighterKindForCssSelection(5) == UINT8_MAX);
 }
 
+static void test_giga_costume_uses_shared_fighter_metadata(void)
+{
+    for (uint8_t costume = 0; costume < 6; costume++) {
+        assert(ftGk_MetadataCostumeId(true, costume) == 0);
+        assert(ftGk_MetadataCostumeId(false, costume) == costume);
+    }
+}
+
 int main(void)
 {
     test_event_51_eligibility();
     test_win_and_loss_unlock_behavior();
     test_save_persistence_and_compatibility();
     test_css_visibility();
+    test_brin_start_cutscene_uses_bowser_only_for_giga();
     test_css_maps_to_giga_bowser_fighter();
+    test_giga_costume_uses_shared_fighter_metadata();
     return 0;
 }

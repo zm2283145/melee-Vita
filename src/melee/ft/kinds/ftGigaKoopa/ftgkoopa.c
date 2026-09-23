@@ -17,7 +17,7 @@
 #include <melee/ft/types.h>
 #include <melee/it/it_26B1.h>
 
-/* 45A660 */ UnkCostumeStruct ftGk_CostumeList[1];
+/* 45A660 */ UnkCostumeStruct ftGk_CostumeList[6];
 
 MotionState ftGk_Init_MotionStateTable[ftKp_MS_SelfCount] = {
     {
@@ -301,6 +301,11 @@ char* ftGk_Init_803D3984[] = { "ftDemoVi1201V2MotionFileGkoopa" };
 
 Fighter_CostumeStrings ftGk_Init_CostumeStrings[] = {
     { ftGk_Init_803D3904, ftGk_Init_803D3910, ftGk_Init_803D3928 },
+    { "PlGkRe.dat", ftGk_Init_803D3910, ftGk_Init_803D3928 },
+    { "PlGkBu.dat", ftGk_Init_803D3910, ftGk_Init_803D3928 },
+    { "PlGkBk.dat", ftGk_Init_803D3910, ftGk_Init_803D3928 },
+    { "PlGkYe.dat", ftGk_Init_803D3910, ftGk_Init_803D3928 },
+    { "PlGkWh.dat", ftGk_Init_803D3910, ftGk_Init_803D3928 },
 };
 
 void ftGk_Init_OnDeath(HSD_GObj* gobj)

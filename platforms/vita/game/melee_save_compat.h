@@ -12,6 +12,7 @@
 #define MELEE_VITA_STAGE_UNLOCK_MASK 0x0FFFU
 #define MELEE_VITA_EVENT_COMPLETION_MASK UINT64_C(0x0007FFFFFFFFFFFF)
 #define MELEE_VITA_STADIUM_RECORD_MAX UINT32_C(0x00FFFFFF)
+#define MELEE_VITA_MODE_SCORE_MAX UINT32_C(0x00FFFFFF)
 #define MELEE_VITA_STADIUM_COMBO_MAX UINT16_C(255)
 #define MELEE_VITA_FIGHTER_COMPLETION_MASK UINT32_C(0x01FFFFFF)
 
@@ -188,6 +189,47 @@ static inline bool melee_vita_has_imported_record_evidence(int big_endian,
     return big_endian >= 3 && big_endian > native * 2;
 }
 
+/* Classic, Adventure, and All-Star scores are three adjacent u32 fields per
+ * fighter. Repair only a cohort with clear imported-save evidence. An
+ * ambiguous nonzero score is swapped only if that cohort has no native-order
+ * evidence at all. */
+static inline bool melee_vita_normalize_mode_scores(uint32_t scores[][3],
+                                                    size_t fighter_count)
+{
+    int big_endian = 0;
+    int native = 0;
+    bool changed = false;
+    size_t fighter;
+    size_t mode;
+
+    for (fighter = 0; fighter < fighter_count; fighter++) {
+        for (mode = 0; mode < 3; mode++) {
+            MeleeVitaSaveByteOrder order = melee_vita_classify_record_u32(
+                scores[fighter][mode], MELEE_VITA_MODE_SCORE_MAX);
+            if (order == MELEE_VITA_SAVE_BIG_ENDIAN) big_endian++;
+            if (order == MELEE_VITA_SAVE_NATIVE) native++;
+        }
+    }
+    if (!melee_vita_has_imported_record_evidence(big_endian, native)) {
+        return false;
+    }
+    for (fighter = 0; fighter < fighter_count; fighter++) {
+        for (mode = 0; mode < 3; mode++) {
+            MeleeVitaSaveByteOrder order = melee_vita_classify_record_u32(
+                scores[fighter][mode], MELEE_VITA_MODE_SCORE_MAX);
+            if (order == MELEE_VITA_SAVE_BIG_ENDIAN ||
+                (order == MELEE_VITA_SAVE_AMBIGUOUS && native == 0 &&
+                 scores[fighter][mode] != 0))
+            {
+                scores[fighter][mode] =
+                    melee_vita_swap_u32(scores[fighter][mode]);
+                changed = true;
+            }
+        }
+    }
+    return changed;
+}
+
 /* PowerPC stores these seven flags from the high bit down, followed by three
  * three-bit stock fields. Little-endian C bitfields use the low bit first. */
 static inline uint16_t melee_vita_convert_fighter_record_flags(uint16_t raw)
@@ -292,6 +334,23 @@ melee_vita_normalize_trophy_lottery_fields(
         return MELEE_VITA_SAVE_AMBIGUOUS;
     }
     return MELEE_VITA_SAVE_NATIVE;
+}
+
+static inline bool melee_vita_trophy_category_already_awarded(
+    uint16_t category_flags, int category, int clear, int temporary)
+{
+    return category >= 0 && category < 8 && clear == 0 && temporary == 0 &&
+           (category_flags & (1U << category)) != 0;
+}
+
+/* Imported 100% saves may have trophy-achievement predicates that no longer
+ * exactly match their original records. Do not re-arm an award already
+ * recorded as earned when the complete trophy collection is present. */
+static inline bool melee_vita_keep_completed_trophy_notification(
+    uint32_t notification_id, bool earned, uint16_t trophy_count)
+{
+    return notification_id >= 0x1CU && notification_id < 0x42U &&
+           earned && trophy_count >= MELEE_VITA_MAX_TROPHIES;
 }
 
 #endif

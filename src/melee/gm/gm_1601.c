@@ -20,6 +20,9 @@
 #include "gmstamina.h"
 #include "types.h"
 #include <dolphin/pad.h>
+#ifdef TARGET_VITA
+#include <dolphin/dvd.h>
+#endif
 #include <melee/cm/camera.h>
 #include <melee/gr/ground.h>
 #include <melee/gr/stage.h>
@@ -4279,7 +4282,22 @@ u8 gm_GetNumCostumesForCKind(u8 ckind)
         HSD_Randi(0);
     }
     if (ckind == CKind_GKoops) {
+#ifdef TARGET_VITA
+        /* All variant files are bundled in the VPK and installed on demand.
+         * Keep the normal ISO costume if an older eboot-only install has no
+         * costume assets yet. */
+        static const char* const costumes[] = {
+            "PlGkRe.dat", "PlGkBu.dat", "PlGkBk.dat",
+            "PlGkYe.dat", "PlGkWh.dat",
+        };
+        int i;
+        for (i = 0; i < ARRAY_SIZE(costumes); i++) {
+            if (DVDConvertPathToEntrynum(costumes[i]) < 0) return 1;
+        }
+        return 6;
+#else
         return 1;
+#endif
     }
     if (ckind >= ARRAY_SIZE(lbl_803D51A0)) {
         return 0;
@@ -4289,6 +4307,9 @@ u8 gm_GetNumCostumesForCKind(u8 ckind)
 
 u8 gm_80169264(u8 ckind)
 {
+    if (ckind == CKind_GKoops) {
+        return gm_GetNumCostumesForCKind(ckind) == 6 ? 1 : 0;
+    }
     if (ckind >= ARRAY_SIZE(lbl_803D51A0)) {
         return 0;
     }
@@ -4297,6 +4318,9 @@ u8 gm_80169264(u8 ckind)
 
 u8 gm_80169290(u8 ckind)
 {
+    if (ckind == CKind_GKoops) {
+        return gm_GetNumCostumesForCKind(ckind) == 6 ? 2 : 0;
+    }
     if (ckind >= ARRAY_SIZE(lbl_803D51A0)) {
         return 0;
     }
@@ -4305,6 +4329,9 @@ u8 gm_80169290(u8 ckind)
 
 u8 gm_801692BC(u8 ckind)
 {
+    if (ckind == CKind_GKoops) {
+        return 0;
+    }
     if (ckind >= ARRAY_SIZE(lbl_803D51A0)) {
         return 0;
     }

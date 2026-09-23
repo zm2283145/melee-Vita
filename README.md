@@ -63,8 +63,10 @@ performance issue, and new shaders can still cause pauses later.
   shader cache. A full-size disc image alone is 1,459,978,240 bytes
   (about 1.36 GiB); leave additional free space.
 
-No game disc, game assets, or proprietary shader compiler module is distributed
-with this project. You do not need a disc image to compile the port.
+No game disc or proprietary shader compiler module is distributed with this
+project. The Vita VPK includes five alternate Giga Bowser costume archives
+from the supplied mod pack; the rest of the game data still comes from your
+own disc image. You do not need a disc image to compile the port.
 
 The normal Release VPK does **not** require VitaDebugger, its kernel companion,
 or kubridge for debugging. It contains no DebugNet logger or GDB server.

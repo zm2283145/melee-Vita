@@ -18,6 +18,9 @@
 #include <melee/pl/plbonuslib.h>
 #include <melee/ty/toy.h>
 #include <sysdolphin/baselib/sislib.h>
+#ifdef TARGET_VITA
+#include <melee_save_compat.h>
+#endif
 
 struct lbl_804D65A8_t {
     /* 0x00 */ u8 x0;
@@ -1695,6 +1698,13 @@ void gm_8017297C(void)
 static inline bool inline3(int i)
 {
     struct lbl_803D6300_t* cur;
+#ifdef TARGET_VITA
+    if (melee_vita_keep_completed_trophy_notification(
+            i, gmMainLib_8015D94C(i) != 0, Toy_GetTrophyTotal()))
+    {
+        return false;
+    }
+#endif
     for (cur = lbl_803D6300; cur->x0 != 0x42; cur++) {
         if (cur->x0 == i && (int) cur->x2 != 0) {
             if (cur->x4 == NULL) {

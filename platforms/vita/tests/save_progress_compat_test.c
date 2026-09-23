@@ -136,6 +136,40 @@ static void test_native_stadium_records_remain_unchanged(void)
     assert(home_run_distance_from_partly_repaired_save == 43690);
 }
 
+static void test_imported_mode_scores_are_repaired_once(void)
+{
+    uint32_t scores[3][3] = {
+        { UINT32_C(0x40420F00), UINT32_C(0x80B51800), 0 },
+        { UINT32_C(0xC0270900), UINT32_C(0x00471C00), 0 },
+        { 0, 0, 0 },
+    };
+
+    assert(melee_vita_normalize_mode_scores(scores, 3));
+    assert(scores[0][0] == 1000000);
+    assert(scores[0][1] == 1619328);
+    assert(scores[1][0] == 600000);
+    assert(scores[1][1] == 1853184);
+    assert(!melee_vita_normalize_mode_scores(scores, 3));
+}
+
+static void test_native_mode_scores_and_weak_evidence_are_untouched(void)
+{
+    uint32_t native_scores[3][3] = {
+        { 1000000, 1627520, 0 },
+        { 600000, 9216, 0 },
+        { 0, 0, 0 },
+    };
+    uint32_t weak_evidence[2][3] = {
+        { UINT32_C(0x40420F00), 0, 0 },
+        { 0, 0, 0 },
+    };
+
+    assert(!melee_vita_normalize_mode_scores(native_scores, 3));
+    assert(native_scores[0][0] == 1000000);
+    assert(!melee_vita_normalize_mode_scores(weak_evidence, 2));
+    assert(weak_evidence[0][0] == UINT32_C(0x40420F00));
+}
+
 int main(void)
 {
     test_native_progress_is_unchanged();
@@ -144,5 +178,7 @@ int main(void)
     test_invalid_progress_is_untouched();
     test_imported_stadium_records_are_classified_and_repaired();
     test_native_stadium_records_remain_unchanged();
+    test_imported_mode_scores_are_repaired_once();
+    test_native_mode_scores_and_weak_evidence_are_untouched();
     return 0;
 }

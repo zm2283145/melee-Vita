@@ -1266,6 +1266,19 @@ void Toy_80305918(s8 arg0, s32 arg1, s32 arg2)
     u16 temp_val;
 
     base = &Toy_804A26B8;
+#ifdef TARGET_VITA
+    if (arg0 >= 0 && arg0 < 8 && arg1 == 0 && arg2 == 0) {
+        bool in_1p = gm_IsCurrently1PMode() ||
+                     gm_GetCurrentGameMode() == GM_TOY_LOTTERY;
+        u16* categories = in_1p ? &base->x19A
+                                : gmMainLib_GetTrophyCategoryFlags();
+        if (melee_vita_trophy_category_already_awarded(
+                *categories, arg0, arg1, arg2))
+        {
+            return;
+        }
+    }
+#endif
     if (arg0 == 8) {
         return;
     }

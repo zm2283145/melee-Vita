@@ -34,3 +34,10 @@ steam_appid.txt
 *.rvz
 *.wbfs
 *.dol
+
+# Generated Giga Bowser CSP textures are source assets for the Vita build.
+!src/melee/mn/giga_bowser_csp_re.inc
+!src/melee/mn/giga_bowser_csp_bu.inc
+!src/melee/mn/giga_bowser_csp_bk.inc
+!src/melee/mn/giga_bowser_csp_ye.inc
+!src/melee/mn/giga_bowser_csp_wh.inc

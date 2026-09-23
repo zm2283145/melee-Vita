@@ -7,6 +7,7 @@
 #include <dolphin/os.h>
 
 #include <psp2/io/fcntl.h>
+#include <psp2/io/stat.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 
@@ -20,6 +21,28 @@
 #define DVD_REQUEST_CAPACITY DVD_COMPLETION_CAPACITY
 #define DVD_THREAD_PRIORITY 0x10000100
 #define DVD_THREAD_STACK (64u * 1024u)
+/* Giga Bowser color costumes are bundled with the VPK and copied to data.
+ * The normal costume still comes from the user's ISO. */
+#define VITA_DVD_OVERLAY_BASE 0x80000000u
+#define VITA_DVD_OVERLAY_SHIFT 24u
+#define VITA_DVD_OVERLAY_OFFSET_MASK 0x00FFFFFFu
+#define VITA_DVD_OVERLAY_COUNT 5u
+#define VITA_DVD_COSTUME_DIR "ux0:data/melee/costumes/"
+
+typedef struct {
+    const char* name;
+    FILE* sync_file;
+    SceUID async_file;
+    u32 length;
+} VitaDvdOverlay;
+
+static VitaDvdOverlay s_overlays[VITA_DVD_OVERLAY_COUNT] = {
+    { "PlGkRe.dat", NULL, -1, 0 },
+    { "PlGkBu.dat", NULL, -1, 0 },
+    { "PlGkBk.dat", NULL, -1, 0 },
+    { "PlGkYe.dat", NULL, -1, 0 },
+    { "PlGkWh.dat", NULL, -1, 0 },
+};
 
 typedef struct {
     DVDCommandBlock* block;
@@ -154,13 +177,60 @@ static s32 read_at_file(FILE* disc, void* output, u32 length, u32 offset)
 
 static s32 read_at(void* output, u32 length, u32 offset)
 {
+    if (offset & VITA_DVD_OVERLAY_BASE) {
+        u32 slot = (offset >> VITA_DVD_OVERLAY_SHIFT) & 0x7Fu;
+        u32 file_offset = offset & VITA_DVD_OVERLAY_OFFSET_MASK;
+        VitaDvdOverlay* overlay;
+        u32 available;
+        if (slot >= VITA_DVD_OVERLAY_COUNT || output == NULL)
+            return DVD_RESULT_FATAL_ERROR;
+        overlay = &s_overlays[slot];
+        if (overlay->sync_file == NULL ||
+            (u64) file_offset + length >
+                (u64) overlay->length + DVD_MIN_TRANSFER_SIZE - 1u)
+            return DVD_RESULT_FATAL_ERROR;
+        available = file_offset < overlay->length
+                        ? overlay->length - file_offset
+                        : 0;
+        if (available > length) available = length;
+        if (available != 0 &&
+            read_at_file(overlay->sync_file, output, available, file_offset) < 0)
+            return DVD_RESULT_FATAL_ERROR;
+        memset((u8*) output + available, 0, length - available);
+        return (s32) length;
+    }
     return read_at_file(s_disc, output, length, offset);
 }
 
 static s32 read_at_async(void* output, u32 length, u32 offset)
 {
     SceSSize amount;
-    if (s_async_disc < 0 || output == NULL) return DVD_RESULT_FATAL_ERROR;
+    if (output == NULL) return DVD_RESULT_FATAL_ERROR;
+    if (offset & VITA_DVD_OVERLAY_BASE) {
+        u32 slot = (offset >> VITA_DVD_OVERLAY_SHIFT) & 0x7Fu;
+        u32 file_offset = offset & VITA_DVD_OVERLAY_OFFSET_MASK;
+        VitaDvdOverlay* overlay;
+        u32 available;
+        if (slot >= VITA_DVD_OVERLAY_COUNT) return DVD_RESULT_FATAL_ERROR;
+        overlay = &s_overlays[slot];
+        if (overlay->async_file < 0 ||
+            (u64) file_offset + length >
+                (u64) overlay->length + DVD_MIN_TRANSFER_SIZE - 1u)
+            return DVD_RESULT_FATAL_ERROR;
+        available = file_offset < overlay->length
+                        ? overlay->length - file_offset
+                        : 0;
+        if (available > length) available = length;
+        if (available != 0) {
+            amount = sceIoPread(overlay->async_file, output, available,
+                                (SceOff) file_offset);
+            if (amount != (SceSSize) available)
+                return DVD_RESULT_FATAL_ERROR;
+        }
+        memset((u8*) output + available, 0, length - available);
+        return (s32) length;
+    }
+    if (s_async_disc < 0) return DVD_RESULT_FATAL_ERROR;
     amount = sceIoPread(s_async_disc, output, length, (SceOff) offset);
     return amount == (SceSSize) length ? (s32) amount
                                       : DVD_RESULT_FATAL_ERROR;
@@ -276,6 +346,17 @@ void melee_vita_dvd_shutdown(void)
     if (s_request_sema >= 0) sceKernelDeleteSema(s_request_sema);
     if (s_async_disc >= 0) sceIoClose(s_async_disc);
     if (s_disc != NULL) fclose(s_disc);
+    {
+        u32 i;
+        for (i = 0; i < VITA_DVD_OVERLAY_COUNT; i++) {
+            if (s_overlays[i].sync_file != NULL) fclose(s_overlays[i].sync_file);
+            if (s_overlays[i].async_file >= 0)
+                sceIoClose(s_overlays[i].async_file);
+            s_overlays[i].sync_file = NULL;
+            s_overlays[i].async_file = -1;
+            s_overlays[i].length = 0;
+        }
+    }
     free(s_fst);
     s_dvd_thread = s_queue_mutex = s_request_sema = -1;
     s_async_disc = -1;
@@ -491,11 +572,100 @@ failure:
     s_fst_size = s_fst_count = 0;
 }
 
+static void install_costume_if_missing(const char* name)
+{
+    char source_path[96];
+    char target_path[96];
+    char temp_path[100];
+    FILE* source;
+    FILE* target;
+    u8 buffer[8192];
+    size_t count;
+    BOOL ok = TRUE;
+
+    snprintf(target_path, sizeof(target_path), "%s%s",
+             VITA_DVD_COSTUME_DIR, name);
+    target = fopen(target_path, "rb");
+    if (target != NULL) {
+        fclose(target);
+        return;
+    }
+    snprintf(source_path, sizeof(source_path), "app0:/costumes/%s", name);
+    source = fopen(source_path, "rb");
+    if (source == NULL) return;
+    sceIoMkdir("ux0:data/melee", 0777);
+    sceIoMkdir("ux0:data/melee/costumes", 0777);
+    snprintf(temp_path, sizeof(temp_path), "%s.tmp", target_path);
+    target = fopen(temp_path, "wb");
+    if (target == NULL) {
+        fclose(source);
+        return;
+    }
+    while ((count = fread(buffer, 1, sizeof(buffer), source)) != 0) {
+        if (fwrite(buffer, 1, count, target) != count) {
+            ok = FALSE;
+            break;
+        }
+    }
+    if (ferror(source)) ok = FALSE;
+    if (fclose(target) != 0) ok = FALSE;
+    fclose(source);
+    if (ok) {
+        if (sceIoRename(temp_path, target_path) >= 0) return;
+    }
+    sceIoRemove(temp_path);
+}
+
+static s32 find_costume_overlay(const char* path)
+{
+    const char* basename = strrchr(path, '/');
+    u32 i;
+    if (basename != NULL) {
+        basename++;
+    } else {
+        basename = path;
+    }
+    for (i = 0; i < VITA_DVD_OVERLAY_COUNT; i++) {
+        VitaDvdOverlay* overlay = &s_overlays[i];
+        char full_path[96];
+        long size;
+        if (!name_equal(overlay->name, basename, strlen(basename))) continue;
+        if (overlay->sync_file != NULL) return (s32) (s_fst_count + i);
+        snprintf(full_path, sizeof(full_path), "%s%s",
+                 VITA_DVD_COSTUME_DIR, overlay->name);
+        install_costume_if_missing(overlay->name);
+        overlay->sync_file = fopen(full_path, "rb");
+        if (overlay->sync_file == NULL) return -1;
+        if (fseek(overlay->sync_file, 0, SEEK_END) != 0 ||
+            (size = ftell(overlay->sync_file)) <= 0 ||
+            size > (long) VITA_DVD_OVERLAY_OFFSET_MASK)
+        {
+            fclose(overlay->sync_file);
+            overlay->sync_file = NULL;
+            return -1;
+        }
+        rewind(overlay->sync_file);
+        overlay->async_file = sceIoOpen(full_path, SCE_O_RDONLY, 0);
+        if (overlay->async_file < 0) {
+            fclose(overlay->sync_file);
+            overlay->sync_file = NULL;
+            return -1;
+        }
+        overlay->length = (u32) size;
+        return (s32) (s_fst_count + i);
+    }
+    return -1;
+}
+
 s32 DVDConvertPathToEntrynum(const char* path)
 {
     s32 current;
     const char* cursor;
     if (!s_initialized || path == NULL) return -1;
+    {
+        s32 overlay = find_costume_overlay(path);
+        if (overlay >= 0) return overlay;
+    }
     current = path[0] == '/' ? 0 : s_current_dir;
     cursor = path + (path[0] == '/');
     while (*cursor != '\0') {
@@ -521,8 +691,20 @@ s32 DVDConvertPathToEntrynum(const char* path)
 
 BOOL DVDFastOpen(s32 entry, DVDFileInfo* info)
 {
-    if (!s_initialized || info == NULL || entry < 0 ||
-        (u32) entry >= s_fst_count || entry_is_dir((u32) entry)) return FALSE;
+    if (!s_initialized || info == NULL || entry < 0) return FALSE;
+    if ((u32) entry >= s_fst_count &&
+        (u32) entry < s_fst_count + VITA_DVD_OVERLAY_COUNT)
+    {
+        u32 slot = (u32) entry - s_fst_count;
+        if (s_overlays[slot].sync_file == NULL) return FALSE;
+        memset(info, 0, sizeof(*info));
+        info->startAddr = VITA_DVD_OVERLAY_BASE |
+                          (slot << VITA_DVD_OVERLAY_SHIFT);
+        info->length = s_overlays[slot].length;
+        info->cb.state = DVD_STATE_END;
+        return TRUE;
+    }
+    if ((u32) entry >= s_fst_count || entry_is_dir((u32) entry)) return FALSE;
     memset(info, 0, sizeof(*info));
     info->startAddr = entry_word1((u32) entry);
     info->length = entry_word2((u32) entry);

@@ -8,6 +8,9 @@
 #include "ftmaterial.h"
 #include "ftparts.static.h"
 #include "inlines.h"
+#ifdef TARGET_VITA
+#include "kinds/ftGigaKoopa/costume_metadata.h"
+#endif
 #include "types.h"
 #include <dolphin/mtx.h>
 #include <melee/lb/lb_00B0.h>
@@ -543,7 +546,12 @@ void ftParts_800749CC(Fighter_GObj* gobj)
     Fighter* fp = GET_FIGHTER(gobj);
     int i;
 
-    ftParts_8007487C(&DP(struct ftData_x8, fp->ft_data->x8)->x0, &fp->x5AC, fp->x619_costume_id,
+    u8 metadata_costume_id = fp->x619_costume_id;
+#ifdef TARGET_VITA
+    metadata_costume_id = ftGk_MetadataCostumeId(
+        fp->kind == Ft_Kind_GKoops, metadata_costume_id);
+#endif
+    ftParts_8007487C(&DP(struct ftData_x8, fp->ft_data->x8)->x0, &fp->x5AC, metadata_costume_id,
                      &fp->dobj_list, &fp->x203C);
     for (i = 0; i < fp->x5AC.model_num; i++) {
         fp->x5F4_arr[i].prev = -1;

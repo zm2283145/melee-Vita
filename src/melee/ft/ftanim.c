@@ -9,6 +9,9 @@
 #include "ftparts.h"
 #include "inlines.h"
 #include "kinds/ftCommon/ftCo_Attack100.h"
+#ifdef TARGET_VITA
+#include "kinds/ftGigaKoopa/costume_metadata.h"
+#endif
 #include "types.h"
 #include <melee/lb/lb_00B0.h>
 #include <melee/lb/lbanim.h>
@@ -1020,8 +1023,13 @@ void ftAnim_80070200(Fighter* fp, ftData_x8_x8* r4, CostumeTObjList* r5,
         HSD_ASSERTREPORT(1228, 0, "fighter tobj num over!\n");
     }
     DiscU32* xC = DP(DiscU32, r4->xC);
-    r5->x5D0 = xC[fp->x619_costume_id].v
-                   ? DP(DiscU16, xC[fp->x619_costume_id].v)
+    u8 metadata_costume_id = fp->x619_costume_id;
+#ifdef TARGET_VITA
+    metadata_costume_id = ftGk_MetadataCostumeId(
+        fp->kind == Ft_Kind_GKoops, metadata_costume_id);
+#endif
+    r5->x5D0 = xC[metadata_costume_id].v
+                   ? DP(DiscU16, xC[metadata_costume_id].v)
                    : DP(DiscU16, xC[0].v);
 
     for (i = 0; i < r5->n_costume_tobjs; i++) {

@@ -109,6 +109,7 @@ void gm_Scene_MovieEnd_OnEnter(void* arg0)
     HSD_GObj* temp_r3_2;
     HSD_SObj* temp_r3_3;
     const char* filename;
+    CharacterKind movie_kind;
     PAD_STACK(8);
 
     gm_804D6738 = 0;
@@ -122,9 +123,14 @@ void gm_Scene_MovieEnd_OnEnter(void* arg0)
     temp_r3_3 = lbMthp_8001F624(temp_r3_2, 0x1C0, 0x150);
     temp_r3_3->x10 = 96.0F;
     temp_r3_3->x14 = 72.0F;
-    lbAudioAx_80023F28(gm_803DB25C[gm_801BEFB0()]);
+    movie_kind = gm_801BEFB0();
+    /* Only the standard roster has ending movies. */
+    if (movie_kind == CKind_GKoops) {
+        movie_kind = CKind_Koopa;
+    }
+    lbAudioAx_80023F28(gm_803DB25C[movie_kind]);
     lbAudioAx_80024E50(1);
-    filename = gm_803DB1F4[gm_801BEFB0()];
+    filename = gm_803DB1F4[movie_kind];
     lbMthp_8001F410(filename, 0, 0, 0, 0);
     lbAudioAx_80024E50(0);
     gm_804D6724 = fn_801AA0E8;

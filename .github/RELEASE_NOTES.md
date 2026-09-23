@@ -6,6 +6,15 @@ the image you supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.8.6
+
+- Fixed the Classic Mode route for the new hidden character, including Break
+  the Targets, Race to the Finish, and the ending after the final boss.
+- Corrected the hidden character's portrait on Classic Mode's character select
+  screen.
+- Extended that character's Race to the Finish limit by 40 seconds beyond
+  the standard route's limit.
+
 ## Changes in Vita v0.8.5
 
 - Expanded the roster with a new secret playable character. The final Event

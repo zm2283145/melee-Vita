@@ -1330,7 +1330,11 @@ void gm_Scene_StaffRoll_OnEnter(void* unused)
     lbAudioAx_80027648();
     {
         u32 r = HSD_Randi(5);
-        lbAudioAx_80023F28(lbAudioAx_8002305C(gm_801BEFB0(), !-r));
+        CharacterKind voice_kind = gm_801BEFB0();
+        if (voice_kind == CKind_GKoops) {
+            voice_kind = CKind_Koopa;
+        }
+        lbAudioAx_80023F28(lbAudioAx_8002305C(voice_kind, !-r));
         lbBgFlash_800209F4();
         gm_804D6804.x0 = gm_804D6804.x4 = 0.0F;
         memzero(staffInfo, 198 * sizeof(*staffInfo));

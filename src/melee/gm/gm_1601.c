@@ -2392,6 +2392,10 @@ void gm_801647D0(void)
 int gm_801647F8(u8 arg0)
 {
     struct lbl_803D5168_t* var_r5 = lbl_803D5168;
+    if (arg0 == CKind_GKoops) {
+        /* Giga Bowser has no dedicated Break the Targets stage. */
+        arg0 = CKind_Koopa;
+    }
     if (arg0 == 0x20) {
         arg0 = 0xE;
     }

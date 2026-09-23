@@ -145,6 +145,7 @@ static struct DISC_STRUCT {
 }* lbl_804D6604;
 
 static int lbl_804D6608;
+static u8 gmIntroEasy_PlayerNameKind[3];
 
 void fn_8018325C(HSD_GObj* arg0, int arg1)
 {
@@ -446,7 +447,8 @@ void fn_80184AB8(HSD_GObj* arg0)
         case 0x5:
             for (i = 0; i < (s32) lbl_8047368C.xEF; i++) {
                 if (i != 0 || lbl_8047368C.xED == 0x78) {
-                    fn_80160DE8(lbl_804735A8.x4[7 + i], lbl_8047368C.xF1[i], 0,
+                    fn_80160DE8(lbl_804735A8.x4[7 + i],
+                                gmIntroEasy_PlayerNameKind[i], 0,
                                 0, lbl_804D6604->x57C[lbl_8047368C.xEF].x18[i],
                                 lbl_804D6604->x57C[lbl_8047368C.xEF].x24[i]);
                 } else {
@@ -883,6 +885,12 @@ void fn_80185D64(void)
 
     for (i = 0; i < lbl_8047368C.xEF; i++) {
         chr = lbl_8047368C.xF1[i];
+        gmIntroEasy_PlayerNameKind[i] = chr;
+        if (chr == CKind_GKoops) {
+            /* The intro archive and layout tables have Bowser, but no
+             * player-side Giga entry. Keep the original kind for the name. */
+            chr = lbl_8047368C.xF1[i] = CKind_Koopa;
+        }
         if (chr != ChKind_Max) {
             Player_80036E20(chr, lbl_804D65F4, 1);
         }

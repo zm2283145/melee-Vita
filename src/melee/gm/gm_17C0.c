@@ -286,7 +286,12 @@ void fn_8017C7EC(void)
 
     temp_r30 = fn_8017DF28();
     scene_state = gmVs_GetSceneState();
-    scene_state->timer_seconds = grPushOn_80219230(temp_r30->x0.ckind);
+    /* Giga has no table entry; give him Bowser's limit plus 40 seconds. */
+    if (temp_r30->x0.ckind == CKind_GKoops) {
+        scene_state->timer_seconds = grPushOn_80219230(CKind_Koopa) + 40;
+    } else {
+        scene_state->timer_seconds = grPushOn_80219230(temp_r30->x0.ckind);
+    }
 }
 
 void gm_8017C838(void)

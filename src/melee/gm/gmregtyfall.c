@@ -191,6 +191,13 @@ static float gm_803DB2EC[] = {
     1.0f, 0.7f,  0.4f,  0.5f,  0.0f, 0.0f, 0.0f, 0.0f,  0.0f, 0.0f, 0.0f,
 };
 
+static CharacterKind gmToyFall_VisualKind(void)
+{
+    CharacterKind ckind = gm_801BEFB0();
+    /* Giga has no ending demo motion or scale entry in this scene. */
+    return ckind == CKind_GKoops ? CKind_Koopa : ckind;
+}
+
 void gm_801A68D8(void)
 {
     HSD_GObj* temp_r3;
@@ -208,9 +215,9 @@ void gm_801A68D8(void)
     efLib_Init();
     efAsync_LoadSync(0);
     ftDemo_ObjAllocInit();
-    Player_80036E20(gm_801BEFB0(), gm_804D6744, 2);
+    Player_80036E20(gmToyFall_VisualKind(), gm_804D6744, 2);
     Player_80036CF0(0);
-    Player_SetPlayerCharacter(0, gm_801BEFB0());
+    Player_SetPlayerCharacter(0, gmToyFall_VisualKind());
     Player_SetCostumeId(0, gm_801BEFD0());
     Player_SetPlayerId(0, 0);
     Player_SetSlottype(0, Gm_PKind_Demo);
@@ -228,7 +235,7 @@ void gm_801A68D8(void)
         lb_8000BA0C(GET_JOBJ(temp_r3_2), 0.6F);
     }
     temp_f31 = Player_80032BB0(0);
-    tmp = gm_803DB2EC[gm_801BEFB0()];
+    tmp = gm_803DB2EC[gmToyFall_VisualKind()];
     mult = 1.0F / temp_f31;
     Player_SetScale(0, mult * tmp);
 }
@@ -427,7 +434,7 @@ static inline void gm_801A7070_SetupMain(u8 priority)
     jobj = HSD_JObjLoadJoint(gm_804D6798);
     HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
     GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 0xB, 0);
-    scale = gm_803DB2EC[gm_801BEFB0()];
+    scale = gm_803DB2EC[gmToyFall_VisualKind()];
     HSD_JObjSetScaleX(jobj, scale);
     HSD_JObjSetScaleY(jobj, scale);
     HSD_JObjSetScaleZ(jobj, scale);
@@ -481,7 +488,7 @@ static inline void gm_801A7070_SetupTrophy(u8 priority)
     HSD_JObjSetScaleXWithMtxDirty(child, scale);
     HSD_JObjSetScaleYWithMtxDirty(child, scale);
     HSD_JObjSetScaleZWithMtxDirty(child, scale);
-    val = gm_803DB2EC[gm_801BEFB0()];
+    val = gm_803DB2EC[gmToyFall_VisualKind()];
     HSD_JObjSetScaleX(jobj, val);
     HSD_JObjSetScaleY(jobj, val);
     HSD_JObjSetScaleZ(jobj, val);

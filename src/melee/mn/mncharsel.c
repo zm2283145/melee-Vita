@@ -54,6 +54,7 @@ static u8 mnCharSel_804D50D8[8] = { 2, 0, 8, 1, 7, 7, 7, 7 };
 static u8 mnCharSel_804D50E0[3] = { 0, 1, 3 };
 
 #include "giga_bowser_css_icon.inc"
+#include "giga_bowser_classic_portrait.inc"
 
 typedef struct DISC_STRUCT MnSelectChrModels {
     /* 0x0 */ StaticModelDesc background;
@@ -1048,7 +1049,7 @@ static inline HSD_JObj* animateJointLeadingPad(HSD_JObj* root, u8 joint,
     return jobj;
 }
 
-static void mnCharSel_UseGigaBowserPortrait(HSD_JObj* jobj)
+static void mnCharSel_UseGigaBowserPortrait(HSD_JObj* jobj, bool classic)
 {
     HSD_TObj* tobj;
     if (jobj == NULL || jobj->u.dobj == NULL ||
@@ -1058,9 +1059,10 @@ static void mnCharSel_UseGigaBowserPortrait(HSD_JObj* jobj)
         return;
     }
     DP_SET(mnCharSel_GigaBowserPortraitDesc.image_ptr,
-           mnCharSel_GigaBowserIconTexture);
-    mnCharSel_GigaBowserPortraitDesc.width = 64;
-    mnCharSel_GigaBowserPortraitDesc.height = 56;
+           classic ? mnCharSel_GigaBowserClassicPortrait :
+                     mnCharSel_GigaBowserIconTexture);
+    mnCharSel_GigaBowserPortraitDesc.width = classic ? 80 : 64;
+    mnCharSel_GigaBowserPortraitDesc.height = classic ? 110 : 56;
     mnCharSel_GigaBowserPortraitDesc.format = GX_TF_RGBA8;
     mnCharSel_GigaBowserPortraitDesc.mipmap = 0;
     mnCharSel_GigaBowserPortraitDesc.minLOD = 0.0F;
@@ -1094,7 +1096,7 @@ void mnCharSel_8025D5AC(int door, int frame, bool hidden)
                 mnCharSel_803F0DFC.doors[door].sel_icon ==
                     CSS_GIGA_BOWSER_ICON_INDEX)
             {
-                mnCharSel_UseGigaBowserPortrait(sp5C);
+                mnCharSel_UseGigaBowserPortrait(sp5C, true);
             }
             return;
         }
@@ -1109,7 +1111,8 @@ void mnCharSel_8025D5AC(int door, int frame, bool hidden)
             mnCharSel_803F0DFC.doors[door].sel_icon ==
                 CSS_GIGA_BOWSER_ICON_INDEX)
         {
-            mnCharSel_UseGigaBowserPortrait(sp54);
+            /* The large 1P character portrait lives on joint 0x2D. */
+            mnCharSel_UseGigaBowserPortrait(sp50, true);
         }
         if (hidden) {
             frame = 0xB9;
@@ -1130,7 +1133,7 @@ void mnCharSel_8025D5AC(int door, int frame, bool hidden)
         mnCharSel_803F0DFC.doors[door].sel_icon ==
             CSS_GIGA_BOWSER_ICON_INDEX)
     {
-        mnCharSel_UseGigaBowserPortrait(sp48);
+        mnCharSel_UseGigaBowserPortrait(sp48, false);
     }
 
     sp44 = animateJoint(mnCharSel_804D6CC0,

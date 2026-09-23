@@ -102,6 +102,10 @@ void gm_Scene_Congrats_OnEnter(UNK_T unused)
     HSD_GObjObject_80390A70(gobj, HSD_SObjLib_804D7960, NULL);
     GObj_SetupGXLink(gobj, lbMthp8001F928, 0xB, 0);
     ckind = gm_801BEFB0();
+    /* There is no Giga-specific congratulations movie. */
+    if (ckind == CKind_GKoops) {
+        ckind = CKind_Koopa;
+    }
     gover_kind = gm_GetCurrentGameMode();
     if (gover_kind == GM_DEBUG_GOVER) {
         gover_kind = gm_801BF050();

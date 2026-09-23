@@ -15,6 +15,10 @@ typedef enum MeleeVitaPhysicalButton {
     MELEE_VITA_BUTTON_R,
     MELEE_VITA_BUTTON_SELECT,
     MELEE_VITA_BUTTON_START,
+    MELEE_VITA_BUTTON_L2,
+    MELEE_VITA_BUTTON_R2,
+    MELEE_VITA_BUTTON_L3,
+    MELEE_VITA_BUTTON_R3,
     MELEE_VITA_BUTTON_COUNT,
 } MeleeVitaPhysicalButton;
 
@@ -30,6 +34,9 @@ typedef enum MeleeVitaPadAction {
     MELEE_VITA_ACTION_COUNT,
 } MeleeVitaPadAction;
 
+#define MELEE_VITA_ACTION_UNBOUND UINT8_MAX
+#define MELEE_VITA_LEGACY_BUTTON_COUNT 8
+
 static inline void melee_vita_pad_mapping_defaults(
     uint8_t mapping[MELEE_VITA_BUTTON_COUNT])
 {
@@ -42,6 +49,10 @@ static inline void melee_vita_pad_mapping_defaults(
         MELEE_VITA_ACTION_R,
         MELEE_VITA_ACTION_Z,
         MELEE_VITA_ACTION_START,
+        MELEE_VITA_ACTION_UNBOUND,
+        MELEE_VITA_ACTION_UNBOUND,
+        MELEE_VITA_ACTION_UNBOUND,
+        MELEE_VITA_ACTION_UNBOUND,
     };
     int i;
     for (i = 0; i < MELEE_VITA_BUTTON_COUNT; ++i)
@@ -58,6 +69,8 @@ static inline bool melee_vita_pad_mapping_valid(
     for (i = 0; i < MELEE_VITA_BUTTON_COUNT; ++i) {
         uint8_t const action = mapping[i];
         uint32_t bit;
+        if (action == MELEE_VITA_ACTION_UNBOUND)
+            continue;
         if (action >= MELEE_VITA_ACTION_COUNT)
             return false;
         bit = 1u << action;
@@ -90,7 +103,20 @@ static inline bool melee_vita_pad_mapping_assign(
         return false;
     mapping[other] = previous;
     mapping[physical_button] = (uint8_t) action;
-    return true;
+    return melee_vita_pad_mapping_valid(mapping);
+}
+
+static inline bool melee_vita_pad_mapping_migrate_v1(
+    uint8_t mapping[MELEE_VITA_BUTTON_COUNT],
+    const uint8_t legacy[MELEE_VITA_LEGACY_BUTTON_COUNT])
+{
+    int i;
+    if (legacy == NULL)
+        return false;
+    melee_vita_pad_mapping_defaults(mapping);
+    for (i = 0; i < MELEE_VITA_LEGACY_BUTTON_COUNT; ++i)
+        mapping[i] = legacy[i];
+    return melee_vita_pad_mapping_valid(mapping);
 }
 
 #endif

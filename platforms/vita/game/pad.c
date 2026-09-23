@@ -6,6 +6,7 @@
 #include "../vita_log.h"
 
 #include <psp2/ctrl.h>
+#include <psp2/kernel/sysmem.h>
 #include <psp2/touch.h>
 
 #include <stdio.h>
@@ -14,7 +15,8 @@
 #define VITA_PAD_CONFIG_PATH "ux0:data/melee/control-settings.bin"
 #define VITA_PAD_CONFIG_TEMP_PATH "ux0:data/melee/control-settings.tmp"
 #define VITA_PAD_CONFIG_MAGIC 0x31435056u
-#define VITA_PAD_CONFIG_VERSION 1u
+#define VITA_PAD_CONFIG_VERSION 2u
+#define VITA_PAD_CONFIG_VERSION_LEGACY 1u
 
 typedef struct MeleeVitaPadConfig {
     u32 magic;
@@ -22,7 +24,14 @@ typedef struct MeleeVitaPadConfig {
     u8 mapping[MELEE_VITA_BUTTON_COUNT];
 } MeleeVitaPadConfig;
 
+typedef struct MeleeVitaPadConfigV1 {
+    u32 magic;
+    u32 version;
+    u8 mapping[MELEE_VITA_LEGACY_BUTTON_COUNT];
+} MeleeVitaPadConfigV1;
+
 static BOOL s_initialized;
+static bool s_is_pstv;
 static uint8_t s_mapping[MELEE_VITA_BUTTON_COUNT];
 static uint32_t s_raw_buttons;
 static uint32_t s_raw_buttons_triggered;
@@ -38,10 +47,14 @@ static const uint32_t s_physical_buttons[MELEE_VITA_BUTTON_COUNT] = {
     SCE_CTRL_CIRCLE,
     SCE_CTRL_SQUARE,
     SCE_CTRL_TRIANGLE,
-    SCE_CTRL_LTRIGGER,
-    SCE_CTRL_RTRIGGER,
+    SCE_CTRL_L1,
+    SCE_CTRL_R1,
     SCE_CTRL_SELECT,
     SCE_CTRL_START,
+    SCE_CTRL_L2,
+    SCE_CTRL_R2,
+    SCE_CTRL_L3,
+    SCE_CTRL_R3,
 };
 
 static const u16 s_action_buttons[MELEE_VITA_ACTION_COUNT] = {
@@ -55,9 +68,12 @@ static const u16 s_action_buttons[MELEE_VITA_ACTION_COUNT] = {
     PAD_BUTTON_START,
 };
 
+static void pad_config_save(void);
+
 static void pad_config_load(void)
 {
     MeleeVitaPadConfig config;
+    MeleeVitaPadConfigV1 legacy;
     FILE* file;
     bool valid;
 
@@ -65,11 +81,28 @@ static void pad_config_load(void)
     file = fopen(VITA_PAD_CONFIG_PATH, "rb");
     if (file == NULL)
         return;
-    valid = fread(&config, sizeof(config), 1u, file) == 1u &&
-            fgetc(file) == EOF &&
-            config.magic == VITA_PAD_CONFIG_MAGIC &&
-            config.version == VITA_PAD_CONFIG_VERSION &&
-            melee_vita_pad_mapping_valid(config.mapping);
+    memset(&config, 0, sizeof(config));
+    valid = fread(&config.magic, sizeof(config.magic), 1u, file) == 1u &&
+            fread(&config.version, sizeof(config.version), 1u, file) == 1u &&
+            config.magic == VITA_PAD_CONFIG_MAGIC;
+    if (valid && config.version == VITA_PAD_CONFIG_VERSION) {
+        valid = fread(
+                    config.mapping, sizeof(config.mapping), 1u, file) == 1u &&
+                fgetc(file) == EOF &&
+                melee_vita_pad_mapping_valid(config.mapping);
+    } else if (valid &&
+               config.version == VITA_PAD_CONFIG_VERSION_LEGACY)
+    {
+        legacy.magic = config.magic;
+        legacy.version = config.version;
+        valid = fread(
+                    legacy.mapping, sizeof(legacy.mapping), 1u, file) == 1u &&
+                fgetc(file) == EOF &&
+                melee_vita_pad_mapping_migrate_v1(
+                    config.mapping, legacy.mapping);
+    } else {
+        valid = false;
+    }
     fclose(file);
     if (!valid) {
         melee_vita_log_info(
@@ -77,20 +110,18 @@ static void pad_config_load(void)
         return;
     }
     memcpy(s_mapping, config.mapping, sizeof(s_mapping));
+    if (config.version == VITA_PAD_CONFIG_VERSION_LEGACY)
+        pad_config_save();
 }
 
 static void pad_config_save(void)
 {
-    MeleeVitaPadConfig const config = {
-        VITA_PAD_CONFIG_MAGIC,
-        VITA_PAD_CONFIG_VERSION,
-        {
-            s_mapping[0], s_mapping[1], s_mapping[2], s_mapping[3],
-            s_mapping[4], s_mapping[5], s_mapping[6], s_mapping[7],
-        },
-    };
+    MeleeVitaPadConfig config;
     FILE* file = fopen(VITA_PAD_CONFIG_TEMP_PATH, "wb");
     bool valid = file != NULL;
+    config.magic = VITA_PAD_CONFIG_MAGIC;
+    config.version = VITA_PAD_CONFIG_VERSION;
+    memcpy(config.mapping, s_mapping, sizeof(config.mapping));
     if (valid)
         valid = fwrite(&config, sizeof(config), 1u, file) == 1u;
     if (file != NULL && fclose(file) != 0)
@@ -159,7 +190,12 @@ static void update_touch(void)
 BOOL PADInit(void)
 {
     if (!s_initialized) {
-        sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG_WIDE);
+        s_is_pstv = sceKernelIsPSVitaTV() > 0;
+        if (s_is_pstv) {
+            sceCtrlSetSamplingModeExt(SCE_CTRL_MODE_ANALOG_WIDE);
+        } else {
+            sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG_WIDE);
+        }
         s_touch_ready =
             sceTouchSetSamplingState(
                 SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START) >= 0 &&
@@ -183,7 +219,9 @@ u32 PADRead(PADStatus* status)
 
     update_touch();
     memset(&vita, 0, sizeof(vita));
-    read = sceCtrlPeekBufferPositive(0, &vita, 1);
+    read = s_is_pstv
+               ? sceCtrlPeekBufferPositiveExt2(0, &vita, 1)
+               : sceCtrlPeekBufferPositive(0, &vita, 1);
     if (read < 1) {
         s_raw_buttons = 0;
         status[0].err = PAD_ERR_NOT_READY;
@@ -203,8 +241,20 @@ u32 PADRead(PADStatus* status)
     if (vita.buttons & SCE_CTRL_DOWN) status[0].button |= PAD_BUTTON_DOWN;
     if (vita.buttons & SCE_CTRL_UP) status[0].button |= PAD_BUTTON_UP;
     for (i = 0; i < MELEE_VITA_BUTTON_COUNT; ++i) {
+        uint32_t physical_button = s_physical_buttons[i];
         u16 action_button;
-        if ((vita.buttons & s_physical_buttons[i]) == 0)
+        if (!s_is_pstv) {
+            if (i == MELEE_VITA_BUTTON_L)
+                physical_button = SCE_CTRL_LTRIGGER;
+            if (i == MELEE_VITA_BUTTON_R)
+                physical_button = SCE_CTRL_RTRIGGER;
+            if (i >= MELEE_VITA_BUTTON_L2)
+                physical_button = 0;
+        }
+        if (physical_button == 0 ||
+            (vita.buttons & physical_button) == 0)
+            continue;
+        if (s_mapping[i] >= MELEE_VITA_ACTION_COUNT)
             continue;
         action_button = s_action_buttons[s_mapping[i]];
         status[0].button |= action_button;
@@ -225,6 +275,18 @@ uint32_t melee_vita_pad_raw_buttons_triggered(void)
     uint32_t const buttons = s_raw_buttons_triggered;
     s_raw_buttons_triggered = 0;
     return buttons;
+}
+
+uint32_t melee_vita_pad_raw_buttons_held(void)
+{
+    return s_raw_buttons;
+}
+
+uint32_t melee_vita_pad_primary_shoulder_mask(void)
+{
+    return s_is_pstv
+               ? SCE_CTRL_L1 | SCE_CTRL_R1
+               : SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER;
 }
 
 bool melee_vita_pad_touch_triggered(int* x, int* y)
@@ -264,7 +326,16 @@ int melee_vita_pad_physical_button_from_raw(uint32_t raw_buttons)
     for (physical_button = 0;
          physical_button < MELEE_VITA_BUTTON_COUNT; ++physical_button)
     {
-        if ((raw_buttons & s_physical_buttons[physical_button]) != 0u)
+        uint32_t mask = s_physical_buttons[physical_button];
+        if (!s_is_pstv) {
+            if (physical_button == MELEE_VITA_BUTTON_L)
+                mask = SCE_CTRL_LTRIGGER;
+            if (physical_button == MELEE_VITA_BUTTON_R)
+                mask = SCE_CTRL_RTRIGGER;
+            if (physical_button >= MELEE_VITA_BUTTON_L2)
+                mask = 0;
+        }
+        if (mask != 0u && (raw_buttons & mask) != 0u)
             return physical_button;
     }
     return -1;

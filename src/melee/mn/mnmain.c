@@ -874,7 +874,8 @@ static char const* mn_VitaPhysicalButtonName(int button)
 {
     static char const* const names[MELEE_VITA_BUTTON_COUNT] = {
         "CROSS", "CIRCLE", "SQUARE", "TRIANGLE",
-        "L BUTTON", "R BUTTON", "SELECT", "START",
+        "L / L1", "R / R1", "SELECT", "START",
+        "L2", "R2", "L3", "R3",
     };
     if (button < 0 || button >= MELEE_VITA_BUTTON_COUNT)
         return "INVALID";
@@ -975,7 +976,7 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
         HSD_SisLib_803A74F0(
             text, gameplay_buttons, (GXColor*) &button_color);
     } else {
-        int entries[MELEE_VITA_BUTTON_COUNT];
+        int entries[MELEE_VITA_ACTION_COUNT];
         int capture_entry;
         int i;
 
@@ -994,7 +995,7 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
                 text, 60.0f, 160.0f,
                 "CHOOSE AN ACTION, THEN PRESS X TO REMAP");
         }
-        for (i = 0; i < MELEE_VITA_BUTTON_COUNT; ++i) {
+        for (i = 0; i < MELEE_VITA_ACTION_COUNT; ++i) {
             GXColor const* row_color =
                 data->vita_resolution_row == i ? &selected_color
                                                : &normal_color;
@@ -1024,7 +1025,7 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
             ? "L / R: PAGE    D-PAD: SELECT / CHANGE    X OR O: CLOSE"
             : data->vita_control_capture_action !=
                       VITA_CONTROL_CAPTURE_NONE
-                  ? "PRESS DESIRED VITA BUTTON    TOUCH CANCEL TO ABORT"
+                  ? "PRESS DESIRED BUTTON    SELECT + START: CANCEL"
                   : "L / R: PAGE    D-PAD: SELECT    X: REMAP    O: CLOSE");
     HSD_SisLib_803A74F0(
         text, help_entry,
@@ -1166,7 +1167,7 @@ static bool mn_VitaOptionsHandleInput(void)
             touch_y >= 125 && touch_y < 400)
         {
             int const row = (touch_y - 125) / 34;
-            if (row >= 0 && row < MELEE_VITA_BUTTON_COUNT) {
+            if (row >= 0 && row < MELEE_VITA_ACTION_COUNT) {
                 data->vita_resolution_row = row;
                 data->vita_control_capture_action = row;
                 sfxForward();
@@ -1206,6 +1207,16 @@ static bool mn_VitaOptionsHandleInput(void)
     if (data->vita_control_capture_action !=
         VITA_CONTROL_CAPTURE_NONE)
     {
+        if ((melee_vita_pad_raw_buttons_held() &
+             (SCE_CTRL_SELECT | SCE_CTRL_START)) ==
+            (SCE_CTRL_SELECT | SCE_CTRL_START))
+        {
+            data->vita_control_capture_action =
+                VITA_CONTROL_CAPTURE_NONE;
+            sfxBack();
+            mn_VitaOptionsDraw(data);
+            return true;
+        }
         physical_button =
             melee_vita_pad_physical_button_from_raw(raw_buttons);
         if (physical_button >= 0) {
@@ -1254,7 +1265,7 @@ static bool mn_VitaOptionsHandleInput(void)
         }
         return true;
     }
-    if (raw_buttons & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER)) {
+    if (raw_buttons & melee_vita_pad_primary_shoulder_mask()) {
         data->vita_options_page ^= 1;
         data->vita_resolution_row = 0;
         data->vita_control_capture_action =

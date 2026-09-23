@@ -68,11 +68,81 @@ static void test_invalid_progress_is_untouched(void)
     assert(fields.completed_events == original.completed_events);
 }
 
+static void test_imported_stadium_records_are_classified_and_repaired(void)
+{
+    /* Values decoded from a GameCube save exported by the Vita. Mewtwo's
+     * original max combo was 11, displayed as 2816 before this repair. */
+    uint16_t combo = 0x0B00;
+    uint32_t target_frames = UINT32_C(0x35040000);
+    uint32_t home_run_distance = UINT32_C(0xAAAA0000);
+    uint32_t home_run_score = UINT32_C(0xAAAA0000);
+    uint32_t combo_leaderboard = UINT32_C(0x0B000000);
+    uint32_t completion_mask = UINT32_C(0xFFFFFF01);
+
+    assert(melee_vita_classify_record_u16(
+               combo, MELEE_VITA_STADIUM_COMBO_MAX) ==
+           MELEE_VITA_SAVE_BIG_ENDIAN);
+    assert(melee_vita_classify_record_u32(
+               target_frames, MELEE_VITA_STADIUM_RECORD_MAX) ==
+           MELEE_VITA_SAVE_BIG_ENDIAN);
+    assert(melee_vita_has_imported_record_evidence(3, 0));
+    assert(!melee_vita_has_imported_record_evidence(2, 0));
+    assert(!melee_vita_has_imported_record_evidence(4, 2));
+
+    combo = melee_vita_swap_u16(combo);
+    assert(combo == 11);
+    assert(melee_vita_normalize_record_u32(
+        &target_frames, MELEE_VITA_STADIUM_RECORD_MAX));
+    assert(target_frames == 1077);
+    assert(melee_vita_normalize_record_u32(
+        &home_run_distance, MELEE_VITA_STADIUM_RECORD_MAX));
+    assert(home_run_distance == 43690);
+    assert(melee_vita_normalize_record_u32(
+        &home_run_score, MELEE_VITA_STADIUM_RECORD_MAX));
+    assert(home_run_score == 43690);
+    assert(melee_vita_normalize_record_u32(
+        &combo_leaderboard, MELEE_VITA_STADIUM_RECORD_MAX));
+    assert(combo_leaderboard == 11);
+    assert(melee_vita_normalize_fighter_mask(&completion_mask));
+    assert(completion_mask == UINT32_C(0x01FFFFFF));
+    assert(melee_vita_convert_fighter_record_flags(0x69FF) == 0x36FF);
+}
+
+static void test_native_stadium_records_remain_unchanged(void)
+{
+    uint32_t target_frames = 1077;
+    uint32_t completion_mask = UINT32_C(0x01FFFFFF);
+    uint32_t empty_record = 0;
+    uint32_t home_run_distance_from_partly_repaired_save =
+        UINT32_C(0xAAAA0000);
+
+    assert(melee_vita_classify_record_u16(
+               11, MELEE_VITA_STADIUM_COMBO_MAX) ==
+           MELEE_VITA_SAVE_NATIVE);
+    assert(!melee_vita_normalize_record_u32(
+        &target_frames, MELEE_VITA_STADIUM_RECORD_MAX));
+    assert(!melee_vita_normalize_fighter_mask(&completion_mask));
+    assert(!melee_vita_normalize_record_u32(
+        &empty_record, MELEE_VITA_STADIUM_RECORD_MAX));
+    assert(melee_vita_normalize_record_u32(
+        &home_run_distance_from_partly_repaired_save,
+        MELEE_VITA_STADIUM_RECORD_MAX));
+    assert(!melee_vita_normalize_record_u32(
+        &home_run_distance_from_partly_repaired_save,
+        MELEE_VITA_STADIUM_RECORD_MAX));
+    assert(target_frames == 1077);
+    assert(completion_mask == UINT32_C(0x01FFFFFF));
+    assert(empty_record == 0);
+    assert(home_run_distance_from_partly_repaired_save == 43690);
+}
+
 int main(void)
 {
     test_native_progress_is_unchanged();
     test_gamecube_progress_is_normalized();
     test_partially_normalized_save_is_repaired_once();
     test_invalid_progress_is_untouched();
+    test_imported_stadium_records_are_classified_and_repaired();
+    test_native_stadium_records_remain_unchanged();
     return 0;
 }

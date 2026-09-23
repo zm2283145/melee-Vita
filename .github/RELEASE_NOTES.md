@@ -6,6 +6,14 @@ the image you supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.8.7
+
+- Corrected records from imported GameCube saves that could display huge or
+  invalid values for Home-Run Contest distances, Target Test and Multi-Man
+  times, and maximum combos.
+- Previously imported saves are repaired when loaded without resetting
+  character unlocks or other progress.
+
 ## Changes in Vita v0.8.6
 
 - Fixed the Classic Mode route for the new hidden character, including Break

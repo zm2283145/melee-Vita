@@ -11,6 +11,9 @@
 #define MELEE_VITA_CHARACTER_UNLOCK_MASK 0x1FFFU
 #define MELEE_VITA_STAGE_UNLOCK_MASK 0x0FFFU
 #define MELEE_VITA_EVENT_COMPLETION_MASK UINT64_C(0x0007FFFFFFFFFFFF)
+#define MELEE_VITA_STADIUM_RECORD_MAX UINT32_C(0x00FFFFFF)
+#define MELEE_VITA_STADIUM_COMBO_MAX UINT16_C(255)
+#define MELEE_VITA_FIGHTER_COMPLETION_MASK UINT32_C(0x01FFFFFF)
 
 typedef enum MeleeVitaSaveByteOrder {
     MELEE_VITA_SAVE_NATIVE,
@@ -129,6 +132,77 @@ melee_vita_normalize_progress_fields(MeleeVitaProgressFields* fields)
         return MELEE_VITA_SAVE_AMBIGUOUS;
     }
     return MELEE_VITA_SAVE_NATIVE;
+}
+
+static inline MeleeVitaSaveByteOrder
+melee_vita_classify_record_u32(uint32_t value, uint32_t max_value)
+{
+    bool native_valid = value <= max_value;
+    bool big_endian_valid = melee_vita_swap_u32(value) <= max_value;
+
+    if (native_valid && big_endian_valid) return MELEE_VITA_SAVE_AMBIGUOUS;
+    if (native_valid) return MELEE_VITA_SAVE_NATIVE;
+    if (big_endian_valid) return MELEE_VITA_SAVE_BIG_ENDIAN;
+    return MELEE_VITA_SAVE_INVALID;
+}
+
+static inline MeleeVitaSaveByteOrder
+melee_vita_classify_record_u16(uint16_t value, uint16_t max_value)
+{
+    bool native_valid = value <= max_value;
+    bool big_endian_valid = melee_vita_swap_u16(value) <= max_value;
+
+    if (native_valid && big_endian_valid) return MELEE_VITA_SAVE_AMBIGUOUS;
+    if (native_valid) return MELEE_VITA_SAVE_NATIVE;
+    if (big_endian_valid) return MELEE_VITA_SAVE_BIG_ENDIAN;
+    return MELEE_VITA_SAVE_INVALID;
+}
+
+static inline bool melee_vita_normalize_record_u32(uint32_t* value,
+                                                    uint32_t max_value)
+{
+    if (melee_vita_classify_record_u32(*value, max_value) !=
+        MELEE_VITA_SAVE_BIG_ENDIAN)
+    {
+        return false;
+    }
+    *value = melee_vita_swap_u32(*value);
+    return true;
+}
+
+static inline bool melee_vita_normalize_fighter_mask(uint32_t* value)
+{
+    bool native_valid = (*value & ~MELEE_VITA_FIGHTER_COMPLETION_MASK) == 0;
+    uint32_t swapped = melee_vita_swap_u32(*value);
+    bool big_endian_valid =
+        (swapped & ~MELEE_VITA_FIGHTER_COMPLETION_MASK) == 0;
+
+    if (native_valid || !big_endian_valid) return false;
+    *value = swapped;
+    return true;
+}
+
+static inline bool melee_vita_has_imported_record_evidence(int big_endian,
+                                                            int native)
+{
+    return big_endian >= 3 && big_endian > native * 2;
+}
+
+/* PowerPC stores these seven flags from the high bit down, followed by three
+ * three-bit stock fields. Little-endian C bitfields use the low bit first. */
+static inline uint16_t melee_vita_convert_fighter_record_flags(uint16_t raw)
+{
+    uint16_t original = melee_vita_swap_u16(raw);
+    uint16_t native = 0;
+    unsigned i;
+
+    for (i = 0; i < 7; i++) {
+        native |= ((original >> (15 - i)) & 1U) << i;
+    }
+    native |= ((original >> 6) & 7U) << 7;
+    native |= ((original >> 3) & 7U) << 10;
+    native |= (original & 7U) << 13;
+    return native;
 }
 
 static inline MeleeVitaSaveByteOrder

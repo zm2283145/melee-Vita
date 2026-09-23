@@ -11,6 +11,7 @@
 #ifdef TARGET_VITA
 #include <melee_save_compat.h>
 #include <melee/ty/toy.h>
+#include <string.h>
 #endif
 #include <sysdolphin/baselib/controller.h>
 
@@ -57,6 +58,132 @@ typedef struct {
     int unk18;
     u8 unk1C;
 } enterData;
+
+#ifdef TARGET_VITA
+static void gmVita_CountRecordOrder(MeleeVitaSaveByteOrder order,
+                                    int* big_endian, int* native)
+{
+    if (order == MELEE_VITA_SAVE_BIG_ENDIAN) {
+        ++*big_endian;
+    } else if (order == MELEE_VITA_SAVE_NATIVE) {
+        ++*native;
+    }
+}
+
+static void gmVita_NormalizeSignedRecord(s32* value)
+{
+    u32 bits = (u32) *value;
+    if (melee_vita_normalize_record_u32(
+            &bits, MELEE_VITA_STADIUM_RECORD_MAX))
+    {
+        *value = (s32) bits;
+    }
+}
+
+static void gmVita_NormalizeFighterMask(s32* value)
+{
+    u32 bits = (u32) *value;
+    if (melee_vita_normalize_fighter_mask(&bits)) {
+        *value = (s32) bits;
+    }
+}
+
+static void gmVita_NormalizeStadiumRecords(GmSaveData* save)
+{
+    int big_endian = 0;
+    int native = 0;
+    int i;
+
+    /* Earlier Vita versions repaired unlocks and trophies, but left the
+     * fighter records from imported GameCube saves in PowerPC byte order.
+     * Require several independent records before modifying this domain. */
+    for (i = 0; i < SELKIND_COUNT; i++) {
+        struct FighterData* fighter = &save->x1F2C[i];
+        /* Home-Run distances may be the only records left in GameCube order
+         * after an earlier Vita version saved its other repaired records. */
+        gmVita_NormalizeSignedRecord(&fighter->x7C.x84);
+        gmVita_CountRecordOrder(melee_vita_classify_record_u16(
+            fighter->x7C.x7E, MELEE_VITA_STADIUM_COMBO_MAX),
+            &big_endian, &native);
+        gmVita_CountRecordOrder(melee_vita_classify_record_u32(
+            fighter->x7C.x94, MELEE_VITA_STADIUM_RECORD_MAX),
+            &big_endian, &native);
+        gmVita_CountRecordOrder(melee_vita_classify_record_u32(
+            (u32) fighter->x7C.x98, MELEE_VITA_STADIUM_RECORD_MAX),
+            &big_endian, &native);
+        gmVita_CountRecordOrder(melee_vita_classify_record_u32(
+            (u32) fighter->x7C.x9C, MELEE_VITA_STADIUM_RECORD_MAX),
+            &big_endian, &native);
+        gmVita_CountRecordOrder(melee_vita_classify_record_u32(
+            (u32) save->unk_30.xB0[i], MELEE_VITA_STADIUM_RECORD_MAX),
+            &big_endian, &native);
+        gmVita_CountRecordOrder(melee_vita_classify_record_u32(
+            (u32) save->unk_30.x114[i], MELEE_VITA_STADIUM_RECORD_MAX),
+            &big_endian, &native);
+    }
+    if (!melee_vita_has_imported_record_evidence(big_endian, native)) {
+        return;
+    }
+
+    for (i = 0; i < SELKIND_COUNT; i++) {
+        struct FighterData* fighter = &save->x1F2C[i];
+        int fighter_big_endian = 0;
+        int fighter_native = 0;
+        u16 flags;
+
+        gmVita_CountRecordOrder(melee_vita_classify_record_u16(
+            fighter->x7C.x7E, MELEE_VITA_STADIUM_COMBO_MAX),
+            &fighter_big_endian, &fighter_native);
+        gmVita_CountRecordOrder(melee_vita_classify_record_u32(
+            fighter->x7C.x94, MELEE_VITA_STADIUM_RECORD_MAX),
+            &fighter_big_endian, &fighter_native);
+        gmVita_CountRecordOrder(melee_vita_classify_record_u32(
+            (u32) fighter->x7C.x98, MELEE_VITA_STADIUM_RECORD_MAX),
+            &fighter_big_endian, &fighter_native);
+        gmVita_CountRecordOrder(melee_vita_classify_record_u32(
+            (u32) fighter->x7C.x9C, MELEE_VITA_STADIUM_RECORD_MAX),
+            &fighter_big_endian, &fighter_native);
+        gmVita_CountRecordOrder(melee_vita_classify_record_u32(
+            (u32) save->unk_30.xB0[i], MELEE_VITA_STADIUM_RECORD_MAX),
+            &fighter_big_endian, &fighter_native);
+        gmVita_CountRecordOrder(melee_vita_classify_record_u32(
+            (u32) save->unk_30.x114[i], MELEE_VITA_STADIUM_RECORD_MAX),
+            &fighter_big_endian, &fighter_native);
+
+        if (melee_vita_classify_record_u16(
+                fighter->x7C.x7E, MELEE_VITA_STADIUM_COMBO_MAX) ==
+            MELEE_VITA_SAVE_BIG_ENDIAN)
+        {
+            fighter->x7C.x7E = melee_vita_swap_u16(fighter->x7C.x7E);
+        }
+        melee_vita_normalize_record_u32(
+            &fighter->x7C.x94, MELEE_VITA_STADIUM_RECORD_MAX);
+        gmVita_NormalizeSignedRecord(&fighter->x7C.x98);
+        gmVita_NormalizeSignedRecord(&fighter->x7C.x9C);
+        gmVita_NormalizeSignedRecord(&fighter->x7C.xA4);
+        gmVita_NormalizeSignedRecord(&fighter->x7C.xA8);
+        gmVita_NormalizeSignedRecord(&save->unk_30.xB0[i]);
+        gmVita_NormalizeSignedRecord(&save->unk_30.x114[i]);
+
+        /* The completion bits and small KO records have no reliable range
+         * test by themselves. Convert them only when this fighter has at
+         * least two other imported records and no native-order evidence. */
+        if (fighter_big_endian >= 2 && fighter_native == 0) {
+            memcpy(&flags, &fighter->x7C, sizeof(flags));
+            flags = melee_vita_convert_fighter_record_flags(flags);
+            memcpy(&fighter->x7C, &flags, sizeof(flags));
+            fighter->x7C.xA0 = melee_vita_swap_u16(fighter->x7C.xA0);
+            fighter->x7C.xA2 = melee_vita_swap_u16(fighter->x7C.xA2);
+        }
+    }
+
+    gmVita_NormalizeFighterMask(&save->unk_8.x14);
+    gmVita_NormalizeFighterMask(&save->unk_8.x18);
+    gmVita_NormalizeFighterMask(&save->unk_8.x1C);
+    gmVita_NormalizeFighterMask(&save->unk_28.x4);
+    gmVita_NormalizeFighterMask(&save->unk_30.x8);
+}
+#endif
 
 /* 1AEE6C */ static void gm_801AEE6C(int, int, int);
 /* 1AF0D4 */ static bool gm_801AF0D4(void);
@@ -310,6 +437,7 @@ void gm_Scene_MemCard_OnFrame(void)
             save->unlocked_characters = progress.unlocked_characters;
             save->x186A = progress.unlocked_stages;
             save->x1A68 = (s64) progress.completed_events;
+            gmVita_NormalizeStadiumRecords(save);
             Toy_NormalizeImportedSaveData();
         }
 #endif

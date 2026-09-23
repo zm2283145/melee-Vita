@@ -190,6 +190,12 @@ action remains reachable. The mapping applies live and persists in
 Reset to Default Controls and Close are part of D-pad row navigation as well
 as dedicated touchscreen targets.
 
+On PlayStation TV, the Controls page also captures DualShock 4 L2, R2, L3,
+and R3. L1/R1 remain the default GameCube L/R bindings. Version-1 handheld
+control settings are migrated in place; the additional DS4 inputs begin
+unbound and can replace any existing action through the same capture prompt.
+Select+Start cancels capture on PSTV when no touchscreen is available.
+
 The Vita Options overlay uses a 936x520 full-screen-style panel patterned after
 the Vita save-editor layout: large Display and Controls tabs, explicit touch
 buttons, a full-width mapping list, Reset to Default Controls, and Close.

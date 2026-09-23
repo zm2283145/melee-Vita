@@ -7,6 +7,8 @@
 #include <stdint.h>
 
 uint32_t melee_vita_pad_raw_buttons_triggered(void);
+uint32_t melee_vita_pad_raw_buttons_held(void);
+uint32_t melee_vita_pad_primary_shoulder_mask(void);
 bool melee_vita_pad_touch_triggered(int* x, int* y);
 int melee_vita_pad_get_mapping(int physical_button);
 int melee_vita_pad_get_physical_button_for_action(int action);

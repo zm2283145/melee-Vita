@@ -63,6 +63,10 @@ void gm_80180B18(void)
         lbl_80472E48.x14[gm_CKindToSelKind((u8) i)] =
             (u32) *gmMainLib_8015D06C(idx) / 10;
     }
+#ifdef TARGET_VITA
+    lbl_80472E48.x14[GM_GIGA_RECORD_KIND] =
+        (u32) *gmMainLib_8015D06C(GM_GIGA_RECORD_KIND) / 10;
+#endif
 }
 
 void gm_80180BA0(void)
@@ -74,6 +78,10 @@ void gm_80180BA0(void)
         *gmMainLib_8015D06C(gm_CKindToSelKind((u8) i)) =
             lbl_80472E48.x14[idx] * 0xA;
     }
+#ifdef TARGET_VITA
+    *gmMainLib_8015D06C(GM_GIGA_RECORD_KIND) =
+        lbl_80472E48.x14[GM_GIGA_RECORD_KIND] * 10;
+#endif
 }
 
 void fn_80180C14(HSD_GObj* gobj)
@@ -154,7 +162,7 @@ void fn_80180C60(HSD_GObj* gobj)
         HSD_JObjReqAnimAll(jobj, 0.0f);
     } else if (lbl_80472E48.b10) {
         HSD_JObjSetFlagsAll(jobj, JOBJ_HIDDEN);
-    } else if (dist > lbl_80472E48.x14[gm_CKindToSelKind((u8) lbl_80472E48.unk_4)])
+    } else if (dist > lbl_80472E48.x14[gm_CKindToRecordKind((u8) lbl_80472E48.unk_4)])
     {
         if (lbl_804D65D4 == 0) {
             lbAudioAx_800237A8(0x9C40, 0x7F, 0x40);
@@ -277,10 +285,10 @@ void fn_80181598(void)
              (HSD_PadCopyStatus[lbl_80472E48.x10].trigger & HSD_PAD_A)))
         {
             unk_4 = &lbl_80472E48.unk_4;
-            idx = gm_CKindToSelKind((u8) *unk_4);
+            idx = gm_CKindToRecordKind((u8) *unk_4);
             val = lbl_80472EC8[0];
             if (val > lbl_80472E48.x14[idx]) {
-                lbl_80472E48.x14[gm_CKindToSelKind((u8) *unk_4)] = val;
+                lbl_80472E48.x14[idx] = val;
             }
             gm_8016B328();
         }

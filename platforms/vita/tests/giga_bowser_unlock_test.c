@@ -35,6 +35,25 @@ static void test_save_persistence_and_compatibility(void)
     stored_flags = gmGigaBowser_ApplyChallengerResult(stored_flags, true);
     assert(stored_flags == GM_GIGA_BOWSER_SAVE_FLAG_UNLOCKED);
     assert(gmGigaBowser_IsUnlocked(stored_flags));
+    /* A legacy save has no versioned Giga record. Reopening a current save
+     * must preserve its independent scores. */
+    assert(gmGigaBowser_RecordNeedsInitialization(0, 0));
+    assert(gmGigaBowser_RecordNeedsInitialization(
+        GM_GIGA_BOWSER_RECORD_MAGIC, 0));
+    assert(!gmGigaBowser_RecordNeedsInitialization(
+        GM_GIGA_BOWSER_RECORD_MAGIC, GM_GIGA_BOWSER_RECORD_VERSION));
+}
+
+static void test_records_are_separate_from_bowser(void)
+{
+    uint8_t const bowser = gmGigaBowser_RecordIndex(
+        GM_GIGA_BOWSER_BOWSER_CKIND, 5);
+    uint8_t const giga = gmGigaBowser_RecordIndex(
+        GM_GIGA_BOWSER_CSS_CKIND, 5);
+
+    assert(bowser == 5);
+    assert(giga == 25);
+    assert(giga != bowser);
 }
 
 static void test_css_visibility(void)
@@ -51,14 +70,23 @@ static void test_css_visibility(void)
         assert(!gmGigaBowser_IsCssVisible(mode, 0));
         assert(gmGigaBowser_IsCssVisible(mode, unlocked));
     }
-    assert(!gmGigaBowser_IsCssVisible(0x0E, unlocked));
+    assert(!gmGigaBowser_IsCssVisible(0x0E, 0));
+    assert(gmGigaBowser_IsCssVisible(0x0E, unlocked));
+    assert(!gmGigaBowser_IsCssVisible(0x18, unlocked));
 }
 
-static void test_brin_start_cutscene_uses_bowser_only_for_giga(void)
+static void test_adventure_cutscenes_use_bowser_only_for_giga(void)
 {
-    assert(gmGigaBowser_AdventureCutsceneKind(0x1A,
-           GM_GIGA_BOWSER_CSS_CKIND) == 5);
+    uint8_t const cutscenes[] = { 0x1A, 0x22, 0x24, 0x52, 0x5A, 0x5B, 0x5D };
+    for (unsigned i = 0; i < sizeof(cutscenes); i++) {
+        assert(gmGigaBowser_AdventureCutsceneKind(
+                   cutscenes[i], GM_GIGA_BOWSER_CSS_CKIND) ==
+               GM_GIGA_BOWSER_BOWSER_CKIND);
+        assert(gmGigaBowser_AdventureCutsceneColor(
+                   cutscenes[i], GM_GIGA_BOWSER_CSS_CKIND, 5) == 0);
+    }
     assert(gmGigaBowser_AdventureCutsceneKind(0x1A, 1) == 1);
+    assert(gmGigaBowser_AdventureCutsceneColor(0x1A, 1, 3) == 3);
     assert(gmGigaBowser_AdventureCutsceneKind(0x19,
            GM_GIGA_BOWSER_CSS_CKIND) == GM_GIGA_BOWSER_CSS_CKIND);
 }
@@ -83,8 +111,9 @@ int main(void)
     test_event_51_eligibility();
     test_win_and_loss_unlock_behavior();
     test_save_persistence_and_compatibility();
+    test_records_are_separate_from_bowser();
     test_css_visibility();
-    test_brin_start_cutscene_uses_bowser_only_for_giga();
+    test_adventure_cutscenes_use_bowser_only_for_giga();
     test_css_maps_to_giga_bowser_fighter();
     test_giga_costume_uses_shared_fighter_metadata();
     return 0;

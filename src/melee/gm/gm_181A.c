@@ -125,6 +125,18 @@ static RecordBlock lbl_803D8D08[6] = {
         0x0FFFFFFF, 0x0FFFFFFF } },
 };
 
+/* Multi-Man's transient result blocks have 27 entries, while Giga's
+ * character kind is 29. The spare entry 25 keeps his result separate. */
+static inline int gmMultiman_ResultIndex(int ckind)
+{
+#ifdef TARGET_VITA
+    if (ckind == CKind_GKoops) {
+        return GM_GIGA_RECORD_KIND;
+    }
+#endif
+    return ckind;
+}
+
 lbl_80472ED8_t lbl_80472ED8;
 RegClearRecordState lbl_80473594;
 
@@ -147,6 +159,7 @@ s32 gm_80181A34(void)
 void gm_80181A44(int c_kind, int arg1, bool arg2)
 {
     RecordBlock* base = lbl_803D8D08;
+    c_kind = gmMultiman_ResultIndex(c_kind);
 
     switch (arg1) {
     case 0x21:
@@ -173,6 +186,7 @@ void gm_80181A44(int c_kind, int arg1, bool arg2)
 void gm_80181AC8(int c_kind, int arg1, u16 arg2)
 {
     RecordBlock* base = lbl_803D8D08;
+    c_kind = gmMultiman_ResultIndex(c_kind);
 
     switch (arg1) {
     case 0x21:
@@ -199,6 +213,7 @@ void gm_80181AC8(int c_kind, int arg1, u16 arg2)
 void gm_80181B64(int c_kind, int arg1, s32 arg2)
 {
     RecordBlock* base = lbl_803D8D08;
+    c_kind = gmMultiman_ResultIndex(c_kind);
 
     switch (arg1) {
     case 0x21:
@@ -654,7 +669,7 @@ static inline u32 gm_80182578_GetRecordScore(RecordBlock* blocks, int idx,
 
 static inline int gm_80182578_GetIndexFromPointer(const int* idx_ptr)
 {
-    return *idx_ptr;
+    return gmMultiman_ResultIndex(*idx_ptr);
 }
 
 static inline void gm_80182578_SetTime(RecordBlock* blocks, int idx, int mode,
@@ -706,9 +721,11 @@ void gm_80182578(void)
     case 0x21:
     case 0x22:
         if (mode == 0x21) {
-            mode = gmMainLib_8015D6BC(gm_CKindToSelKind((u8) idx));
+            mode = gmMainLib_8015D6BC(
+                gm_CKindToRecordKind((u8) *idx_ptr));
         } else {
-            mode = gmMainLib_8015D710(gm_CKindToSelKind((u8) idx));
+            mode = gmMainLib_8015D710(
+                gm_CKindToRecordKind((u8) *idx_ptr));
         }
         if (data->x0 != 0) {
             u32 score_store = (u32) data->x4;
@@ -868,7 +885,7 @@ static inline RecordBlock* fn_80182B5C_GetRecordBlocks(void)
 static inline u32 fn_80182B5C_GetScore(RecordBlock* blocks,
                                        RegClearRecordState* data)
 {
-    int idx = data->xC;
+    int idx = gmMultiman_ResultIndex(data->xC);
     int mode = data->x8;
 
     switch (mode) {
@@ -892,7 +909,7 @@ static inline u32 fn_80182B5C_GetScore(RecordBlock* blocks,
 static inline int fn_80182B5C_GetTime(RecordBlock* blocks,
                                       RegClearRecordState* data)
 {
-    int idx = data->xC;
+    int idx = gmMultiman_ResultIndex(data->xC);
     int mode = data->x8;
 
     switch (mode) {
@@ -918,7 +935,7 @@ void fn_80182B5C(void)
     RegClearRecordState* data = &lbl_80473594;
     RecordBlock* blocks = fn_80182B5C_GetRecordBlocks();
     int time;
-    int idx = data->xC;
+    int idx = gmMultiman_ResultIndex(data->xC);
     u32 score;
     int mode = data->x8;
 
@@ -929,9 +946,9 @@ void fn_80182B5C(void)
     case 0x21:
     case 0x22:
         if (mode == 0x21) {
-            gmMainLib_8015D6BC(gm_CKindToSelKind((u8) idx));
+            gmMainLib_8015D6BC(gm_CKindToRecordKind((u8) data->xC));
         } else {
-            gmMainLib_8015D710(gm_CKindToSelKind((u8) idx));
+            gmMainLib_8015D710(gm_CKindToRecordKind((u8) data->xC));
         }
         if (data->x0 != 0) {
             if ((u32) data->x4 < score) {
@@ -972,6 +989,7 @@ UnkMultimanData* gm_80182DF0(int c_kind, int arg1)
 {
     UnkMultimanData* result = &lbl_804D65E0;
     RecordBlock* base = lbl_803D8D08;
+    c_kind = gmMultiman_ResultIndex(c_kind);
 
     switch (arg1) {
     case 33:

@@ -16,7 +16,7 @@ extern MatchExitInfo gmClassic_8047086C;
 extern StartMeleeData gmClassic_80472AF8;
 
 _Static_assert(GM_GIGA_BOWSER_BOWSER_CKIND == CKind_Koopa,
-               "Brinstar fallback must use normal Bowser");
+               "Adventure cutscene fallback must use normal Bowser");
 
 typedef struct CutsceneData {
     u8 x0; ///< CharacterKind
@@ -1349,7 +1349,8 @@ void gm_801B4430(GameModeState* scene)
         var_r0 = temp_r3->x0.x0.ckind;
     }
     temp_r30->x0 = gmGigaBowser_AdventureCutsceneKind(scene->id, var_r0);
-    temp_r30->x1 = temp_r31->color;
+    temp_r30->x1 = gmGigaBowser_AdventureCutsceneColor(
+        scene->id, var_r0, temp_r31->color);
 }
 
 void gm_801B44A0(GameModeState* scene)
@@ -1509,8 +1510,9 @@ void gm_801B4974(GameModeState* arg0)
     if (var_r4 == CKind_Zelda && temp_r3->x0.xC.x12 != 0) {
         var_r4 = CKind_Seak;
     }
-    temp_r25->x0 = var_r4;
-    temp_r25->x1 = temp_r24->color;
+    temp_r25->x0 = gmGigaBowser_AdventureCutsceneKind(arg0->id, var_r4);
+    temp_r25->x1 = gmGigaBowser_AdventureCutsceneColor(
+        arg0->id, var_r4, temp_r24->color);
     temp_r30 = gm_8017E4C4(arg0->id);
     temp_r24_2 = gm_80169520();
     temp_r31 = gm_80169540();

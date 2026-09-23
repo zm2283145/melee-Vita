@@ -978,9 +978,10 @@ void gmClassic_801B3B40(GameModeState* arg0)
     }
 
     if (entry->x1 == 0x80 && entry->x2 == 1) {
-        char_id = gm_CKindToSelKind((u8) asd->x0.x0.ckind);
+        char_id = gm_CKindToRecordKind((u8) asd->x0.x0.ckind);
         time_ptr = gmMainLib_8015D438(char_id);
-        best_ptr = gmMainLib_8015D450(char_id);
+        best_ptr = gmMainLib_8015D450(
+            gm_CKindToSelKind((u8) asd->x0.x0.ckind));
         Ground_801C1DE4(&sp18, &sp14);
 
         if (sp18 == 0) {

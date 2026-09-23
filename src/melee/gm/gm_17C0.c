@@ -428,7 +428,7 @@ void gm_8017CBAC(UnkAdventureData* arg0, gmm_x0_528_t* arg1, u8 arg2)
     u8 temp_r31;
     u8* temp_r3;
 
-    temp_r31 = gm_CKindToSelKind(arg0->x0.x0.ckind);
+    temp_r31 = gm_CKindToRecordKind(arg0->x0.x0.ckind);
     Ground_801C5A60();
     switch (arg2) {
     case 21:

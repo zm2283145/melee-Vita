@@ -6,6 +6,17 @@ supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.8.10
+
+- Improved performance during Master Hand and Crazy Hand rocket attacks and
+  defeat animations.
+- Improved performance on Event Match 47's stage.
+- The hidden fighter can now be selected in Event Match and keeps separate
+  records for Classic, Adventure, All-Star, Target Test, Home-Run Contest, and
+  Multi-Man Melee. Existing saves remain compatible.
+- Fixed Adventure Mode transitions that could crash when playing as the
+  hidden fighter, including the Kirby and final boss sequences.
+
 ## Changes in Vita v0.8.9
 
 - Added PlayStation TV remapping support for DualShock 4 L2, R2, L3, and R3

@@ -1396,7 +1396,7 @@ void gm_80162574(u8 arg0, u8 arg1)
     }
 
     // First counter
-    ptr = (u16*) gmMainLib_8015CFB4(gm_CKindToSelKind(arg0));
+    ptr = (u16*) gmMainLib_8015CFB4(gm_CKindToRecordKind(arg0));
     val = *ptr + 1;
     if (val > 0xFFFF) {
         val = 0xFFFF;
@@ -1597,7 +1597,7 @@ bool fn_80162BFC(s8 ckind, int arg1)
 {
     int* temp_r3;
 
-    temp_r3 = (int*) gmMainLib_8015D0C0(gm_CKindToSelKind((u8) ckind));
+    temp_r3 = (int*) gmMainLib_8015D0C0(gm_CKindToRecordKind((u8) ckind));
     if ((u32) *temp_r3 < (u32) arg1) {
         *temp_r3 = arg1;
         return true;
@@ -1671,7 +1671,7 @@ s32 fn_80162DF8(u8 ckind, u32 arg1)
 {
     s32* temp_r3;
 
-    temp_r3 = gmMainLib_8015D1E8(gm_CKindToSelKind(ckind));
+    temp_r3 = gmMainLib_8015D1E8(gm_CKindToRecordKind(ckind));
     if (*temp_r3 < arg1) {
         *temp_r3 = arg1;
         return 1;
@@ -1748,7 +1748,7 @@ bool fn_80162FF4(u8 ckind, u32 arg1)
 {
     s32* temp_r3;
 
-    temp_r3 = gmMainLib_8015D310(gm_CKindToSelKind(ckind));
+    temp_r3 = gmMainLib_8015D310(gm_CKindToRecordKind(ckind));
     if (*temp_r3 < arg1) {
         *temp_r3 = arg1;
         return true;
@@ -1850,7 +1850,7 @@ bool gm_80163298(s8 c_kind, u16 arg1)
     u16 score;
 
     index = gm_CKindToSelKind(c_kind);
-    record = gmMainLib_8015D7EC(index);
+    record = gmMainLib_8015D7EC(gm_CKindToRecordKind(c_kind));
     score = arg1;
 
     if ((u32) gmMainLib_8015EDBC()->x114[index] < (u32) score) {
@@ -2171,13 +2171,23 @@ u8 gm_SelKindToCKind(u8 selkind)
 
 u8 gm_CKindToSelKind(u8 ckind)
 {
-    /* Legacy records and one-player trophies only have the original 25
-     * selection slots. Keep Giga's fighter kind and unlock state distinct,
-     * but use Bowser's valid slot for those legacy lookups. */
+    /* Fixed 25-slot arrays and one-player trophies use Bowser's valid
+     * selection slot. Mode records use gm_CKindToRecordKind instead. */
     if (ckind == CKind_GKoops) {
         return SELKIND_KOOPA;
     }
     return ckind_to_selkind_map[ckind];
+}
+
+u8 gm_CKindToRecordKind(u8 ckind)
+{
+#ifdef TARGET_VITA
+    _Static_assert(GM_GIGA_RECORD_KIND == GM_GIGA_BOWSER_RECORD_INDEX,
+                   "Giga record follows the legacy fighter array");
+    return gmGigaBowser_RecordIndex(ckind, gm_CKindToSelKind(ckind));
+#else
+    return gm_CKindToSelKind(ckind);
+#endif
 }
 
 bool gm_8016403C(u8 item)

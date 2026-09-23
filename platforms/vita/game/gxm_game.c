@@ -959,10 +959,10 @@ int melee_vita_gxm_init(void)
         s_gameplay_resolution_option;
 #endif
     {
-        u32 menu_width;
-        u32 menu_height;
-        u32 gameplay_width;
-        u32 gameplay_height;
+        u32 menu_width = 0;
+        u32 menu_height = 0;
+        u32 gameplay_width = 0;
+        u32 gameplay_height = 0;
         melee_vita_resolution_option_dimensions(
             s_menu_resolution_option, &menu_width, &menu_height);
         melee_vita_resolution_option_dimensions(

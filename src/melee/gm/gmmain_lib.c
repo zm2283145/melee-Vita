@@ -7,6 +7,7 @@
 #include "forward.h"
 #include "gm_unsplit.h"
 #include "gmhomerun.h"
+#include "giga_bowser_rules.h"
 #include "types.h"
 #include <dolphin/os/OSReset.h>
 #include <dolphin/pad.h>
@@ -113,7 +114,21 @@ struct GamePrefs* gmMainLib_GetGamePrefs(void)
 
 struct FighterData* GetPersistentFighterData(SelectableCharacterKind selkind)
 {
-    struct FighterData* base = gmMainLib_GetCardData()->save_data.x1F2C;
+    GmSaveData* save = &gmMainLib_GetCardData()->save_data;
+#ifdef TARGET_VITA
+    if (selkind == GM_GIGA_RECORD_KIND) {
+        if (gmGigaBowser_RecordNeedsInitialization(
+                save->giga_record_magic, save->giga_record_version))
+        {
+            memzero(&save->giga_record, sizeof(save->giga_record));
+            save->giga_record_magic = GM_GIGA_BOWSER_RECORD_MAGIC;
+            save->giga_record_version = GM_GIGA_BOWSER_RECORD_VERSION;
+            save->giga_record_reserved = 0;
+        }
+        return &save->giga_record;
+    }
+#endif
+    struct FighterData* base = save->x1F2C;
     return &base[selkind];
 }
 
@@ -326,8 +341,7 @@ void gmMainLib_8015D00C(u8 arg0)
 {
     u8 _[12];
 
-    struct FighterData* base = &gmMainLib_804D3EE0->thing.save_data.x1F2C[0];
-    base[arg0].x7A.b0 = true;
+    GetPersistentFighterData(arg0)->x7A.b0 = true;
     gmMainLib_8015ED98()->xC |= 1 << arg0;
 }
 
@@ -361,8 +375,7 @@ void gmMainLib_8015D134(u8 arg0)
 {
     u8 _[12];
 
-    struct FighterData* base = &gmMainLib_804D3EE0->thing.save_data.x1F2C[0];
-    base[arg0].x7C.b4 = true;
+    GetPersistentFighterData(arg0)->x7C.b4 = true;
     gmMainLib_8015ED98()->x10 |= 1 << arg0;
 }
 
@@ -401,8 +414,7 @@ void gmMainLib_8015D25C(u8 arg0)
 {
     u8 _[12];
 
-    struct FighterData* base = &gmMainLib_804D3EE0->thing.save_data.x1F2C[0];
-    base[arg0].x7C.b5 = true;
+    GetPersistentFighterData(arg0)->x7C.b5 = true;
     gmMainLib_8015ED98()->x14 |= 1 << arg0;
 }
 
@@ -441,8 +453,7 @@ void gmMainLib_8015D384(u8 arg0)
 {
     u8 _[12];
 
-    struct FighterData* base = &gmMainLib_804D3EE0->thing.save_data.x1F2C[0];
-    base[arg0].x7C.b6 = true;
+    GetPersistentFighterData(arg0)->x7C.b6 = true;
     gmMainLib_8015ED98()->x18 |= 1 << arg0;
 }
 

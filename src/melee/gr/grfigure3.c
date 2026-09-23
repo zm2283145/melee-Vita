@@ -11,6 +11,10 @@
 #include <sysdolphin/baselib/gobj.h>
 #include <sysdolphin/baselib/gobjproc.h>
 
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+extern bool melee_vita_bump_scope_register_or_begin(const void* identity);
+#endif
+
 static void grFigure3_8020E504(s32 number);
 static void grFigure3_8020E508(void);
 static void grFigure3_OnLoad(void);
@@ -94,6 +98,9 @@ static HSD_GObj* grFigure3_8020E5A8(int gobj_id)
 
     if (gobj != NULL) {
         Ground_SetupStageCallbacks(gobj, callbacks);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+        (void) melee_vita_bump_scope_register_or_begin(gobj);
+#endif
     } else {
         OSReport("%s:%d: couldn t get gobj(id=%d)\n", __FILE__, 195, gobj_id);
     }

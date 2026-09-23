@@ -1896,6 +1896,25 @@ void psDispParticles(u32 target_link, u32 sw)
             } else {
                 pp = non_edge_particles;
             }
+#ifdef TARGET_VITA
+            /* Boss death bursts can contain thousands of independently drawn
+             * quads. Keep the simulation intact, but bound the Vita-only
+             * display work for a single particle list. A stable pointer hash
+             * avoids changing which living particles are shown each frame. */
+            u32 display_stride = 1;
+            {
+                u32 const display_limit = 512u;
+                u32 count = 0;
+                for (HSD_Particle* scan = pp; scan != NULL; scan = scan->next) {
+                    if (sw == 1 && !(scan->kind & TexEdge)) break;
+                    if (!(scan->size < FLT_EPSILON)) ++count;
+                }
+                if (count > display_limit) {
+                    display_stride = (count + display_limit - 1u) /
+                                     display_limit;
+                }
+            }
+#endif
             while (pp != NULL) {
                 HSD_PSTexGroup* tex_group = NULL;
                 HSD_PSFormGroup* form_group = NULL;
@@ -1917,6 +1936,18 @@ void psDispParticles(u32 target_link, u32 sw)
                 if ((sw == 1) && !(pp->kind & TexEdge)) {
                     break;
                 }
+#ifdef TARGET_VITA
+                if (display_stride > 1u) {
+                    u32 hash = (u32) ((uintptr_t) pp >> 4);
+                    hash ^= hash >> 16;
+                    hash *= 0x7feb352du;
+                    hash ^= hash >> 15;
+                    if (hash % display_stride != 0u) {
+                        pp = pp->next;
+                        continue;
+                    }
+                }
+#endif
                 if (!(pp->size < FLT_EPSILON)) {
                     if (needs_setup != 0) {
                         sp79C = NULL;

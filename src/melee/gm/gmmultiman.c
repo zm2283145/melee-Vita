@@ -347,9 +347,10 @@ void gm_801B65D4(GameModeState* arg0)
         gm_SetNextGameModeStateId(1U);
         return;
     }
-    temp_r3_2 = gm_CKindToSelKind(temp_r28->unk_584);
+    temp_r3_2 = gm_CKindToRecordKind(temp_r28->unk_584);
     temp_r31 = gmMainLib_8015D438(temp_r3_2);
-    temp_r26 = gmMainLib_8015D450(temp_r3_2);
+    temp_r26 = gmMainLib_8015D450(
+        gm_CKindToSelKind(temp_r28->unk_584));
     Ground_801C1DE4(&sp14, &sp10);
     if (sp14 == 0) {
         temp_r25 = 1 << temp_r3_2;
@@ -615,10 +616,10 @@ void gm_801B6BE8(GameModeState* scene)
     gmMultiman_InitPlayers(temp_r3, temp_r31, false);
     gm_80182554(temp_r3->players[0].ckind, 0x21);
     temp_r29 = gmMainLib_8015D6A4(
-        gm_CKindToSelKind(temp_r31->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r31->start.players[0].ckind));
     temp_r30 = gm_80182DF0(temp_r31->start.players[0].ckind, 0x21);
     temp_r30->x0_0 = gmMainLib_8015D6BC(
-        gm_CKindToSelKind(temp_r31->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r31->start.players[0].ckind));
     gm_80181A44(temp_r31->start.players[0].ckind, 0x21, temp_r30->x0_0);
     if (temp_r30->x0_0) {
         temp_r30->x4 = *temp_r29;
@@ -644,19 +645,19 @@ static inline void gmMultiman_SaveCompletionRecord(VsModeData* multiman,
     if (data->x0_0) {
         if (mode == GM_10MAN_VS) {
             gmMainLib_8015D6D8(
-                gm_CKindToSelKind(multiman->start.players[0].ckind), 1);
+                gm_CKindToRecordKind(multiman->start.players[0].ckind), 1);
         } else {
             gmMainLib_8015D72C(
-                gm_CKindToSelKind(multiman->start.players[0].ckind), 1);
+                gm_CKindToRecordKind(multiman->start.players[0].ckind), 1);
         }
         *record = data->x4;
     } else {
         if (mode == GM_10MAN_VS) {
             gmMainLib_8015D6D8(
-                gm_CKindToSelKind(multiman->start.players[0].ckind), 0);
+                gm_CKindToRecordKind(multiman->start.players[0].ckind), 0);
         } else {
             gmMainLib_8015D72C(
-                gm_CKindToSelKind(multiman->start.players[0].ckind), 0);
+                gm_CKindToRecordKind(multiman->start.players[0].ckind), 0);
         }
         *record = data->x2;
     }
@@ -682,7 +683,7 @@ void gm_801B6F44(GameModeState* scene)
     }
     gmMultiman_RecordMatchResult(temp_r3);
     temp_r30 = gmMainLib_8015D6A4(
-        gm_CKindToSelKind(temp_r29->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r29->start.players[0].ckind));
     temp_r3_2 = gm_80182DF0(temp_r29->start.players[0].ckind, 0x21);
     gmMultiman_SaveCompletionRecord(temp_r29, temp_r3_2, temp_r30,
                                     GM_10MAN_VS);
@@ -726,10 +727,10 @@ void gm_801B7154(GameModeState* scene)
     gmMultiman_InitPlayers(temp_r3, temp_r31, true);
     gm_80182554(temp_r3->players[0].ckind, 0x22);
     temp_r29 = gmMainLib_8015D6F8(
-        gm_CKindToSelKind(temp_r31->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r31->start.players[0].ckind));
     temp_r30 = gm_80182DF0(temp_r31->start.players[0].ckind, 0x22);
     temp_r30->x0_0 = gmMainLib_8015D710(
-        gm_CKindToSelKind(temp_r31->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r31->start.players[0].ckind));
     gm_80181A44(temp_r31->start.players[0].ckind, 0x22, temp_r30->x0_0);
     if (temp_r30->x0_0) {
         temp_r30->x4 = *temp_r29;
@@ -757,7 +758,7 @@ void gm_801B74F0(GameModeState* scene)
     }
     gmMultiman_RecordMatchResult(temp_r3);
     temp_r30 = gmMainLib_8015D6F8(
-        gm_CKindToSelKind(temp_r29->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r29->start.players[0].ckind));
     temp_r3_2 = gm_80182DF0(temp_r29->start.players[0].ckind, 0x22);
     gmMultiman_SaveCompletionRecord(temp_r29, temp_r3_2, temp_r30,
                                     GM_100MAN_VS);
@@ -825,7 +826,7 @@ static inline void gmMultiman_SaveTimedRecord(VsModeData* multiman,
         *record = data->x2;
         if (update_15_minute_record) {
             gmMainLib_8015D780(
-                gm_CKindToSelKind(multiman->start.players[0].ckind));
+                gm_CKindToRecordKind(multiman->start.players[0].ckind));
         }
     } else {
         *record = 0;
@@ -860,7 +861,7 @@ void gm_801B7700(GameModeState* scene)
     gmMultiman_InitPlayers(temp_r3, temp_r30, true);
     gm_80182554(temp_r3->players[0].ckind, 0x23);
     temp_r27 = gmMainLib_8015D74C(
-        gm_CKindToSelKind(temp_r30->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r30->start.players[0].ckind));
     gmMultiman_InitRecord(temp_r30, temp_r27, 0x23);
 }
 
@@ -880,7 +881,7 @@ void gm_801B7AA0(GameModeState* scene)
     }
     gmMultiman_RecordMatchResult(temp_r3);
     temp_r31 = gmMainLib_8015D74C(
-        gm_CKindToSelKind(temp_r30->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r30->start.players[0].ckind));
     temp_r3_2 = gm_80182DF0(temp_r30->start.players[0].ckind, 0x23);
     gmMultiman_SaveTimedRecord(temp_r30, temp_r3_2, temp_r31, false);
 }
@@ -923,7 +924,7 @@ void gm_801B7C84(GameModeState* scene)
     gmMultiman_InitPlayers(temp_r3, temp_r30, true);
     gm_80182554(temp_r3->players[0].ckind, 0x24);
     temp_r27 = gmMainLib_8015D7A4(
-        gm_CKindToSelKind(temp_r30->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r30->start.players[0].ckind));
     gmMultiman_InitRecord(temp_r30, temp_r27, 0x24);
 }
 
@@ -943,7 +944,7 @@ void gm_801B8024(GameModeState* scene)
     }
     gmMultiman_RecordMatchResult(temp_r3);
     temp_r30 = gmMainLib_8015D7A4(
-        gm_CKindToSelKind(temp_r29->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r29->start.players[0].ckind));
     temp_r3_2 = gm_80182DF0(temp_r29->start.players[0].ckind, 0x24);
     gmMultiman_SaveTimedRecord(temp_r29, temp_r3_2, temp_r30, true);
 }
@@ -983,7 +984,7 @@ void gm_801B8220(GameModeState* scene)
     gmMultiman_InitPlayers(temp_r3, temp_r30, true);
     gm_80182554(temp_r3->players[0].ckind, 0x25);
     temp_r29 = gmMainLib_8015D7BC(
-        gm_CKindToSelKind(temp_r30->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r30->start.players[0].ckind));
     gmMultiman_InitScoreRecord(temp_r30, temp_r29, 0x25);
 }
 
@@ -1003,7 +1004,7 @@ void gm_801B8580(GameModeState* scene)
     }
     gmMultiman_RecordMatchResult(temp_r3);
     temp_r31 = gmMainLib_8015D7BC(
-        gm_CKindToSelKind(temp_r30->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r30->start.players[0].ckind));
     temp_r3_2 = gm_80182DF0(temp_r30->start.players[0].ckind, 0x25);
     gmMultiman_SaveScoreRecord(temp_r3_2, temp_r31);
 }
@@ -1060,7 +1061,7 @@ void gm_801B874C(GameModeState* scene)
     gm_LoadRumbleEnabled(temp_r3);
     gm_80182554(temp_r3->players[0].ckind, 0x26);
     temp_r28 = gmMainLib_8015D7D4(
-        gm_CKindToSelKind(temp_r29->start.players[0].ckind));
+        gm_CKindToRecordKind(temp_r29->start.players[0].ckind));
     gmMultiman_InitScoreRecord(temp_r29, temp_r28, 0x26);
 }
 
@@ -1080,7 +1081,7 @@ void gm_801B8AF8(GameModeState* arg0)
     }
     gmMultiman_RecordMatchResult(temp_r3);
     temp_r31 = gmMainLib_8015D7D4(
-        gm_CKindToSelKind((u8) temp_r30->start.players[0].ckind));
+        gm_CKindToRecordKind((u8) temp_r30->start.players[0].ckind));
     temp_r3_2 =
         gm_80182DF0((s32) (s8) (u8) temp_r30->start.players[0].ckind, 0x26);
     gmMultiman_SaveScoreRecord(temp_r3_2, temp_r31);

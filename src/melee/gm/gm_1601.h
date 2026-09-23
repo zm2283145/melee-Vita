@@ -166,6 +166,9 @@ struct gm_SceneSlice {
  * @see #ckind_to_selkind_map
  */
 /* 164024 */ u8 gm_CKindToSelKind(u8 ckind);
+/* Vita save extension index; never use this with legacy 25-slot arrays. */
+#define GM_GIGA_RECORD_KIND SELKIND_COUNT
+u8 gm_CKindToRecordKind(u8 ckind);
 
 /* 16403C */ bool gm_8016403C(u8 item);
 /* 1640B0 */ void fn_801640B0(u64* item_mask);

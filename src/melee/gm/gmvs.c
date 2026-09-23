@@ -1067,12 +1067,15 @@ void fn_8016C7F0(void)
         temp_r30 = gm_GetAllStarData();
         var_r28 = 0;
         if (gm_GetCurrentGameMode() == GM_TARGET_TEST) {
-            var_r29_2 = gm_CKindToSelKind(*temp_r29_2);
+            var_r29_2 = gm_CKindToRecordKind(*temp_r29_2);
         } else {
-            var_r29_2 = gm_CKindToSelKind(temp_r30->x0.x0.ckind);
+            var_r29_2 = gm_CKindToRecordKind(temp_r30->x0.x0.ckind);
         }
         temp_r30_2 = gmMainLib_8015D438(var_r29_2);
-        gmMainLib_8015D450(var_r29_2);
+        /* The session scratch table still has the original 25 slots. */
+        gmMainLib_8015D450(gm_CKindToSelKind(
+            gm_GetCurrentGameMode() == GM_TARGET_TEST
+                ? *temp_r29_2 : temp_r30->x0.x0.ckind));
         Ground_801C1DE4(&sp24, &sp20);
         if (gmMainLib_8015D48C(var_r29_2) == 0) {
             if (sp24 == 0) {

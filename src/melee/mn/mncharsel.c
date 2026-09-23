@@ -640,7 +640,9 @@ void mnCharSel_8025C020(int arg0)
     u8 sp78;
 
     s32 i = mnCharSel_803F0DFC.doors[0].sel_icon;
-    u8 hud_index = icons[i].ft_hudindex;
+    u8 hud_index = icons[i].char_kind == CKind_GKoops
+                       ? GM_GIGA_RECORD_KIND
+                       : icons[i].ft_hudindex;
     if (arg0 != 0) {
         if (mnCharSel_804D6CDC != NULL) {
             HSD_SisLib_803A70A0(mnCharSel_804D6CDC, 0, NULL);

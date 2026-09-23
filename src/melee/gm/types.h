@@ -341,7 +341,17 @@ typedef struct {
     /* 0x0200 */ s64 x1A68;
     /* 0x0208 */ s32 x1A70[4];
     /* 0x0218 */ u8 giga_bowser_flags;
+#ifdef TARGET_VITA
+    /* The original save reserves these bytes. Keep every later field at its
+     * original offset so imported and existing Vita saves remain compatible. */
+    /* 0x0219 */ u8 giga_record_padding[3];
+    /* 0x021C */ u32 giga_record_magic;
+    /* 0x0220 */ u32 giga_record_version;
+    /* 0x0224 */ struct FighterData giga_record;
+    /* 0x02D0 */ u32 giga_record_reserved;
+#else
     /* 0x0219 */ u8 padding_x1A70[0xBB];
+#endif
     /* 0x02D4 */ u8 x1B3C;
     /* 0x02D5 */ char pad_2D5[3]; /* maybe part of x1B3C[4]? */
     /* 0x02D8 */ u32 x1B40[3];
@@ -364,6 +374,11 @@ ASSERT_OFFSET(GmSaveData, unk_30.x14, 0x44);
 ASSERT_OFFSET(GmSaveData, x1A48, 0x1E0);
 ASSERT_OFFSET(GmSaveData, x1A4C, 0x1E4);
 ASSERT_OFFSET(GmSaveData, giga_bowser_flags, 0x218);
+#ifdef TARGET_VITA
+ASSERT_OFFSET(GmSaveData, giga_record_magic, 0x21C);
+ASSERT_OFFSET(GmSaveData, giga_record, 0x224);
+ASSERT_OFFSET(GmSaveData, giga_record_reserved, 0x2D0);
+#endif
 ASSERT_OFFSET(GmSaveData, trophy_count, 0x468);
 ASSERT_OFFSET(GmSaveData, trophy_category_flags, 0x46A);
 ASSERT_OFFSET(GmSaveData, trophy_flags, 0x46C);

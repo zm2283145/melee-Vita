@@ -156,6 +156,8 @@ bool gxr_draw_gpu_points(const GxrDraw* draw, const GxrVtxKey* vkey,
 
 int gxr_init(void);
 bool gxr_available(void);
+void gxr_set_runtime_shader_compilation_enabled(bool enabled);
+bool gxr_runtime_shader_compilation_enabled(void);
 /* Vertex memory for gxr_draw must come from gxr_alloc_vertices (GPU-visible,
  * valid until the end of the frame). */
 GxrVertex* gxr_alloc_vertices(u32 count);

@@ -19,6 +19,14 @@ typedef struct _MainMenuData {
     /* 0x00AC */ HSD_Text* description;
 #ifdef TARGET_VITA
     /* 0x00B0 */ HSD_Text* vita_debug_label;
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+    /* 0x00B4 */ HSD_Text* vita_options_label;
+    /* 0x00B8 */ HSD_Text* vita_resolution_panel;
+    /* 0x00BC */ u8 vita_resolution_active;
+    /* 0x00BD */ u8 vita_resolution_row;
+    /* 0x00BE */ u8 vita_options_page;
+    /* 0x00BF */ u8 vita_control_capture_action;
+#endif
 #endif
 } MainMenuData;
 

@@ -20,6 +20,14 @@ param(
     [switch]$EnableModernDebugMenu,
     [switch]$EnableDirectSnag,
     [switch]$EnableRenderTrace,
+    [switch]$EnableShaderCacheSeal,
+    [ValidateSet(100, 75, 60, 50)]
+    [int]$InternalResolutionScale = 100,
+    [ValidateSet(0, 100, 75, 60, 50)]
+    [int]$GameplayInternalResolutionScale = 0,
+    [switch]$EnableScaledShadowFrames,
+    [switch]$EnableScaledGxCopyFrames,
+    [switch]$EnableRuntimeResolutionMenu,
     [switch]$EnableLiveProfiler,
     [string]$ProfilerLibrary,
     [ValidatePattern('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')]
@@ -126,6 +134,61 @@ if ($VitaBuildNumber -notmatch '^(local|[1-9][0-9]*\.[1-9][0-9]*)$' -or
     throw 'Invalid Vita build number.'
 }
 $build = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BuildDirectory)
+$internalWidth = if ($InternalResolutionScale -eq 60) {
+    576
+} else {
+    [int] (960 * $InternalResolutionScale / 100)
+}
+$internalHeight = if ($InternalResolutionScale -eq 60) {
+    328
+} else {
+    [int] (544 * $InternalResolutionScale / 100)
+}
+$gameplayInternalWidth = if ($GameplayInternalResolutionScale -eq 0) {
+    $internalWidth
+} elseif ($GameplayInternalResolutionScale -eq 60) {
+    576
+} else {
+    [int] (960 * $GameplayInternalResolutionScale / 100)
+}
+$gameplayInternalHeight = if ($GameplayInternalResolutionScale -eq 0) {
+    $internalHeight
+} elseif ($GameplayInternalResolutionScale -eq 60) {
+    328
+} else {
+    [int] (544 * $GameplayInternalResolutionScale / 100)
+}
+if ($internalWidth -lt 320 -or $internalWidth -gt 960 -or
+    $internalHeight -lt 240 -or $internalHeight -gt 544 -or
+    ($internalWidth % 16) -ne 0 -or ($internalHeight % 8) -ne 0) {
+    throw "Internal resolution ${internalWidth}x${internalHeight} violates Vita EFB bounds/alignment."
+}
+if ($gameplayInternalWidth -lt 320 -or $gameplayInternalWidth -gt 960 -or
+    $gameplayInternalHeight -lt 240 -or $gameplayInternalHeight -gt 544 -or
+    ($gameplayInternalWidth % 16) -ne 0 -or
+    ($gameplayInternalHeight % 8) -ne 0) {
+    throw "Gameplay internal resolution ${gameplayInternalWidth}x${gameplayInternalHeight} violates Vita EFB bounds/alignment."
+}
+if ($GameplayInternalResolutionScale -ne 0 -and
+    $GameplayInternalResolutionScale -eq $InternalResolutionScale) {
+    throw '-GameplayInternalResolutionScale must differ from -InternalResolutionScale or be 0.'
+}
+if ($GameplayInternalResolutionScale -ne 0 -and
+    $InternalResolutionScale -eq 100) {
+    throw '-GameplayInternalResolutionScale requires a non-native -InternalResolutionScale.'
+}
+if ($EnableScaledShadowFrames -and $InternalResolutionScale -eq 100) {
+    throw '-EnableScaledShadowFrames requires a non-native -InternalResolutionScale.'
+}
+if ($EnableScaledGxCopyFrames -and $InternalResolutionScale -eq 100) {
+    throw '-EnableScaledGxCopyFrames requires a non-native -InternalResolutionScale.'
+}
+if ($EnableRuntimeResolutionMenu -and -not $EnableScaledShadowFrames) {
+    throw '-EnableRuntimeResolutionMenu requires -EnableScaledShadowFrames.'
+}
+if ($EnableRuntimeResolutionMenu -and -not $EnableScaledGxCopyFrames) {
+    throw '-EnableRuntimeResolutionMenu requires -EnableScaledGxCopyFrames.'
+}
 if ($EnableDebugger -and $Configuration -ne 'Debug') {
     throw '-EnableDebugger requires -Configuration Debug.'
 }
@@ -217,6 +280,7 @@ $gameArchive = & (Join-Path $PSScriptRoot 'build-game.ps1') `
     -EnableModernDebugMenu:$EnableModernDebugMenu `
     -EnableDirectSnag:$EnableDirectSnag `
     -EnableRenderTrace:$EnableRenderTrace `
+    -EnableRuntimeResolutionMenu:$EnableRuntimeResolutionMenu `
     -VitaReleaseVersion $version.release `
     -VitaBuildNumber $VitaBuildNumber |
     Select-Object -Last 1
@@ -239,6 +303,7 @@ $platformSources = @(
     'platforms/vita/game/gx.c',
     'platforms/vita/game/gx_bump.c',
     'platforms/vita/game/gx_render.c',
+    'platforms/vita/game/gxr_shader_cache.c',
     'platforms/vita/game/gxm_game.c',
     'platforms/vita/game/heap.c',
     'platforms/vita/game/main.c',
@@ -272,6 +337,15 @@ $common = @(
     '-Wall', '-Wextra', '-Werror', '-Wno-parentheses', '-fno-short-enums',
     '-include', (Join-Path $PSScriptRoot 'vita_compat.h'), '-c'
 ) + $configurationFlags
+$resolutionOptions = @{ 100 = 0; 75 = 1; 60 = 2; 50 = 3 }
+$menuResolutionOption = $resolutionOptions[$InternalResolutionScale]
+$gameplayResolutionOption = if ($GameplayInternalResolutionScale -eq 0) {
+    $menuResolutionOption
+} else {
+    $resolutionOptions[$GameplayInternalResolutionScale]
+}
+$common += "-DMELEE_VITA_DEFAULT_MENU_RESOLUTION_OPTION=$menuResolutionOption"
+$common += "-DMELEE_VITA_DEFAULT_GAMEPLAY_RESOLUTION_OPTION=$gameplayResolutionOption"
 if ($Configuration -eq 'Debug') {
     $common += @(
         "-I$VitaDebuggerDirectory",
@@ -281,6 +355,26 @@ if ($Configuration -eq 'Debug') {
 }
 if ($EnableRenderTrace) {
     $common += '-DMELEE_VITA_RENDER_TRACE=1'
+}
+if ($EnableShaderCacheSeal) {
+    $common += '-DMELEE_VITA_SHADER_CACHE_SEAL=1'
+}
+if ($InternalResolutionScale -ne 100) {
+    $common += "-DMELEE_VITA_INTERNAL_WIDTH=$internalWidth"
+    $common += "-DMELEE_VITA_INTERNAL_HEIGHT=$internalHeight"
+}
+if ($GameplayInternalResolutionScale -ne 0) {
+    $common += "-DMELEE_VITA_GAMEPLAY_INTERNAL_WIDTH=$gameplayInternalWidth"
+    $common += "-DMELEE_VITA_GAMEPLAY_INTERNAL_HEIGHT=$gameplayInternalHeight"
+}
+if ($EnableScaledShadowFrames) {
+    $common += '-DMELEE_VITA_SCALED_SHADOW_FRAMES=1'
+}
+if ($EnableScaledGxCopyFrames) {
+    $common += '-DMELEE_VITA_SCALED_GX_COPY_FRAMES=1'
+}
+if ($EnableRuntimeResolutionMenu) {
+    $common += '-DMELEE_VITA_RUNTIME_RESOLUTION_MENU=1'
 }
 if ($EnableLiveProfiler) {
     $common += '-DMELEE_VITA_PROFILER=1'
@@ -375,6 +469,7 @@ if ($EnableLiveProfiler) {
 $link += @(
     '-lSceCtrl_stub', '-lSceDisplay_stub', '-lSceAudio_stub', '-lSceJpeg_stub', '-lSceKernelThreadMgr_stub',
     '-lvita2d', '-lSceGxm_stub', '-lSceDisplay_stub', '-lSceAppMgr_stub',
+    '-lSceTouch_stub',
     '-lSceCommonDialog_stub', '-lm', '-lSceProcessmgr_stub',
     '-lSceSysmem_stub', '-lSceLibKernel_stub', '-lSceKernelModulemgr_stub', '-lSceSysmodule_stub',
     '-lvitashark', '-lSceShaccCgExt', '-ltaihen_stub', '-lSceShaccCg_stub_weak',

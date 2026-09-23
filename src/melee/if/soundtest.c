@@ -9,6 +9,9 @@
 #ifdef MELEE_VITA_MODERN_DEBUG_MENU
 #include <melee/gm/gm_16F1.h>
 #endif
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+#include <gxm_game.h>
+#endif
 #include <melee/gm/gm_unsplit.h>
 #include <melee/gm/gmmain_lib.h>
 #include <melee/lb/lbarchive.h>
@@ -2230,6 +2233,17 @@ static bool vita_debug_open_sound_test(enum soundtest_callback_arg0 update_scene
 }
 #endif
 
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+static bool vita_debug_apply_resolution(
+    enum soundtest_callback_arg0 update_scene)
+{
+    if (update_scene == 1 || update_scene == 2 || update_scene == 3) {
+        melee_vita_gxm_apply_resolution_options();
+    }
+    return false;
+}
+#endif
+
 /// .data
 /* 803F9EF0 */ char lbl_803F9EF0[0x20] = "Remove Target %x (n %x) Id %d\n";
 /* 803F9F10 */ char lbl_803F9F10[0x18] = "Remove All Over\n";
@@ -2340,6 +2354,13 @@ static bool vita_debug_open_sound_test(enum soundtest_callback_arg0 update_scene
 #ifdef MELEE_VITA_MODERN_DEBUG_MENU
 static char vita_debug_sound_test[] = "Sound Test";
 #endif
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+static char vita_debug_menu_resolution[] = "Menu Resolution: ";
+static char vita_debug_gameplay_resolution[] = "Gameplay Resolution: ";
+static char* vita_debug_resolution_names[] = {
+    "Native", "75% (720x408)", "60% (576x328)", "50% (480x272)"
+};
+#endif
 /* 803FA4E0 */ struct un_80304138_objalloc_t_x8 un_803FA4E0[] = {
     { 0, NULL, db_build_timestamp, NULL, NULL, 0.0f, 0.0f, 0.0f },
     { 1, un_803001DC, un_803FA454, NULL, NULL, 0.0f, 0.0f, 0.0f },
@@ -2356,6 +2377,14 @@ static char vita_debug_sound_test[] = "Sound Test";
 #ifdef MELEE_VITA_MODERN_DEBUG_MENU
     { 1, vita_debug_open_sound_test, vita_debug_sound_test, NULL, NULL, 0.0f,
       0.0f, 0.0f },
+#endif
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+    { 2, vita_debug_apply_resolution, vita_debug_menu_resolution,
+      vita_debug_resolution_names, &g_melee_vita_menu_resolution_option,
+      0.0f, 4.0f, 0.0f },
+    { 2, vita_debug_apply_resolution, vita_debug_gameplay_resolution,
+      vita_debug_resolution_names, &g_melee_vita_gameplay_resolution_option,
+      0.0f, 4.0f, 0.0f },
 #endif
     { 9, NULL, NULL, NULL, NULL, 0.0f, 0.0f, 0.0f },
 };

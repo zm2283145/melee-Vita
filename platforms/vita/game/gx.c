@@ -3927,6 +3927,8 @@ void melee_vita_gx_begin_shadow(void* key, u32 width, u32 height)
 {
     struct vita2d_texture* target;
     if (key == NULL || width == 0u || height == 0u || width > 1024u || height > 1024u) return;
+    melee_vita_gxm_require_full_resolution(
+        MELEE_VITA_NATIVE_REASON_SHADOW);
     target = melee_vita_gxm_copy_texture(key, width, height, NULL);
     if (target == NULL) return;
     g_melee_vita_last_copy_dst = key;
@@ -3948,6 +3950,8 @@ void melee_vita_gx_end_shadow(void)
 void GXCopyTex(void* destination, GXBool clear)
 {
     const u64 t0 = sceKernelGetProcessTimeWide();
+    melee_vita_gxm_require_full_resolution(
+        MELEE_VITA_NATIVE_REASON_COPY);
     copy_tex_impl(destination, clear);
     melee_vita_prof_add(VPZ_COPYTEX, sceKernelGetProcessTimeWide() - t0);
 }

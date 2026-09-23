@@ -24,6 +24,11 @@
 #include "mnvitadebug.h"
 #include "mnvibration.h"
 #include "types.h"
+#if defined(TARGET_VITA) && defined(MELEE_VITA_RUNTIME_RESOLUTION_MENU)
+#include <gxm_game.h>
+#include <pad_vita.h>
+#include <psp2/ctrl.h>
+#endif
 #if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
 #include <dolphin/os.h>
 #endif
@@ -803,6 +808,513 @@ static void mn_VitaCreateDebugLabel(MainMenuData* data)
     HSD_SisLib_803A6B98(label, 0.0f, 0.0f, "DEBUG TOOLS");
     data->vita_debug_label = label;
 }
+
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+enum {
+    VITA_CONTROL_CAPTURE_NONE = 0xFF,
+};
+
+static void mn_VitaCreateOptionsLabel(MainMenuData* data)
+{
+    static Vec3 const origin = { 0.0f, 0.0f, 0.0f };
+    Vec3 position;
+    HSD_Text* label;
+    u8 unlocked_index;
+
+    if (data->vita_options_label != NULL ||
+        data->menu_kind != MENU_KIND_SETTINGS)
+    {
+        return;
+    }
+
+    unlocked_index = mn_80229A04(MENU_KIND_SETTINGS, SEL_SETTINGS_DISPLAY);
+    lb_8000B1CC(data->tree[mn_803EAE68[unlocked_index]], (Vec3*) &origin,
+                &position);
+    label = HSD_SisLib_803A6754(0, mn_804D6BB4);
+    label->font_size.x = 0.023f;
+    label->font_size.y = 0.045f;
+    label->pos_x = position.x - 4.0f;
+    label->pos_y = -position.y - 0.5f;
+    label->pos_z = position.z;
+    label->default_alignment = 0;
+    label->text_color = (GXColor){ 0xE0, 0xB8, 0x60, 0xFF };
+    HSD_SisLib_803A6B98(label, 0.0f, 0.0f, "VITA OPTIONS");
+    data->vita_options_label = label;
+}
+
+static char const* mn_VitaResolutionScaleName(int option)
+{
+    static char const* const names[MELEE_VITA_RESOLUTION_OPTION_COUNT] = {
+        "100%", "75%", "60%", "50%"
+    };
+
+    if (option < MELEE_VITA_RESOLUTION_NATIVE ||
+        option >= MELEE_VITA_RESOLUTION_OPTION_COUNT)
+    {
+        return "INVALID";
+    }
+    return names[option];
+}
+
+static char const* mn_VitaResolutionDimensions(int option)
+{
+    static char const* const dimensions[MELEE_VITA_RESOLUTION_OPTION_COUNT] = {
+        "960 x 544", "720 x 408", "576 x 328", "480 x 272"
+    };
+
+    if (option < MELEE_VITA_RESOLUTION_NATIVE ||
+        option >= MELEE_VITA_RESOLUTION_OPTION_COUNT)
+    {
+        return "--- x ---";
+    }
+    return dimensions[option];
+}
+
+static char const* mn_VitaPhysicalButtonName(int button)
+{
+    static char const* const names[MELEE_VITA_BUTTON_COUNT] = {
+        "CROSS", "CIRCLE", "SQUARE", "TRIANGLE",
+        "L BUTTON", "R BUTTON", "SELECT", "START",
+    };
+    if (button < 0 || button >= MELEE_VITA_BUTTON_COUNT)
+        return "INVALID";
+    return names[button];
+}
+
+static char const* mn_VitaPadActionName(int action)
+{
+    static char const* const names[MELEE_VITA_ACTION_COUNT] = {
+        "A", "B", "X", "Y", "L", "R", "Z", "START",
+    };
+    if (action < 0 || action >= MELEE_VITA_ACTION_COUNT)
+        return "INVALID";
+    return names[action];
+}
+
+static void mn_VitaOptionsDraw(MainMenuData* data)
+{
+    static GXColor const title_color = { 0xF4, 0xD2, 0x70, 0xFF };
+    static GXColor const subtitle_color = { 0x78, 0xC8, 0xE8, 0xFF };
+    static GXColor const selected_color = { 0xFF, 0xF4, 0xC0, 0xFF };
+    static GXColor const normal_color = { 0xB8, 0xC8, 0xD8, 0xFF };
+    static GXColor const help_color = { 0x90, 0xA0, 0xB0, 0xFF };
+    static GXColor const button_color = { 0x70, 0xD8, 0xF0, 0xFF };
+    HSD_Text* text = data->vita_resolution_panel;
+    int title_entry;
+    int display_tab_entry;
+    int controls_tab_entry;
+    int help_entry;
+    int close_entry;
+
+    HSD_SisLib_803A7664(text);
+    title_entry =
+        HSD_SisLib_803A6B98(text, 40.0f, 12.0f, "VITA OPTIONS");
+    HSD_SisLib_803A74F0(text, title_entry, (GXColor*) &title_color);
+    HSD_SisLib_803A6B98(
+        text, 40.0f, 54.0f, "DISPLAY AND CONTROLLER SETTINGS");
+    display_tab_entry =
+        HSD_SisLib_803A6B98(text, 150.0f, 98.0f, "[ DISPLAY ]");
+    controls_tab_entry =
+        HSD_SisLib_803A6B98(text, 810.0f, 98.0f, "[ CONTROLS ]");
+    HSD_SisLib_803A74F0(
+        text, display_tab_entry,
+        (GXColor*) (data->vita_options_page == 0
+                        ? &selected_color
+                        : &subtitle_color));
+    HSD_SisLib_803A74F0(
+        text, controls_tab_entry,
+        (GXColor*) (data->vita_options_page == 1
+                        ? &selected_color
+                        : &subtitle_color));
+    HSD_SisLib_803A6B98(
+        text, 40.0f, 142.0f,
+        "--------------------------------------------------------------------------");
+
+    if (data->vita_options_page == 0) {
+        GXColor const* menu_color;
+        GXColor const* gameplay_color;
+        int menu_entry;
+        int gameplay_entry;
+        int menu_buttons;
+        int gameplay_buttons;
+
+        HSD_SisLib_803A6B98(
+            text, 60.0f, 166.0f, "INTERNAL RENDER RESOLUTION");
+        menu_entry = HSD_SisLib_803A6B98(
+            text, 80.0f, 228.0f, "%s MENU / FRONTEND",
+            data->vita_resolution_row == 0 ? ">" : " ");
+        menu_buttons = HSD_SisLib_803A6B98(
+            text, 720.0f, 228.0f, "[ - ]     %s     [ + ]",
+            mn_VitaResolutionScaleName(g_melee_vita_menu_resolution_option));
+        HSD_SisLib_803A6B98(
+            text, 120.0f, 278.0f, "%s INTERNAL  /  960 x 544 OUTPUT",
+            mn_VitaResolutionDimensions(g_melee_vita_menu_resolution_option));
+        gameplay_entry = HSD_SisLib_803A6B98(
+            text, 80.0f, 358.0f, "%s GAMEPLAY",
+            data->vita_resolution_row == 1 ? ">" : " ");
+        gameplay_buttons = HSD_SisLib_803A6B98(
+            text, 720.0f, 358.0f, "[ - ]     %s     [ + ]",
+            mn_VitaResolutionScaleName(
+                g_melee_vita_gameplay_resolution_option));
+        HSD_SisLib_803A6B98(
+            text, 120.0f, 408.0f, "%s INTERNAL  /  960 x 544 OUTPUT",
+            mn_VitaResolutionDimensions(
+                g_melee_vita_gameplay_resolution_option));
+        help_entry = HSD_SisLib_803A6B98(
+            text, 70.0f, 510.0f,
+            "VIDEOS, VITA UI, AND SCREEN OUTPUT ALWAYS STAY NATIVE");
+        menu_color =
+            data->vita_resolution_row == 0 ? &selected_color : &normal_color;
+        gameplay_color =
+            data->vita_resolution_row == 1 ? &selected_color : &normal_color;
+        HSD_SisLib_803A74F0(text, menu_entry, (GXColor*) menu_color);
+        HSD_SisLib_803A74F0(
+            text, gameplay_entry, (GXColor*) gameplay_color);
+        HSD_SisLib_803A74F0(
+            text, menu_buttons, (GXColor*) &button_color);
+        HSD_SisLib_803A74F0(
+            text, gameplay_buttons, (GXColor*) &button_color);
+    } else {
+        int entries[MELEE_VITA_BUTTON_COUNT];
+        int capture_entry;
+        int i;
+
+        if (data->vita_control_capture_action !=
+            VITA_CONTROL_CAPTURE_NONE)
+        {
+            capture_entry = HSD_SisLib_803A6B98(
+                text, 60.0f, 160.0f,
+                "PRESS A VITA BUTTON FOR: %s",
+                mn_VitaPadActionName(
+                    data->vita_control_capture_action));
+            HSD_SisLib_803A74F0(
+                text, capture_entry, (GXColor*) &title_color);
+        } else {
+            HSD_SisLib_803A6B98(
+                text, 60.0f, 160.0f,
+                "CHOOSE AN ACTION, THEN PRESS X TO REMAP");
+        }
+        for (i = 0; i < MELEE_VITA_BUTTON_COUNT; ++i) {
+            GXColor const* row_color =
+                data->vita_resolution_row == i ? &selected_color
+                                               : &normal_color;
+            entries[i] = HSD_SisLib_803A6B98(
+                text, 85.0f, 210.0f + 52.0f * i,
+                "%s %-8s ACTION              [ %-10s ]",
+                data->vita_resolution_row == i ? ">" : " ",
+                mn_VitaPadActionName(i),
+                mn_VitaPhysicalButtonName(
+                    melee_vita_pad_get_physical_button_for_action(i)));
+            HSD_SisLib_803A74F0(
+                text, entries[i], (GXColor*) row_color);
+        }
+        help_entry = HSD_SisLib_803A6B98(
+            text, 70.0f, 650.0f,
+            data->vita_control_capture_action !=
+                    VITA_CONTROL_CAPTURE_NONE
+                ? "[ CANCEL BUTTON CAPTURE ]"
+                : "[ RESET TO DEFAULT CONTROLS ]");
+        HSD_SisLib_803A74F0(text, help_entry, (GXColor*) &button_color);
+    }
+    close_entry = HSD_SisLib_803A6B98(
+        text, 1070.0f, 650.0f, "[ CLOSE ]");
+    HSD_SisLib_803A6B98(
+        text, 55.0f, 730.0f,
+        data->vita_options_page == 0
+            ? "L / R: PAGE    D-PAD: SELECT / CHANGE    X OR O: CLOSE"
+            : data->vita_control_capture_action !=
+                      VITA_CONTROL_CAPTURE_NONE
+                  ? "PRESS DESIRED VITA BUTTON    TOUCH CANCEL TO ABORT"
+                  : "L / R: PAGE    D-PAD: SELECT    X: REMAP    O: CLOSE");
+    HSD_SisLib_803A74F0(
+        text, help_entry,
+        (GXColor*) (data->vita_options_page == 0
+                        ? &help_color
+                        : data->vita_resolution_row ==
+                                  MELEE_VITA_ACTION_COUNT
+                              ? &selected_color
+                              : &button_color));
+    HSD_SisLib_803A74F0(
+        text, close_entry,
+        (GXColor*) (data->vita_resolution_row ==
+                            (data->vita_options_page == 0
+                                 ? 2
+                                 : MELEE_VITA_ACTION_COUNT + 1)
+                        ? &selected_color
+                        : &button_color));
+}
+
+static void mn_VitaOptionsOpen(void)
+{
+    MainMenuData* data;
+    HSD_Text* text;
+
+    if (mn_vita_menu_gobj == NULL) {
+        return;
+    }
+    data = mn_vita_menu_gobj->user_data;
+    if (data->vita_resolution_active) {
+        return;
+    }
+
+    text = HSD_SisLib_803A6754(0, mn_804D6BB4);
+    HSD_ASSERTREPORT(0x342, text != NULL,
+                     "Can't create Vita resolution panel.\n");
+    text->pos_x = -17.2f;
+    text->pos_y = -12.7f;
+    text->pos_z = 16.0f;
+    text->box_size_x = 1440.0f;
+    text->box_size_y = 800.0f;
+    text->font_size.x = 0.016f;
+    text->font_size.y = 0.024f;
+    text->default_kerning = 1;
+    text->bg_color = (GXColor){ 0x06, 0x12, 0x24, 0xEE };
+    text->text_color = (GXColor){ 0xFF, 0xFF, 0xFF, 0xFF };
+    HSD_SisLib_803A6B98(text, 0.0f, 0.0f, " ");
+
+    data->vita_resolution_panel = text;
+    data->vita_resolution_active = true;
+    data->vita_resolution_row = 0;
+    data->vita_options_page = 0;
+    data->vita_control_capture_action = VITA_CONTROL_CAPTURE_NONE;
+    melee_vita_pad_raw_buttons_triggered();
+    {
+        int touch_x;
+        int touch_y;
+        melee_vita_pad_touch_triggered(&touch_x, &touch_y);
+    }
+    if (data->description != NULL) {
+        data->description->hidden = true;
+    }
+    if (data->vita_debug_label != NULL) {
+        data->vita_debug_label->hidden = true;
+    }
+    mn_804A04F0.entering_menu = 0;
+    mn_804D6BC8.cooldown = 5;
+    melee_vita_gxm_require_full_resolution(
+        MELEE_VITA_NATIVE_REASON_DEBUG_UI);
+    mn_VitaOptionsDraw(data);
+}
+
+static void mn_VitaOptionsClose(MainMenuData* data)
+{
+    HSD_SisLib_803A5CC4(data->vita_resolution_panel);
+    data->vita_resolution_panel = NULL;
+    data->vita_resolution_active = false;
+    data->vita_control_capture_action = VITA_CONTROL_CAPTURE_NONE;
+    if (data->description != NULL) {
+        data->description->hidden = false;
+    }
+    if (data->vita_debug_label != NULL) {
+        data->vita_debug_label->hidden = false;
+    }
+    mn_804D6BC8.cooldown = 5;
+}
+
+static bool mn_VitaOptionsHandleInput(void)
+{
+    MainMenuData* data;
+    u32 raw_buttons;
+    int touch_x;
+    int touch_y;
+    int* option;
+    int direction;
+    int physical_button;
+    int row_count;
+
+    if (mn_vita_menu_gobj == NULL) {
+        return false;
+    }
+    data = mn_vita_menu_gobj->user_data;
+    if (!data->vita_resolution_active) {
+        return false;
+    }
+
+    raw_buttons = melee_vita_pad_raw_buttons_triggered();
+    melee_vita_gxm_require_full_resolution(
+        MELEE_VITA_NATIVE_REASON_DEBUG_UI);
+    if (melee_vita_pad_touch_triggered(&touch_x, &touch_y)) {
+        if (touch_y >= 55 && touch_y <= 120) {
+            data->vita_options_page = touch_x < 480 ? 0 : 1;
+            data->vita_resolution_row = 0;
+            data->vita_control_capture_action =
+                VITA_CONTROL_CAPTURE_NONE;
+            sfxMove();
+            mn_VitaOptionsDraw(data);
+            return true;
+        }
+        if (touch_y >= 405 && touch_y <= 475) {
+            if (touch_x >= 600) {
+                sfxBack();
+                mn_VitaOptionsClose(data);
+            } else if (data->vita_options_page == 1) {
+                if (data->vita_control_capture_action !=
+                    VITA_CONTROL_CAPTURE_NONE)
+                {
+                    data->vita_control_capture_action =
+                        VITA_CONTROL_CAPTURE_NONE;
+                    sfxBack();
+                } else {
+                    melee_vita_pad_reset_mapping();
+                    sfxMove();
+                }
+                mn_VitaOptionsDraw(data);
+            }
+            return true;
+        }
+        if (data->vita_options_page == 1 &&
+            touch_y >= 125 && touch_y < 400)
+        {
+            int const row = (touch_y - 125) / 34;
+            if (row >= 0 && row < MELEE_VITA_BUTTON_COUNT) {
+                data->vita_resolution_row = row;
+                data->vita_control_capture_action = row;
+                sfxForward();
+                mn_VitaOptionsDraw(data);
+            }
+            return true;
+        }
+        if (data->vita_options_page == 0 &&
+            touch_y >= 125 && touch_y < 330)
+        {
+            int const row = touch_y < 225 ? 0 : 1;
+            data->vita_resolution_row = row;
+            if (touch_x >= 420 && touch_x <= 535) {
+                direction = -1;
+            } else if (touch_x >= 540 && touch_x <= 700) {
+                direction = 1;
+            } else {
+                mn_VitaOptionsDraw(data);
+                return true;
+            }
+            option = row == 0
+                         ? &g_melee_vita_menu_resolution_option
+                         : &g_melee_vita_gameplay_resolution_option;
+            *option =
+                (*option + direction + MELEE_VITA_RESOLUTION_OPTION_COUNT) %
+                MELEE_VITA_RESOLUTION_OPTION_COUNT;
+            if (melee_vita_gxm_apply_resolution_options()) {
+                sfxMove();
+            } else {
+                sfxBack();
+            }
+            mn_VitaOptionsDraw(data);
+            return true;
+        }
+    }
+
+    if (data->vita_control_capture_action !=
+        VITA_CONTROL_CAPTURE_NONE)
+    {
+        physical_button =
+            melee_vita_pad_physical_button_from_raw(raw_buttons);
+        if (physical_button >= 0) {
+            if (melee_vita_pad_set_mapping(
+                    physical_button,
+                    data->vita_control_capture_action))
+            {
+                sfxForward();
+            } else {
+                sfxBack();
+            }
+            data->vita_control_capture_action =
+                VITA_CONTROL_CAPTURE_NONE;
+            mn_VitaOptionsDraw(data);
+        }
+        return true;
+    }
+
+    if (raw_buttons & (SCE_CTRL_CIRCLE | SCE_CTRL_CROSS)) {
+        if (raw_buttons & SCE_CTRL_CIRCLE) {
+            sfxBack();
+            mn_VitaOptionsClose(data);
+        } else if (data->vita_options_page == 1) {
+            if (data->vita_resolution_row <
+                MELEE_VITA_ACTION_COUNT)
+            {
+                data->vita_control_capture_action =
+                    data->vita_resolution_row;
+                sfxForward();
+                mn_VitaOptionsDraw(data);
+            } else if (data->vita_resolution_row ==
+                       MELEE_VITA_ACTION_COUNT)
+            {
+                melee_vita_pad_reset_mapping();
+                sfxMove();
+                mn_VitaOptionsDraw(data);
+            } else {
+                sfxBack();
+                mn_VitaOptionsClose(data);
+            }
+        } else if (data->vita_resolution_row == 2) {
+            sfxBack();
+            mn_VitaOptionsClose(data);
+        } else {
+            return true;
+        }
+        return true;
+    }
+    if (raw_buttons & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER)) {
+        data->vita_options_page ^= 1;
+        data->vita_resolution_row = 0;
+        data->vita_control_capture_action =
+            VITA_CONTROL_CAPTURE_NONE;
+        sfxMove();
+        mn_VitaOptionsDraw(data);
+        return true;
+    }
+    if (data->vita_options_page == 1 &&
+        (raw_buttons & SCE_CTRL_TRIANGLE))
+    {
+        melee_vita_pad_reset_mapping();
+        sfxMove();
+        mn_VitaOptionsDraw(data);
+        return true;
+    }
+
+    row_count = data->vita_options_page == 0
+                    ? 3
+                    : MELEE_VITA_ACTION_COUNT + 2;
+    if (raw_buttons & SCE_CTRL_UP) {
+        data->vita_resolution_row =
+            (data->vita_resolution_row + row_count - 1) % row_count;
+        sfxMove();
+        mn_VitaOptionsDraw(data);
+        return true;
+    }
+    if (raw_buttons & SCE_CTRL_DOWN) {
+        data->vita_resolution_row =
+            (data->vita_resolution_row + 1) % row_count;
+        sfxMove();
+        mn_VitaOptionsDraw(data);
+        return true;
+    }
+    if (!(raw_buttons & (SCE_CTRL_LEFT | SCE_CTRL_RIGHT))) {
+        return true;
+    }
+
+    direction = (raw_buttons & SCE_CTRL_RIGHT) ? 1 : -1;
+    if (data->vita_options_page == 1) {
+        return true;
+    }
+    if (data->vita_resolution_row >= 2) {
+        return true;
+    }
+
+    option = data->vita_resolution_row == 0
+                 ? &g_melee_vita_menu_resolution_option
+                 : &g_melee_vita_gameplay_resolution_option;
+    *option = (*option + direction + MELEE_VITA_RESOLUTION_OPTION_COUNT) %
+              MELEE_VITA_RESOLUTION_OPTION_COUNT;
+    if (melee_vita_gxm_apply_resolution_options()) {
+        sfxMove();
+    } else {
+        sfxBack();
+    }
+    mn_VitaOptionsDraw(data);
+    return true;
+}
+#endif
 #endif
 
 /// @brief creates the description text for the hovered selection
@@ -819,6 +1331,26 @@ static void mn_80229A7C(MainMenuData* data, MenuKind menu_kind, int selection)
     sis_idx = mn_803EB6B0[menu_kind].description_indices;
     if (sis_idx != 0) {
 #ifdef TARGET_VITA
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+        if (menu_kind == MENU_KIND_SETTINGS &&
+            selection == SEL_SETTINGS_DISPLAY)
+        {
+            text = HSD_SisLib_803A6754(0, mn_804D6BB4);
+            text->pos_x = -9.5f;
+            text->pos_y = 9.1f;
+            text->pos_z = 17.0f;
+            text->box_size_x = 364.68332f;
+            text->box_size_y = 38.38772f;
+            data->description = text;
+            text->font_size.x = 0.018f;
+            text->font_size.y = 0.026f;
+            text->text_color = (GXColor){ 0xE8, 0xDC, 0xB8, 0xFF };
+            HSD_SisLib_803A6B98(
+                text, 0.0f, 0.0f,
+                "Adjust Vita Options");
+            return;
+        }
+#endif
         if (menu_kind == MENU_KIND_SETTINGS &&
             selection == SEL_SETTINGS_VITA_DEBUG)
         {
@@ -1434,6 +1966,9 @@ void fn_8022AFEC(HSD_GObj* gp)
 #ifdef TARGET_VITA
     if (final_data->state == MENU_STATE_IDLE) {
         mn_VitaCreateDebugLabel(final_data);
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+        mn_VitaCreateOptionsLabel(final_data);
+#endif
     }
     if (final_data->vita_debug_label != NULL) {
         GXColor label_color = { 0xE0, 0xB8, 0x60, 0xFF };
@@ -1444,6 +1979,17 @@ void fn_8022AFEC(HSD_GObj* gp)
         final_data->vita_debug_label->hidden =
             final_data->state != MENU_STATE_IDLE;
     }
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+    if (final_data->vita_options_label != NULL) {
+        GXColor label_color = { 0xE0, 0xB8, 0x60, 0xFF };
+        if (hovered_selection == SEL_SETTINGS_DISPLAY) {
+            label_color = (GXColor){ 0x18, 0x12, 0x08, 0xFF };
+        }
+        HSD_SisLib_803A74F0(final_data->vita_options_label, 0, &label_color);
+        final_data->vita_options_label->hidden =
+            final_data->state != MENU_STATE_IDLE;
+    }
+#endif
 #endif
     if ((u8) selection_changed != false) {
         data->hovered_selection = mn_804A04F0.hovered_selection;
@@ -1526,6 +2072,15 @@ HSD_GObj* mn_8022B3A0(u8 state)
     user_data->description = NULL;
 #ifdef TARGET_VITA
     user_data->vita_debug_label = NULL;
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+    user_data->vita_options_label = NULL;
+    user_data->vita_resolution_panel = NULL;
+    user_data->vita_resolution_active = false;
+    user_data->vita_resolution_row = 0;
+    user_data->vita_options_page = 0;
+    user_data->vita_control_capture_action =
+        VITA_CONTROL_CAPTURE_NONE;
+#endif
 #endif
     for (idx = 0; idx < (int) ARRAY_SIZE(user_data->tree); idx++) {
         lb_80011E24(root_jobj, &user_data->tree[idx], idx, -1);
@@ -1580,6 +2135,13 @@ HSD_GObj* mn_8022B3A0(u8 state)
             mn_8022F3D8(jobj.value, 0x12, TOBJ_MASK);
             mn_8022F3D8(jobj.value, 0x13, TOBJ_MASK);
             HSD_JObjAnim(jobj.value);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_RUNTIME_RESOLUTION_MENU)
+            if (menu_kind == MENU_KIND_SETTINGS &&
+                i == SEL_SETTINGS_DISPLAY)
+            {
+                HSD_JObjSetFlagsAll(cursor_parts[1], JOBJ_HIDDEN);
+            }
+#endif
             if (i == hovered_selection) {
                 HSD_JObjReqAnimAll(
                     cursor_parts[2],
@@ -2417,6 +2979,11 @@ void mn_8022D104(HSD_GObj* gp)
     selection_count = mn_803EB6B0[MENU_KIND_SETTINGS].selection_count & 0xFF;
     buttons = mn_80229624(4);
     mn_804A04F0.buttons = buttons;
+#if defined(TARGET_VITA) && defined(MELEE_VITA_RUNTIME_RESOLUTION_MENU)
+    if (mn_VitaOptionsHandleInput()) {
+        return;
+    }
+#endif
 #ifdef TARGET_VITA
     if (mnVitaDebug_FeedActivation(
             gm_GetButtonsTriggered(PAD_MAX_CONTROLLERS)))
@@ -2453,8 +3020,12 @@ void mn_8022D104(HSD_GObj* gp)
             break;
         case SEL_SETTINGS_DISPLAY:
             sfxForward();
+#if defined(TARGET_VITA) && defined(MELEE_VITA_RUNTIME_RESOLUTION_MENU)
+            mn_VitaOptionsOpen();
+#else
             mnDeflicker_8024A6C4(1);
             HSD_GObjFree(gp);
+#endif
             break;
 #ifdef TARGET_VITA
         case SEL_SETTINGS_VITA_DEBUG:
@@ -3251,6 +3822,14 @@ static void mn_VitaMainMenuDataFree(void* user_data)
     if (data->vita_debug_label != NULL) {
         HSD_SisLib_803A5CC4(data->vita_debug_label);
     }
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+    if (data->vita_options_label != NULL) {
+        HSD_SisLib_803A5CC4(data->vita_options_label);
+    }
+    if (data->vita_resolution_panel != NULL) {
+        HSD_SisLib_803A5CC4(data->vita_resolution_panel);
+    }
+#endif
     HSD_Free(user_data);
 }
 #endif

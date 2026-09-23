@@ -109,6 +109,9 @@ light-shield pressure. Touch controls, rumble, external controllers, and
 multiple human controller ports are not implemented by the current Vita input
 backend. CPU opponents use the game's normal controls.
 
+Open **Options -> Vita Options** to change menu and gameplay rendering
+resolution or remap Vita buttons. These settings persist across launches.
+
 ### Hidden Debug Tools
 
 The optimized Release includes a hidden, session-only version of Melee's
@@ -146,7 +149,7 @@ and THP movie playback with a hardware JPEG path. These are experimental
 implementations, not a claim that every game mode is fully working.
 
 Online play/rollback is not implemented. The desktop launcher/settings overlay,
-controller remapping UI, custom soundtrack streaming, and PC cheat toggles are
+custom soundtrack streaming and PC cheat toggles are
 not available in the Vita build. The inherited
 [PC README](README-PC.md) and [roadmap](ROADMAP.md) describe the broader upstream
 project, not promises of Vita support.

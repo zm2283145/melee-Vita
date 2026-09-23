@@ -1,10 +1,25 @@
 **Beta, for testing only.** Expect crashes and missing features.
 
-You need your own Super Smash Bros. Melee disc image. **No game data ships in
-these artifacts** — the port reads everything, including its font atlases, from
-the image you supply at runtime.
+You need your own Super Smash Bros. Melee disc image. **No disc image ships in
+these artifacts.** The port reads the base game's data from the image you
+supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
+
+## Changes in Vita v0.8.8
+
+- Added a Vita Options menu for changing the internal rendering resolution and
+  remapping controls. Settings persist across launches.
+- Improved shader-cache lookup and added internal rendering fallbacks for
+  effects that require the original resolution.
+- Expanded the hidden character's support across Stadium and solo modes,
+  including alternate costumes and corrected portraits. Its Target Test uses
+  the standard counterpart's course.
+- Fixed a crash in the hidden character's Adventure escape sequence and
+  corrected its appearance on Flat Zone.
+- Corrected imported Classic, Adventure, and All-Star high scores without
+  resetting other save progress.
+- Stopped repeat notifications for trophies already earned.
 
 ## Changes in Vita v0.8.7
 

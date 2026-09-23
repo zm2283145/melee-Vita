@@ -132,6 +132,9 @@ jobs:
             Get-Content platforms/vita/updater/public-key.hex -Raw
           ).Trim()
           ./platforms/vita/build-full.ps1 -Configuration Release -Jobs 2 `
+            -InternalResolutionScale 60 -GameplayInternalResolutionScale 75 `
+            -EnableScaledShadowFrames -EnableScaledGxCopyFrames `
+            -EnableRuntimeResolutionMenu `
             -EnableUpdater -UpdaterPublicKeyHex $publicKey `
             -VitaBuildNumber "${{ github.run_number }}.${{ github.run_attempt }}"
 

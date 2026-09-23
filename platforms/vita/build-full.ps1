@@ -511,7 +511,8 @@ foreach ($costume in @('Re', 'Bu', 'Bk', 'Ye', 'Wh')) {
         throw "Missing Giga Bowser costume asset: $source"
     }
     $vpkArguments += @('-a', "$source=costumes/$name")
-}if ($EnableUpdater) {
+}
+if ($EnableUpdater) {
     $helperDirectory = Join-Path $build 'updater-helper'
     $helperObjectsDirectory = Join-Path $helperDirectory 'obj'
     New-Item -ItemType Directory -Force -Path $helperObjectsDirectory | Out-Null

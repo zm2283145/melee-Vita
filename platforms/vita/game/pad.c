@@ -191,11 +191,9 @@ BOOL PADInit(void)
 {
     if (!s_initialized) {
         s_is_pstv = sceKernelIsPSVitaTV() > 0;
-        if (s_is_pstv) {
+        sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG_WIDE);
+        if (s_is_pstv)
             sceCtrlSetSamplingModeExt(SCE_CTRL_MODE_ANALOG_WIDE);
-        } else {
-            sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG_WIDE);
-        }
         s_touch_ready =
             sceTouchSetSamplingState(
                 SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START) >= 0 &&
@@ -210,7 +208,9 @@ BOOL PADInit(void)
 u32 PADRead(PADStatus* status)
 {
     SceCtrlData vita;
+    SceCtrlData analog;
     int read;
+    int analog_read = 0;
     int i;
     if (!s_initialized) PADInit();
     memset(status, 0, sizeof(*status) * PAD_MAX_CONTROLLERS);
@@ -219,9 +219,20 @@ u32 PADRead(PADStatus* status)
 
     update_touch();
     memset(&vita, 0, sizeof(vita));
-    read = s_is_pstv
-               ? sceCtrlPeekBufferPositiveExt2(0, &vita, 1)
-               : sceCtrlPeekBufferPositive(0, &vita, 1);
+    if (s_is_pstv) {
+        /* Read the wireless axes through the standard controller API.
+         * Ext2 is still needed for L2/R2/L3/R3 button mapping. */
+        memset(&analog, 0, sizeof(analog));
+        analog_read = sceCtrlPeekBufferPositive2(1, &analog, 1);
+        read = sceCtrlPeekBufferPositiveExt2(1, &vita, 1);
+        if (read < 1) {
+            read = sceCtrlPeekBufferPositiveExt2(0, &vita, 1);
+            if (analog_read < 1)
+                analog_read = sceCtrlPeekBufferPositive2(0, &analog, 1);
+        }
+    } else {
+        read = sceCtrlPeekBufferPositive(0, &vita, 1);
+    }
     if (read < 1) {
         s_raw_buttons = 0;
         status[0].err = PAD_ERR_NOT_READY;
@@ -231,10 +242,17 @@ u32 PADRead(PADStatus* status)
     s_raw_buttons_triggered |= vita.buttons & ~s_raw_buttons;
     s_raw_buttons = vita.buttons;
     status[0].err = PAD_ERR_NONE;
-    status[0].stickX = stick_axis(vita.lx);
-    status[0].stickY = stick_axis_inverted(vita.ly);
-    status[0].substickX = stick_axis(vita.rx);
-    status[0].substickY = stick_axis_inverted(vita.ry);
+    if (s_is_pstv && analog_read > 0) {
+        status[0].stickX = stick_axis(analog.lx);
+        status[0].stickY = stick_axis_inverted(analog.ly);
+        status[0].substickX = stick_axis(analog.rx);
+        status[0].substickY = stick_axis_inverted(analog.ry);
+    } else {
+        status[0].stickX = stick_axis(vita.lx);
+        status[0].stickY = stick_axis_inverted(vita.ly);
+        status[0].substickX = stick_axis(vita.rx);
+        status[0].substickY = stick_axis_inverted(vita.ry);
+    }
 
     if (vita.buttons & SCE_CTRL_LEFT) status[0].button |= PAD_BUTTON_LEFT;
     if (vita.buttons & SCE_CTRL_RIGHT) status[0].button |= PAD_BUTTON_RIGHT;

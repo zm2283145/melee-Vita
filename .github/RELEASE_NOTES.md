@@ -6,6 +6,12 @@ supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.8.12
+
+- Fixed analog stick input on PlayStation TV with a DualShock 3 controller.
+  The D-pad, extra controller buttons, and handheld Vita controls remain
+  available.
+
 ## Changes in Vita v0.8.11
 
 - Paused matches now use L + R + Start to exit on Vita. The prompt shows Vita

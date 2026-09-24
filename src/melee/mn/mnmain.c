@@ -1022,11 +1022,11 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
     HSD_SisLib_803A6B98(
         text, 55.0f, 730.0f,
         data->vita_options_page == 0
-            ? "L / R: PAGE    D-PAD: SELECT / CHANGE    X OR O: CLOSE"
+            ? "L/R PAGE   STICK/D-PAD MOVE   X/O CLOSE"
             : data->vita_control_capture_action !=
                       VITA_CONTROL_CAPTURE_NONE
-                  ? "PRESS DESIRED BUTTON    SELECT + START: CANCEL"
-                  : "L / R: PAGE    D-PAD: SELECT    X: REMAP    O: CLOSE");
+                  ? "PSTV L2/R2/L3/R3 OK   SELECT+START CANCEL"
+                  : "L/R PAGE   STICK/D-PAD MOVE   X REMAP   O CLOSE");
     HSD_SisLib_803A74F0(
         text, help_entry,
         (GXColor*) (data->vita_options_page == 0
@@ -1116,6 +1116,7 @@ static bool mn_VitaOptionsHandleInput(void)
 {
     MainMenuData* data;
     u32 raw_buttons;
+    u64 repeated_directions;
     int touch_x;
     int touch_y;
     int* option;
@@ -1132,6 +1133,7 @@ static bool mn_VitaOptionsHandleInput(void)
     }
 
     raw_buttons = melee_vita_pad_raw_buttons_triggered();
+    repeated_directions = gm_801A36C0(0);
     melee_vita_gxm_require_full_resolution(
         MELEE_VITA_NATIVE_REASON_DEBUG_UI);
     if (melee_vita_pad_touch_triggered(&touch_x, &touch_y)) {
@@ -1286,25 +1288,25 @@ static bool mn_VitaOptionsHandleInput(void)
     row_count = data->vita_options_page == 0
                     ? 3
                     : MELEE_VITA_ACTION_COUNT + 2;
-    if (raw_buttons & SCE_CTRL_UP) {
+    if (repeated_directions & PAD_ANY_UP) {
         data->vita_resolution_row =
             (data->vita_resolution_row + row_count - 1) % row_count;
         sfxMove();
         mn_VitaOptionsDraw(data);
         return true;
     }
-    if (raw_buttons & SCE_CTRL_DOWN) {
+    if (repeated_directions & PAD_ANY_DOWN) {
         data->vita_resolution_row =
             (data->vita_resolution_row + 1) % row_count;
         sfxMove();
         mn_VitaOptionsDraw(data);
         return true;
     }
-    if (!(raw_buttons & (SCE_CTRL_LEFT | SCE_CTRL_RIGHT))) {
+    if (!(repeated_directions & (PAD_ANY_LEFT | PAD_ANY_RIGHT))) {
         return true;
     }
 
-    direction = (raw_buttons & SCE_CTRL_RIGHT) ? 1 : -1;
+    direction = (repeated_directions & PAD_ANY_RIGHT) ? 1 : -1;
     if (data->vita_options_page == 1) {
         return true;
     }

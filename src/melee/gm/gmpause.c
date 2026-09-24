@@ -10,6 +10,14 @@
 #include <sysdolphin/baselib/gobjobject.h>
 #include <sysdolphin/baselib/gobjproc.h>
 #include <sysdolphin/baselib/jobj.h>
+#ifdef TARGET_VITA
+#include <pad_vita.h>
+#include <sysdolphin/baselib/dobj.h>
+#include <sysdolphin/baselib/mobj.h>
+#include <sysdolphin/baselib/tobj.h>
+// Packed from the source icons in platforms/vita/assets/buttons.
+#include "vita_pause_exit_prompt.inc"
+#endif
 
 struct PauseData {
     /* +0 */ HSD_JObj* background;
@@ -23,6 +31,59 @@ struct PauseData {
 static struct PauseData lbl_80479B10;
 static HSD_Archive* lbl_804D6700;
 static HSD_GObj* lbl_804D6704;
+
+#ifdef TARGET_VITA
+static HSD_ImageDesc gmPause_VitaExitPromptDesc;
+static HSD_ImageDesc gmPause_VitaRetryPromptDesc;
+
+static void gmPause_UseVitaPrompt(HSD_JObj* jobj, HSD_ImageDesc* desc,
+                                  const u8* pixels, u16 width, u16 height)
+{
+    HSD_DObj* dobj = HSD_JObjGetDObj(jobj);
+    HSD_TObj* tobj;
+    if (dobj == NULL || dobj->mobj == NULL ||
+        (tobj = dobj->mobj->tobj) == NULL)
+    {
+        return;
+    }
+    DP_SET(desc->image_ptr, pixels);
+    desc->width = width;
+    desc->height = height;
+    desc->format = GX_TF_IA4;
+    desc->mipmap = 0;
+    desc->minLOD = 0.0F;
+    desc->maxLOD = 0.0F;
+    tobj->imagedesc = desc;
+}
+
+static void gmPause_UseVitaPrompts(void)
+{
+    gmPause_UseVitaPrompt(lbl_80479B10.lras, &gmPause_VitaExitPromptDesc,
+                          gmPause_VitaExitPrompt, 124, 36);
+    // Select is the default physical binding for Melee's retry (Z) action.
+    if (melee_vita_pad_get_mapping(MELEE_VITA_BUTTON_SELECT) ==
+        MELEE_VITA_ACTION_Z)
+    {
+        gmPause_UseVitaPrompt(lbl_80479B10.z, &gmPause_VitaRetryPromptDesc,
+                              gmPause_VitaRetryPrompt, 80, 36);
+    }
+}
+
+static void gmPause_UseNeutralExitColors(void)
+{
+    HSD_DObj* dobj = HSD_JObjGetDObj(lbl_80479B10.lras);
+    HSD_TObj* tobj;
+    if (dobj == NULL || dobj->mobj == NULL ||
+        (tobj = dobj->mobj->tobj) == NULL)
+    {
+        return;
+    }
+    // The stock A-button material tints that part of the texture green.
+    // Use the replacement texture's own grayscale colors for this prompt.
+    tobj->flags = (tobj->flags & ~TEX_COLORMAP_MASK) | TEX_COLORMAP_REPLACE;
+    HSD_MObjCompileTev(dobj->mobj);
+}
+#endif
 
 void fn_801A0E34(HSD_GObj* arg0)
 {
@@ -65,6 +126,9 @@ void gm_801A0FEC(s32 slot, u8 flag)
         HSD_JObjSetFlagsAll(lbl_80479B10.background, JOBJ_HIDDEN);
     }
     HSD_JObjAnimAll(lbl_80479B10.background);
+#ifdef TARGET_VITA
+    gmPause_UseVitaPrompts();
+#endif
 }
 
 void gm_801A10FC(int slot)
@@ -95,6 +159,10 @@ void fn_801A1134(void)
     gm_8016895C(jobj, GM_SCENE_MODEL(scene, 0), 0);
     HSD_JObjReqAnimAll(jobj, 1.0f);
     HSD_JObjAnimAll(jobj);
+#ifdef TARGET_VITA
+    gmPause_UseVitaPrompts();
+    gmPause_UseNeutralExitColors();
+#endif
     HSD_JObjSetFlagsAll(jobj, JOBJ_HIDDEN);
     HSD_GObj_SetupProc(gobj, fn_801A0E34, 0U);
     lbl_80479B10.slot = 99;

@@ -41,3 +41,5 @@ steam_appid.txt
 !src/melee/mn/giga_bowser_csp_bk.inc
 !src/melee/mn/giga_bowser_csp_ye.inc
 !src/melee/mn/giga_bowser_csp_wh.inc
+# Vita-only pause prompt is a generated source texture.
+!src/melee/gm/vita_pause_exit_prompt.inc

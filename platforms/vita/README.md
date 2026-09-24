@@ -178,7 +178,11 @@ it. The underlying Melee menu cannot move until the panel closes.
 
 The modal's second page remaps Cross, Circle, Square, Triangle, L, R, Select,
 and Start to the GameCube A, B, X, Y, L, R, Z, and Start actions. L/R switches
-pages. The Display page renders touchable minus and plus buttons beside each
+pages. During a paused match, hold the mapped L and R buttons and press
+Start to quit the match; the pause overlay shows this Vita shortcut.
+Where a mode supports retry, Select performs Melee's Z action with the default
+mapping, and the pause overlay shows a Select icon.
+The Display page renders touchable minus and plus buttons beside each
 percentage. On the Controls page, select a Melee action with touch or the
 D-pad and Cross, then press the Vita button to assign. All physical buttons,
 including Cross and Circle, are captured instead of interpreted as Close
@@ -194,7 +198,9 @@ On PlayStation TV, the Controls page also captures DualShock 4 L2, R2, L3,
 and R3. L1/R1 remain the default GameCube L/R bindings. Version-1 handheld
 control settings are migrated in place; the additional DS4 inputs begin
 unbound and can replace any existing action through the same capture prompt.
-Select+Start cancels capture on PSTV when no touchscreen is available.
+Select+Start cancels capture on PSTV when no touchscreen is available. The
+left stick navigates Vita Options as it does other menus; the right stick
+remains Melee's C-stick.
 
 The Vita Options overlay uses a 936x520 full-screen-style panel patterned after
 the Vita save-editor layout: large Display and Controls tabs, explicit touch

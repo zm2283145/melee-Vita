@@ -6,6 +6,18 @@ supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.8.11
+
+- Paused matches now use L + R + Start to exit on Vita. The prompt shows Vita
+  buttons while keeping Melee's original RESET and RETRY lettering.
+- Select now works as the default retry button in modes that offer retry, with
+  a matching on-screen icon.
+- Vita Options now supports left-stick navigation and gives clearer guidance
+  for PlayStation TV controller buttons.
+- Fixed an Adventure Mode bug that could advance past the Yoshis after losing.
+- Fixed Marth and Roy's Side-B glow so it lasts for the intended duration.
+- Improved stability in the Polar Bear item's behavior.
+
 ## Changes in Vita v0.8.10
 
 - Improved performance during Master Hand and Crazy Hand rocket attacks and

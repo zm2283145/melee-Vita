@@ -1381,8 +1381,12 @@ void fn_8016CFE0(void)
         if (DbLevel >= DbLKind_DebugRom) {
             tmp_btns = PAD_TRIGGER_L | PAD_TRIGGER_R | PAD_BUTTON_A;
         } else {
+#ifdef TARGET_VITA
+            tmp_btns = PAD_TRIGGER_L | PAD_TRIGGER_R | PAD_BUTTON_START;
+#else
             tmp_btns = PAD_TRIGGER_L | PAD_TRIGGER_R | PAD_BUTTON_A |
                        PAD_BUTTON_START;
+#endif
         }
         no_contest_buttons = tmp_btns;
         allow_no_contest = tmp->start.x3_4;

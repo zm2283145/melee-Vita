@@ -10,6 +10,7 @@ static void test_defaults(void)
     int i;
     melee_vita_pad_mapping_defaults(mapping);
     assert(melee_vita_pad_mapping_valid(mapping));
+    assert(mapping[MELEE_VITA_BUTTON_SELECT] == MELEE_VITA_ACTION_Z);
     for (i = 0; i < MELEE_VITA_ACTION_COUNT; ++i)
         assert(mapping[i] == i);
     for (; i < MELEE_VITA_BUTTON_COUNT; ++i)

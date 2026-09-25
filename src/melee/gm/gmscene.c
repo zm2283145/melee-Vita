@@ -279,6 +279,13 @@ static inline u64 maybe_gm_801A48A4(u8 i)
 }
 
 #ifdef TARGET_VITA
+#include <melee/gr/ground.h>
+#include <melee/pl/player.h>
+extern void melee_vita_profiler_record_duration(unsigned int zone,
+                                                u64 elapsed_us)
+    __attribute__((weak));
+#endif
+#ifdef TARGET_VITA
 /* Frame phase timing, reported with [FRAMEPHASE] by the Vita GX layer. */
 extern u64 sceKernelGetProcessTimeWide(void);
 u64 g_melee_vita_update_us;
@@ -423,6 +430,20 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
             g_melee_vita_update_us += now_us - g_melee_vita_update_start_us;
             g_melee_vita_update_ticks += (u32) pad_queue_count;
             g_melee_vita_render_start_us = now_us;
+            /* Live-profiler builds only: the symbol is absent otherwise. */
+            if (melee_vita_profiler_record_duration != NULL) {
+                u32 fighters = 0;
+                int slot;
+                for (slot = 0; slot < 6; ++slot) {
+                    if (Player_GetEntity(slot) != NULL) ++fighters;
+                }
+                melee_vita_profiler_record_duration(
+                    27u, now_us - g_melee_vita_update_start_us);
+                melee_vita_profiler_record_duration(
+                    28u, gm_804D6720 != NULL ? gm_804D6720->scene_kind : 0u);
+                melee_vita_profiler_record_duration(29u, stage_info.grkind);
+                melee_vita_profiler_record_duration(30u, fighters);
+            }
         }
 #endif
         lb_800195D0();

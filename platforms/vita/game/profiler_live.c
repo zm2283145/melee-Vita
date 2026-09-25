@@ -31,7 +31,7 @@
 #define PROFILER_STREAM_BUFFER_BYTES 8192u
 #define PROFILER_NET_MEMORY_BYTES (1024u * 1024u)
 #define PROFILER_DRAIN_EVENTS 128u
-#define PROFILER_DURATION_COUNT 27u
+#define PROFILER_DURATION_COUNT 34u
 #define PROFILER_RECONNECT_DELAY_US 500000u
 #define PROFILER_STATUS_PATH "ux0:data/melee/profiler-live-status.txt"
 
@@ -50,6 +50,9 @@ static const char* const s_duration_names[] = {
     "duration.cpu_display_decode_us", "duration.cpu_display_submit_us",
     "duration.rt_scene_begin_us", "duration.rt_copy_us",
     "duration.rt_present_us",
+    "duration.game_update_us", "state.scene_kind", "state.stage_kind",
+    "state.fighters", "duration.rt_end_scene_us",
+    "duration.rt_gpu_finish_us", "duration.rt_swap_us",
 };
 _Static_assert(
     sizeof(s_duration_names) / sizeof(s_duration_names[0]) ==

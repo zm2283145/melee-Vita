@@ -5,6 +5,7 @@
 #include "heap.h"
 #include "../texture_decoder.h"
 #include "gx_render.h"
+#include "profiler_live.h"
 #include "../vita_log.h"
 
 #include <dolphin/gx/GXEnum.h>
@@ -686,7 +687,16 @@ static bool resolution_scaling_enabled(void)
            s_gameplay_resolution_option != MELEE_VITA_RESOLUTION_NATIVE;
 }
 
+static void rt_begin_scene_impl(u32 clear_color, int clear);
 static void rt_begin_scene(u32 clear_color, int clear)
+{
+    const u64 profile_start = sceKernelGetProcessTimeWide();
+    rt_begin_scene_impl(clear_color, clear);
+    melee_vita_profiler_record_duration(
+        24u, sceKernelGetProcessTimeWide() - profile_start);
+}
+
+static void rt_begin_scene_impl(u32 clear_color, int clear)
 {
     SceGxmContext* context;
     const u32 raw_native_reasons =
@@ -730,6 +740,11 @@ static void rt_begin_scene(u32 clear_color, int clear)
         sceGxmSetBackDepthFunc(context, SCE_GXM_DEPTH_FUNC_ALWAYS);
         sceGxmSetFrontDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
         sceGxmSetBackDepthWriteEnable(context, SCE_GXM_DEPTH_WRITE_ENABLED);
+        /* Cull mode is context state that survives scene boundaries.  If the
+         * previous frame ended on a culled draw, vita2d's clear fan can be
+         * culled away and the frame keeps its old contents (vi1202 showed
+         * the Giga transformation behind a trail of trophies). */
+        sceGxmSetCullMode(context, SCE_GXM_CULL_NONE);
         rt_set_viewport(s_render_width, s_render_height, true);
         vita2d_set_clear_color(clear_color);
         vita2d_clear_screen();
@@ -1308,7 +1323,16 @@ static void exec_copy_clear(const void* payload)
     clear_copy_region(clear->x, clear->y, clear->width, clear->height);
 }
 
+static void exec_copy_impl(const void* payload);
 static void exec_copy(const void* payload)
+{
+    const u64 profile_start = sceKernelGetProcessTimeWide();
+    exec_copy_impl(payload);
+    melee_vita_profiler_record_duration(
+        25u, sceKernelGetProcessTimeWide() - profile_start);
+}
+
+static void exec_copy_impl(const void* payload)
 {
     const RqCopy* c = payload;
     SceGxmContext* context = vita2d_get_context();
@@ -1734,11 +1758,21 @@ typedef struct RqPresent {
     u16* indices;
 } RqPresent;
 
+static void exec_present_impl(const void* payload);
 static void exec_present(const void* payload)
+{
+    const u64 profile_start = sceKernelGetProcessTimeWide();
+    exec_present_impl(payload);
+    melee_vita_profiler_record_duration(
+        26u, sceKernelGetProcessTimeWide() - profile_start);
+}
+
+static void exec_present_impl(const void* payload)
 {
     const RqPresent* p = payload;
     if (p->bar > 0.0f) {
         ++g_melee_vita_gxm_state_epoch;
+        sceGxmSetCullMode(vita2d_get_context(), SCE_GXM_CULL_NONE);
         rt_default_depth();
         vita2d_set_blend_mode_add(0);
         vita2d_draw_rectangle(0.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
@@ -1754,6 +1788,7 @@ static void exec_present(const void* payload)
         s_render_height = MELEE_VITA_DISPLAY_HEIGHT;
         vita2d_start_drawing();
         ++g_melee_vita_gxm_state_epoch;
+        sceGxmSetCullMode(vita2d_get_context(), SCE_GXM_CULL_NONE);
         rt_set_viewport(
             MELEE_VITA_DISPLAY_WIDTH, MELEE_VITA_DISPLAY_HEIGHT, false);
         rt_default_depth();

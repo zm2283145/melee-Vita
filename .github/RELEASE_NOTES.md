@@ -6,6 +6,12 @@ supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.8.13
+
+- Added support for the upcoming Homebrew Update plugin. When the plugin
+  reports that it is ready for this title, Melee leaves update discovery to
+  the shared service instead of running its built-in update check.
+
 ## Changes in Vita v0.8.12
 
 - Fixed analog stick input on PlayStation TV with a DualShock 3 controller.

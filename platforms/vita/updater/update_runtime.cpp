@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "update_runtime.h"
 
+#include "homebrew_update_client.h"
 #include "update_core.hpp"
 #include "update_vita.hpp"
 
@@ -434,6 +435,12 @@ void run_check() {
         } else {
             set_mode(Mode::Dormant);
         }
+        return;
+    }
+    if (HomebrewUpdateClientGetStatusForTitle(
+            melee::vita::update::kMainTitleId) == HOMEBREW_UPDATE_READY)
+    {
+        set_mode(Mode::Dormant);
         return;
     }
 

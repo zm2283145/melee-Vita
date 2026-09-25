@@ -43,8 +43,8 @@ pwsh -NoProfile -File platforms/vita/build-full.ps1 -Configuration Release -Jobs
 
 The output is **`build-vita/full/SmashMeleevita.vpk`**, with the game title
 **Smash Melee Vita** and unchanged title ID `MLVITA002`.
-[`version.json`](version.json) sets release version **0.8.2** and Vita's
-two-part `APP_VER` value **00.82**. Update both entries for future releases.
+[`version.json`](version.json) sets release version **0.8.13** and Vita's
+two-part `APP_VER` value **00.91**. Update both entries for future releases.
 The Press Start screen shows `VITA <release> BUILD <run>.<attempt>` in its
 bottom-right corner. CI supplies the GitHub Actions run and attempt numbers;
 local builds show `BUILD local` unless `-VitaBuildNumber`, or the
@@ -282,6 +282,16 @@ vdpm install libsodium curl-mbedtls libarchive
 This path uses VitaShell's unsafe auth ID and internal PAF/promoter APIs. It is
 intentionally disabled by default and must be tested on a disposable
 HENkaku/taiHEN setup before distribution.
+
+Updater-capable builds also include the Homebrew Update client. After network
+initialization, the built-in updater queries the upcoming shell plugin for
+title ID `MLVITA002`. Only `HOMEBREW_UPDATE_READY` disables built-in update
+discovery; an absent or disabled service, hook errors, malformed responses,
+and timeouts retain the existing built-in updater behavior.
+Every VPK includes `sce_sys/homebrew_update.ini`, which points the plugin to
+the stable `MLVITA002-ver.xml` asset on the latest GitHub release. The release
+workflow generates that feed and `MLVITA002-changeinfo.xml` from the final VPK,
+its APP_VER, and the current release-notes section.
 
 ## Opt-in Debug build
 

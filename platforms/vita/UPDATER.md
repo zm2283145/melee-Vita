@@ -77,6 +77,13 @@ VPK's exact byte size and SHA-1, the package APP_VER and content ID, and stable
 `releases/latest/download` URLs. These assets are separate from the signed
 manifest consumed by Melee's built-in updater.
 
+For end-user installation and compatibility guidance, see
+[VitaHomebrewUpdate](https://github.com/zm2283145/VitaHomebrewUpdate). Its
+native LiveArea workflow is currently supported only within the plugin's
+hardware-tested retail firmware 3.65 scope. Read its prominent VitaDB daemon
+incompatibility warning before installation; do not enable both daemon plugins
+unless the plugin documentation says the conflict has been resolved.
+
 The `vita-release.yml` workflow reads the checked-in public key from
 `platforms/vita/updater/public-key.hex` and the matching PEM private key from
 the encrypted `VITA_UPDATER_PRIVATE_KEY_PEM` repository secret. Branch and

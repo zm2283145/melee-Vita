@@ -1438,18 +1438,69 @@ static SceGxmPrimitiveType gxm_primitive(u8 primitive)
 static GxrShaderKey s_last_key;
 static GxrProgram* s_last_program;
 
+/* RAM front cache for fragment-program lookups.  find_program() hashes the
+ * whole key byte by byte with the persistent (disk/warm-cache) hash, which
+ * cost several ms per frame when consecutive draws alternate between
+ * materials.  Only the stages in use affect the generated shader, so the
+ * front cache hashes and compares just that prefix, a word at a time. */
+#define GXR_KEY_CACHE_SIZE 512u
+typedef struct GxrKeyCacheEntry {
+    u32 length;
+    GxrProgram* program;
+    GxrShaderKey key;
+} GxrKeyCacheEntry;
+static GxrKeyCacheEntry s_key_cache[GXR_KEY_CACHE_SIZE];
+
+static u32 shader_key_used_length(const GxrShaderKey* key)
+{
+    const u32 stages = key->stage_count < GXR_MAX_STAGES
+        ? key->stage_count : GXR_MAX_STAGES;
+    return (u32) offsetof(GxrShaderKey, stages) +
+           stages * (u32) sizeof(GxrStage);
+}
+
+static u32 shader_key_quick_hash(const GxrShaderKey* key, u32 length)
+{
+    const u8* bytes = (const u8*) key;
+    u32 hash = 2166136261u;
+    u32 i = 0;
+    for (; i + 4u <= length; i += 4u) {
+        u32 word;
+        memcpy(&word, bytes + i, sizeof(word));
+        hash = (hash ^ word) * 16777619u;
+    }
+    for (; i < length; ++i) hash = (hash ^ bytes[i]) * 16777619u;
+    hash ^= hash >> 15;
+    return hash;
+}
+
 static GxrProgram* lookup_program(const GxrShaderKey* key)
 {
     GxrShaderKey normalized = *key;
     GxrProgram* program;
+    GxrKeyCacheEntry* slot;
+    u32 length;
     melee_vita_normalize_alpha_shader_refs(normalized.alpha_ref);
+    length = shader_key_used_length(&normalized);
     if (s_last_program != NULL &&
-        memcmp(&s_last_key, &normalized, sizeof(normalized)) == 0) {
+        memcmp(&s_last_key, &normalized, length) == 0) {
         return s_last_program;
     }
-    program = find_program(&normalized);
+    slot = &s_key_cache[shader_key_quick_hash(&normalized, length) &
+                        (GXR_KEY_CACHE_SIZE - 1u)];
+    if (slot->program != NULL && slot->length == length &&
+        memcmp(&slot->key, &normalized, length) == 0) {
+        program = slot->program;
+    } else {
+        program = find_program(&normalized);
+        if (program != NULL && !program->failed && !program->blocked) {
+            slot->length = length;
+            slot->program = program;
+            memcpy(&slot->key, &normalized, length);
+        }
+    }
     if (program != NULL && !program->failed) {
-        s_last_key = normalized;
+        memcpy(&s_last_key, &normalized, length);
         s_last_program = program;
     }
     return program;
@@ -2101,9 +2152,34 @@ static GxrBumpVtxProgram* find_bump_vertex_program(
     return p;
 }
 
+/* Same idea as the fragment key cache: skip the persistent hash when the
+ * vertex key was seen recently (fighters alternate between a few keys). */
+#define GXR_VTX_KEY_CACHE_SIZE 256u
+static struct {
+    GxrVtxKey key;
+    GxrVtxProgram* program;
+} s_vtx_key_cache[GXR_VTX_KEY_CACHE_SIZE];
+
 static GxrVtxProgram* find_vertex_program(const GxrVtxKey* key)
 {
-    return find_vertex_program_kind(key, false, 0u);
+    const u8* bytes = (const u8*) key;
+    u32 hash = 2166136261u;
+    for (u32 i = 0; i < sizeof(*key); ++i)
+        hash = (hash ^ bytes[i]) * 16777619u;
+    hash ^= hash >> 13;
+    {
+        const u32 index = hash & (GXR_VTX_KEY_CACHE_SIZE - 1u);
+        GxrVtxProgram* program = s_vtx_key_cache[index].program;
+        if (program != NULL &&
+            memcmp(&s_vtx_key_cache[index].key, key, sizeof(*key)) == 0)
+            return program;
+        program = find_vertex_program_kind(key, false, 0u);
+        if (program != NULL && !program->failed && !program->blocked) {
+            s_vtx_key_cache[index].key = *key;
+            s_vtx_key_cache[index].program = program;
+        }
+        return program;
+    }
 }
 
 static GxrVtxProgram* find_point_vertex_program(const GxrVtxKey* key,
@@ -2196,6 +2272,25 @@ static void set_uniform(void* buffer, const SceGxmProgramParameter* param, u32 c
                             (unsigned) sceGxmProgramParameterGetComponentCount(param));
 }
 
+#ifdef MELEE_VITA_PROFILER
+void melee_vita_prof_add(int zone, u64 us);
+#define GXR_SUBZONE_BEGIN() u64 gxr_zone_t = sceKernelGetProcessTimeWide()
+#define GXR_SUBZONE_END(zone) do { \
+        const u64 gxr_zone_now = sceKernelGetProcessTimeWide(); \
+        melee_vita_prof_add((zone), gxr_zone_now - gxr_zone_t); \
+        gxr_zone_t = gxr_zone_now; \
+    } while (0)
+#else
+#define GXR_SUBZONE_BEGIN() do { } while (0)
+#define GXR_SUBZONE_END(zone) do { } while (0)
+#endif
+/* Profiler sub-zones of gpu_submit (see VPZ_* in gx.c). */
+#define GXR_ZONE_VERTEX_PROGRAM 12
+#define GXR_ZONE_FRAGMENT_PROGRAM 13
+#define GXR_ZONE_RQ_PUSH 15
+#define GXR_ZONE_RESOLVE_TEXTURES 16
+#define GXR_ZONE_UNIFORM_COPY 17
+
 static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
                               const GxrVtxUniforms* u,
                               const GxrPointParams* point,
@@ -2215,6 +2310,7 @@ static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
         return false;
     if (point_draw && vkey->has_mtxidx) return false;
     if (cull == GXR_CULL_ALL) return true;
+    GXR_SUBZONE_BEGIN();
     vp = (last_vp != NULL && last_vp->point == point_draw &&
           last_vp->point_tex_mask == point_tex_mask &&
           memcmp(&last_vp->key, vkey, sizeof(*vkey)) == 0)
@@ -2223,10 +2319,12 @@ static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
                      : find_vertex_program(vkey);
     last_vp = vp;
     if (vp == NULL || vp->failed) { ++s_stats.fallback; return false; }
+    GXR_SUBZONE_END(GXR_ZONE_VERTEX_PROGRAM);
     program = lookup_program(&draw->key);
     if (program == NULL || program->failed) { ++s_stats.fallback; return false; }
     fragment = find_fragment(program, draw);
     if (fragment == NULL) { ++s_stats.fallback; return false; }
+    GXR_SUBZONE_END(GXR_ZONE_FRAGMENT_PROGRAM);
 
     mtx_comps = vkey->has_mtxidx ? 120u : 12u;
     tg_comps = vkey->texgen_count * 12u;
@@ -2242,6 +2340,7 @@ static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
     d = melee_vita_rq_push(exec_draw, sizeof(RqDraw) + total * sizeof(f32));
     if (d == NULL) return false;
     memset(d, 0, sizeof(*d));
+    GXR_SUBZONE_END(GXR_ZONE_RQ_PUSH);
     d->vertex = vp->vertex;
     d->fragment = fragment;
     d->program = program;
@@ -2266,6 +2365,7 @@ static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
     memcpy(d->fog_color, draw->fog_color, sizeof(d->fog_color));
     memcpy(d->fog_params, draw->fog_params, sizeof(d->fog_params));
     resolve_textures(draw, d);
+    GXR_SUBZONE_END(GXR_ZONE_RESOLVE_TEXTURES);
     out = d->uniforms;
     memcpy(out, u->pos, mtx_comps * sizeof(f32)); out += mtx_comps;
     memcpy(out, u->nrm, mtx_comps * sizeof(f32)); out += mtx_comps;
@@ -2281,6 +2381,7 @@ static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
         out[2] = point->tex_span;
         out[3] = 0.0f;
     }
+    GXR_SUBZONE_END(GXR_ZONE_UNIFORM_COPY);
     ++s_stats.draws;
     return true;
 }

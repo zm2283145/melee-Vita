@@ -2,6 +2,7 @@
 /* GXM-backed frame sink used by the original game's GX compatibility layer. */
 #include "gxm_game.h"
 #include "copy_texture_lifetime.h"
+#include "texture_swizzle.h"
 #include "heap.h"
 #include "../texture_decoder.h"
 #include "gx_render.h"
@@ -183,7 +184,10 @@ typedef struct VitaTextureCacheEntry {
     u32 sample_hash;
     u32 last_used_frame;
     u32 hash_frame;
+    u8 swizzled;
+    u32 light_hash;
     struct VitaTextureCacheEntry* next;
+    struct VitaTextureCacheEntry* hash_next;
 } VitaTextureCacheEntry;
 
 static VitaTextureCacheEntry* s_textures;
@@ -200,12 +204,34 @@ static struct {
 } s_copy_textures[VITA_COPY_TEXTURES];
 static void retire_texture(struct vita2d_texture* texture);
 
-#define VITA_TEXTURE_HASH_SIZE 1024u
+/* Chained hash over the texture cache.  This used to be a direct-mapped
+ * "last hit" table in front of the entry list: two textures sharing a slot
+ * (or a slot wiped by eviction) fell back to walking every cached texture,
+ * which cost 10+ ms per frame on busy stages. */
+#define VITA_TEXTURE_HASH_SIZE 2048u
 static VitaTextureCacheEntry* s_texture_hash[VITA_TEXTURE_HASH_SIZE];
 static inline u32 texture_hash_slot(const MeleeVitaTextureSource* source)
 {
-    const uintptr_t key = (uintptr_t) source->data;
-    return (u32) ((key >> 5) ^ (key >> 15) ^ source->format) & (VITA_TEXTURE_HASH_SIZE - 1u);
+    u32 key = (u32) (uintptr_t) source->data ^
+              ((u32) (uintptr_t) source->palette * 0x9e3779b1u) ^
+              ((u32) source->format << 27);
+    key ^= key >> 16;
+    key *= 0x7feb352du;
+    key ^= key >> 15;
+    return key & (VITA_TEXTURE_HASH_SIZE - 1u);
+}
+static void texture_hash_remove(VitaTextureCacheEntry* entry)
+{
+    VitaTextureCacheEntry** link =
+        &s_texture_hash[texture_hash_slot(&entry->source)];
+    while (*link != NULL) {
+        if (*link == entry) {
+            *link = entry->hash_next;
+            entry->hash_next = NULL;
+            return;
+        }
+        link = &(*link)->hash_next;
+    }
 }
 static u32 s_frame_counter;
 static u32 s_texture_uploads;
@@ -213,14 +239,15 @@ static u32 s_texture_failures;
 
 /* Archives are frequently reloaded at the same address with different
  * contents, so a cheap content sample is part of cache validation. */
-static u32 texture_sample_hash(const MeleeVitaTextureSource* source)
+static u32 texture_sample_hash_n(const MeleeVitaTextureSource* source,
+                                 u32 samples)
 {
     const u8* data = source->data;
     u32 hash = 2166136261u;
-    /* Sample ~256 bytes spread over the whole (compressed) image so mutable
+    /* Sample bytes spread over the whole (compressed) image so mutable
      * textures such as movie planes are noticed without hashing everything. */
     const u32 bytes = (u32) source->width * source->height / 2u;
-    const u32 step = bytes > 256u ? bytes / 256u : 1u;
+    const u32 step = bytes > samples ? bytes / samples : 1u;
     u32 i;
     if (data == NULL) return 0;
     for (i = 0; i < bytes; i += step) { hash ^= data[i]; hash *= 16777619u; }
@@ -229,6 +256,11 @@ static u32 texture_sample_hash(const MeleeVitaTextureSource* source)
         for (i = 0; i < 32u; ++i) { hash ^= palette[i]; hash *= 16777619u; }
     }
     return hash;
+}
+
+static u32 texture_sample_hash(const MeleeVitaTextureSource* source)
+{
+    return texture_sample_hash_n(source, 256u);
 }
 
 static SceGxmTextureAddrMode address_mode(u32 mode)
@@ -387,10 +419,15 @@ static int refresh_texture_impl(VitaTextureCacheEntry* entry,
         free(pixels);
         return -1;
     }
-    for (y = 0; y < source->height; ++y)
-        memcpy(destination + (size_t) y * stride,
-               pixels + (size_t) y * source->width,
-               (size_t) source->width * sizeof(*pixels));
+    if (entry->swizzled) {
+        melee_vita_swizzle_rgba8((u32*) destination, pixels,
+                                 source->width, source->height);
+    } else {
+        for (y = 0; y < source->height; ++y)
+            memcpy(destination + (size_t) y * stride,
+                   pixels + (size_t) y * source->width,
+                   (size_t) source->width * sizeof(*pixels));
+    }
 #ifdef MELEE_VITA_RENDER_TRACE
     {
         u32 min_r = 255u, min_g = 255u, min_b = 255u, min_a = 255u;
@@ -466,12 +503,9 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     default:
         return NULL;
     }
-    entry = s_texture_hash[texture_hash_slot(source)];
-    if (entry == NULL || !same_texture(&entry->source, source)) {
-        for (entry = s_textures; entry != NULL; entry = entry->next)
-            if (same_texture(&entry->source, source)) break;
-        if (entry != NULL) s_texture_hash[texture_hash_slot(source)] = entry;
-    }
+    for (entry = s_texture_hash[texture_hash_slot(source)]; entry != NULL;
+         entry = entry->hash_next)
+        if (same_texture(&entry->source, source)) break;
     if (entry != NULL) {
         {
             entry->last_used_frame = s_frame_counter;
@@ -481,7 +515,26 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
                 entry->content_generation == s_texture_content_generation)
                 return entry->texture;
             entry->hash_frame = s_frame_counter;
-            sample = texture_sample_hash(source);
+            /* Every sampled byte is a likely cache miss in game memory, and
+             * this runs for every texture every frame: do a light 32-sample
+             * check per frame (it catches edits that touch the image
+             * broadly) and the full 256-sample check every 16 frames,
+             * staggered per texture.  Movie planes always get the full
+             * check. */
+            {
+                const bool full =
+                    source->chroma_u != NULL ||
+                    entry->content_generation != s_texture_content_generation ||
+                    ((s_frame_counter + ((u32) (uintptr_t) entry >> 4)) & 15u) == 0u;
+                if (full) {
+                    sample = texture_sample_hash(source);
+                } else {
+                    const u32 light = texture_sample_hash_n(source, 32u);
+                    if (light == entry->light_hash) return entry->texture;
+                    sample = texture_sample_hash(source);
+                }
+                entry->light_hash = texture_sample_hash_n(source, 32u);
+            }
             if (entry->content_generation != s_texture_content_generation ||
                 entry->sample_hash != sample) {
 #ifdef MELEE_VITA_RENDER_TRACE
@@ -504,9 +557,25 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     entry->source = *source;
     sample = texture_sample_hash(source);
     entry->sample_hash = sample;
+    entry->light_hash = texture_sample_hash_n(source, 32u);
     entry->hash_frame = s_frame_counter;
     entry->last_used_frame = s_frame_counter;
     entry->texture = vita2d_create_empty_texture(source->width, source->height);
+#ifndef MELEE_VITA_LINEAR_TEXTURES
+    /* Game textures are almost all power-of-two; store those swizzled so
+     * the GPU samples them cache-friendly (see texture_swizzle.h). */
+    if (entry->texture != NULL && source->chroma_u == NULL &&
+        melee_vita_swizzle_supported(source->width, source->height) &&
+        vita2d_texture_get_stride(entry->texture) ==
+            source->width * sizeof(u32) &&
+        sceGxmTextureInitSwizzled(
+            &entry->texture->gxm_tex,
+            vita2d_texture_get_datap(entry->texture),
+            SCE_GXM_TEXTURE_FORMAT_A8B8G8R8,
+            source->width, source->height, 0) >= 0) {
+        entry->swizzled = 1u;
+    }
+#endif
     ++s_texture_uploads;
     if (entry->texture == NULL || refresh_texture(entry, source) != 0) {
         static u32 logged;
@@ -542,7 +611,11 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     }
     entry->next = s_textures;
     s_textures = entry;
-    s_texture_hash[texture_hash_slot(source)] = entry;
+    {
+        const u32 slot = texture_hash_slot(source);
+        entry->hash_next = s_texture_hash[slot];
+        s_texture_hash[slot] = entry;
+    }
     return entry->texture;
 }
 
@@ -1778,7 +1851,12 @@ static void exec_present_impl(const void* payload)
         vita2d_draw_rectangle(0.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
         vita2d_draw_rectangle(960.0f - p->bar - 1.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
     }
-    vita2d_end_drawing();
+    {
+        const u64 end_start = sceKernelGetProcessTimeWide();
+        vita2d_end_drawing();
+        melee_vita_profiler_record_duration(
+            31u, sceKernelGetProcessTimeWide() - end_start);
+    }
     if (s_rendering_internal && s_active_internal_target != NULL) {
         vita2d_texture* presented_target = s_active_internal_target;
         s_rendering_internal = false;
@@ -1812,7 +1890,22 @@ static void exec_present_impl(const void* payload)
         melee_vita_updater_render_dialog();
     }
 #endif
-    vita2d_swap_buffers();
+#if defined(MELEE_VITA_PROFILER) && defined(MELEE_VITA_PROFILE_GPU_FINISH)
+    {
+        /* Diagnostic only: serializes CPU and GPU to measure how long the
+         * GPU still needs for the frame after it has been submitted. */
+        const u64 finish_start = sceKernelGetProcessTimeWide();
+        sceGxmFinish(vita2d_get_context());
+        melee_vita_profiler_record_duration(
+            32u, sceKernelGetProcessTimeWide() - finish_start);
+    }
+#endif
+    {
+        const u64 swap_start = sceKernelGetProcessTimeWide();
+        vita2d_swap_buffers();
+        melee_vita_profiler_record_duration(
+            33u, sceKernelGetProcessTimeWide() - swap_start);
+    }
 }
 
 void melee_vita_gxm_present(u32 clear_color)
@@ -1922,7 +2015,7 @@ void melee_vita_gxm_present(u32 clear_color)
             VitaTextureCacheEntry* entry = *link;
             if (s_frame_counter - entry->last_used_frame > 180u) {
                 *link = entry->next;
-                memset(s_texture_hash, 0, sizeof(s_texture_hash));
+                texture_hash_remove(entry);
                 retire_texture(entry->texture);
                 free(entry);
                 continue;

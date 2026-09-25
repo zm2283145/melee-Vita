@@ -386,11 +386,10 @@ void ftDrawCommon_80080E18(HSD_GObj* gobj, int arg1)
     Fighter* fp = gobj->user_data;
 
 #if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
-    if (fp->kind == Ft_Kind_GKoops) {
-        (void) melee_vita_bump_scope_register_or_begin(gobj);
-    } else {
-        melee_vita_bump_scope_unregister(gobj);
-    }
+    /* Every fighter may use bump-mapped materials (Bowser does, not only
+     * Giga Bowser); outside a scope those display lists are decoded on the
+     * CPU every frame, which cost ~8 ms per frame for one Bowser. */
+    (void) melee_vita_bump_scope_register_or_begin(gobj);
 #endif
 
     if (!fp->x221F_b3 && ftLib_80086A8C(gobj)) {

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "gx_render.h"
+#include "profiler_live.h"
 #include "fragment_alpha_key.h"
 #include "gxr_shader_cache.h"
 #include "point_sprite.h"
@@ -1506,6 +1507,33 @@ static GxrProgram* lookup_program(const GxrShaderKey* key)
     return program;
 }
 
+/* Per-texmap memo of the last resolved texture.  Consecutive draws of one
+ * model usually rebind the same GXTexObj, and a full cache lookup (with its
+ * content check) per draw added up to several ms per frame.  The memo is
+ * dropped every frame and whenever an EFB copy may rebind a texture key. */
+u32 g_melee_vita_texture_memo_epoch = 1u;
+static struct {
+    u32 epoch;
+    MeleeVitaTextureSource source;
+    vita2d_texture* texture;
+} s_texture_memo[GXR_MAX_TEXMAPS];
+
+static vita2d_texture* resolve_texture_memo(u32 map,
+                                            const MeleeVitaTextureSource* source)
+{
+    vita2d_texture* texture;
+    if (s_texture_memo[map].epoch == g_melee_vita_texture_memo_epoch &&
+        memcmp(&s_texture_memo[map].source, source, sizeof(*source)) == 0)
+        return s_texture_memo[map].texture;
+    texture = melee_vita_gxm_texture(source);
+    if (texture != NULL) {
+        s_texture_memo[map].epoch = g_melee_vita_texture_memo_epoch;
+        s_texture_memo[map].source = *source;
+        s_texture_memo[map].texture = texture;
+    }
+    return texture;
+}
+
 static void resolve_textures(const GxrDraw* draw, RqDraw* d)
 {
     for (u32 map = 0; map < GXR_MAX_TEXMAPS; ++map) {
@@ -1518,7 +1546,7 @@ static void resolve_textures(const GxrDraw* draw, RqDraw* d)
         }
         if (!used) continue;
         vita2d_texture* texture = draw->texture_valid[map]
-            ? melee_vita_gxm_texture(&draw->textures[map]) : NULL;
+            ? resolve_texture_memo(map, &draw->textures[map]) : NULL;
         if (texture == NULL) {
             static u32 logged;
             if (logged < 40u) {
@@ -2382,6 +2410,7 @@ static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
         out[3] = 0.0f;
     }
     GXR_SUBZONE_END(GXR_ZONE_UNIFORM_COPY);
+    melee_vita_profiler_record_duration(39u, 1u);
     ++s_stats.draws;
     return true;
 }
@@ -2414,6 +2443,7 @@ bool gxr_draw_bump_gpu(
         return false;
     }
     if (cull == GXR_CULL_ALL) return true;
+    GXR_SUBZONE_BEGIN();
     vp = (last_vp != NULL &&
           memcmp(&last_vp->key, vkey, sizeof(*vkey)) == 0)
         ? last_vp
@@ -2423,6 +2453,7 @@ bool gxr_draw_bump_gpu(
         ++s_bump_stats.fallback;
         return false;
     }
+    GXR_SUBZONE_END(GXR_ZONE_VERTEX_PROGRAM);
     program = lookup_program(&draw->key);
     if (program == NULL || program->failed) {
         ++s_bump_stats.fallback;
@@ -2433,6 +2464,7 @@ bool gxr_draw_bump_gpu(
         ++s_bump_stats.fallback;
         return false;
     }
+    GXR_SUBZONE_END(GXR_ZONE_FRAGMENT_PROGRAM);
 
     mtx_comps = vkey->legacy.has_mtxidx ? 120u : 12u;
     tg_comps = vkey->legacy.texgen_count * 12u;
@@ -2479,6 +2511,7 @@ bool gxr_draw_bump_gpu(
         return false;
     }
     memset(d, 0, sizeof(*d));
+    GXR_SUBZONE_END(GXR_ZONE_RQ_PUSH);
     d->vertex = vp->vertex;
     d->fragment = fragment;
     d->program = program;
@@ -2506,6 +2539,7 @@ bool gxr_draw_bump_gpu(
     memcpy(d->fog_color, draw->fog_color, sizeof(d->fog_color));
     memcpy(d->fog_params, draw->fog_params, sizeof(d->fog_params));
     resolve_textures(draw, d);
+    GXR_SUBZONE_END(GXR_ZONE_RESOLVE_TEXTURES);
     out = d->uniforms;
     memcpy(out, u->pos, mtx_comps * sizeof(f32));
     out += mtx_comps;
@@ -2522,6 +2556,8 @@ bool gxr_draw_bump_gpu(
     memcpy(out, u->mat, 8u * sizeof(f32));
     out += 8u;
     memcpy(out, u->amb, 8u * sizeof(f32));
+    GXR_SUBZONE_END(GXR_ZONE_UNIFORM_COPY);
+    melee_vita_profiler_record_duration(50u, 1u);
     ++s_bump_stats.draws;
     return true;
 }

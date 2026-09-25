@@ -2915,7 +2915,24 @@ static int fill_vertex_key_uniforms(
             GX_TG_BUMP0, GX_TG_BUMP7, GX_TG_TEXCOORD0,
             bump_plan);
     }
-    for (u32 l = 0; l < 8u; ++l) {
+    /* Only lights the vertex program can read are uploaded (the draw
+     * path copies top*20 floats), so skip packing the rest. */
+    u32 light_top = 8u;
+    {
+        u32 lights_used = (u32) (key->chan[0].lights | key->chan[1].lights |
+                                 key->chan[2].lights | key->chan[3].lights);
+        if (bump_plan != NULL) {
+            for (u32 i = 0; i < bump_plan->count; ++i) {
+                if ((bump_plan->mask & (1u << i)) != 0u &&
+                    bump_plan->type[i] >= GX_TG_BUMP0 &&
+                    bump_plan->type[i] <= GX_TG_BUMP7)
+                    lights_used |= 1u << (bump_plan->type[i] - (u32) GX_TG_BUMP0);
+            }
+        }
+        while (light_top > 0u && (lights_used & (1u << (light_top - 1u))) == 0u)
+            --light_top;
+    }
+    for (u32 l = 0; l < light_top; ++l) {
         const VitaLightObj* o = &s_gx.lights[l];
         f32 (*row)[4] = u->light + l * 5u;
         gxcolor_to_float(o->color, row[0]);
@@ -3130,6 +3147,7 @@ static bool draw_bump_display_list_gpu(
 static bool draw_display_list_gpu(
     const void* list, u32 bytes, bool immutable_bytecode)
     __attribute__((unused));
+static u32 s_dl_fallback_reason;
 static bool draw_display_list_gpu(
     const void* list, u32 bytes, bool immutable_bytecode)
 {
@@ -3137,17 +3155,28 @@ static bool draw_display_list_gpu(
     u32 state_hash;
     u32 bucket;
     DlCacheEntry* e;
-    if (!gxr_available() || is_movie_yuv_draw() || bytes < 3u)
-        return false;
+    if (!gxr_available()) { s_dl_fallback_reason = 1u; return false; }
+    if (is_movie_yuv_draw()) { s_dl_fallback_reason = 2u; return false; }
+    if (bytes < 3u) { s_dl_fallback_reason = 3u; return false; }
 #ifdef MELEE_VITA_GPU_BUMP_DL
     if (uses_bump_texgen()) {
-        const u32 scope_generation =
+        u32 scope_generation =
             melee_vita_bump_scope_generation(HSD_GObj_804D7814);
         if (scope_generation == 0u) {
+#ifdef MELEE_VITA_GPU_BUMP_SCOPED_ONLY
             ++s_bump_dl_stats.reject_scope;
             log_bump_reject("scope", 0u);
+            s_dl_fallback_reason = 4u;
             return false;
+#else
+            /* Bump-mapped materials also appear outside the registered
+             * scopes (other fighters, stage parts); decoding those on the CPU
+             * every frame cost several ms.  Use a fixed generation for them:
+             * the cache still validates contents every frame. */
+            scope_generation = 0xffffffffu;
+#endif
         }
+        s_dl_fallback_reason = 4u;
         return draw_bump_display_list_gpu(
             list, bytes, scope_generation);
     }
@@ -3193,6 +3222,7 @@ static bool draw_display_list_gpu(
         melee_vita_prof_add(VPZ_DL_BUILD, sceKernelGetProcessTimeWide() - t0);
         if (e == NULL) {
             ++s_dl_stats.fallbacks;
+            s_dl_fallback_reason = 5u;
             return false;
         }
         e->validated_frame = s_array_epoch;
@@ -3287,6 +3317,7 @@ static bool draw_display_list_gpu(
         s_prof_vertices += e->vertex_count - e->point_count;
         /* A shader failure falls back to the CPU path for this draw only if
          * nothing was drawn; partial success is accepted. */
+        if (!ok) s_dl_fallback_reason = 6u;
         return ok;
     }
 }
@@ -3317,7 +3348,14 @@ static void call_display_list(
     u32 cursor = 0;
     if (stream == NULL) return;
 #ifndef MELEE_VITA_GX_CPU_VERTEX
+    s_dl_fallback_reason = 0u;
     if (draw_display_list_gpu(list, bytes, immutable_bytecode)) return;
+    /* Live-profiler builds: count CPU fallbacks by reason (1 unavailable,
+     * 2 movie heuristic, 3 short list, 4 bump, 5 build failed, 6 draw
+     * failed) in zones 43..49 (43 = total). */
+    melee_vita_profiler_record_duration(43u, 1u);
+    if (s_dl_fallback_reason >= 1u && s_dl_fallback_reason <= 6u)
+        melee_vita_profiler_record_duration(43u + s_dl_fallback_reason, 1u);
 #endif
     while (cursor + 3u <= bytes) {
         const u8 command = stream[cursor];
@@ -3419,12 +3457,18 @@ static void call_display_list(
 
 void GXCallDisplayList(const void* list, u32 bytes)
 {
+    const u64 started = sceKernelGetProcessTimeWide();
     call_display_list(list, bytes, false);
+    melee_vita_profiler_record_duration(
+        38u, sceKernelGetProcessTimeWide() - started);
 }
 
 void GXCallDisplayListImmutable(const void* list, u32 bytes)
 {
+    const u64 started = sceKernelGetProcessTimeWide();
     call_display_list(list, bytes, true);
+    melee_vita_profiler_record_duration(
+        38u, sceKernelGetProcessTimeWide() - started);
 }
 
 #define GX_VALUE_FN_1(name, type) void name(type a) { (void) a; note_value(); }
@@ -3958,6 +4002,10 @@ void GXCopyTex(void* destination, GXBool clear)
 
 static void copy_tex_impl(void* destination, GXBool clear)
 {
+    {
+        extern u32 g_melee_vita_texture_memo_epoch;
+        ++g_melee_vita_texture_memo_epoch;
+    }
     u32 dst_w, dst_h;
     bool target_created;
     struct vita2d_texture* target;

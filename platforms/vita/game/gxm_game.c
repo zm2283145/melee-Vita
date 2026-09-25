@@ -517,8 +517,8 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
             entry->hash_frame = s_frame_counter;
             /* Every sampled byte is a likely cache miss in game memory, and
              * this runs for every texture every frame: do a light 32-sample
-             * check per frame (it catches edits that touch the image
-             * broadly) and the full 256-sample check every 16 frames,
+             * check per frame (8 samples; it catches edits that touch the
+             * image broadly) and the full 256-sample check every 16 frames,
              * staggered per texture.  Movie planes always get the full
              * check. */
             {
@@ -526,14 +526,23 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
                     source->chroma_u != NULL ||
                     entry->content_generation != s_texture_content_generation ||
                     ((s_frame_counter + ((u32) (uintptr_t) entry >> 4)) & 15u) == 0u;
-                if (full) {
-                    sample = texture_sample_hash(source);
-                } else {
-                    const u32 light = texture_sample_hash_n(source, 32u);
-                    if (light == entry->light_hash) return entry->texture;
-                    sample = texture_sample_hash(source);
+#ifdef MELEE_VITA_PROFILER
+                const u64 sample_started = sceKernelGetProcessTimeWide();
+#endif
+                const u32 light = texture_sample_hash_n(source, 8u);
+                if (!full && light == entry->light_hash) {
+#ifdef MELEE_VITA_PROFILER
+                    melee_vita_profiler_record_duration(
+                        42u, sceKernelGetProcessTimeWide() - sample_started);
+#endif
+                    return entry->texture;
                 }
-                entry->light_hash = texture_sample_hash_n(source, 32u);
+                sample = texture_sample_hash(source);
+                entry->light_hash = light;
+#ifdef MELEE_VITA_PROFILER
+                melee_vita_profiler_record_duration(
+                    42u, sceKernelGetProcessTimeWide() - sample_started);
+#endif
             }
             if (entry->content_generation != s_texture_content_generation ||
                 entry->sample_hash != sample) {
@@ -557,7 +566,7 @@ static vita2d_texture* get_texture(const MeleeVitaTextureSource* source)
     entry->source = *source;
     sample = texture_sample_hash(source);
     entry->sample_hash = sample;
-    entry->light_hash = texture_sample_hash_n(source, 32u);
+    entry->light_hash = texture_sample_hash_n(source, 8u);
     entry->hash_frame = s_frame_counter;
     entry->last_used_frame = s_frame_counter;
     entry->texture = vita2d_create_empty_texture(source->width, source->height);
@@ -1343,7 +1352,16 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width,
 
 vita2d_texture* melee_vita_gxm_texture(const MeleeVitaTextureSource* source)
 {
+#ifdef MELEE_VITA_PROFILER
+    const u64 started = sceKernelGetProcessTimeWide();
+    vita2d_texture* texture = get_texture(source);
+    melee_vita_profiler_record_duration(
+        40u, sceKernelGetProcessTimeWide() - started);
+    melee_vita_profiler_record_duration(41u, 1u);
+    return texture;
+#else
     return get_texture(source);
+#endif
 }
 
 /* ---- EFB copy ---- */
@@ -2006,6 +2024,10 @@ void melee_vita_gxm_present(u32 clear_color)
     s_next_clear_color = clear_color;
 
     ++s_frame_counter;
+    {
+        extern u32 g_melee_vita_texture_memo_epoch;
+        ++g_melee_vita_texture_memo_epoch;
+    }
     collect_graveyard();
     if ((s_frame_counter % 60u) == 0u) {
         /* Evict textures that have not been sampled for a few seconds. */

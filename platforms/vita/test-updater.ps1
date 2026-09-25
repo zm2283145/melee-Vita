@@ -86,6 +86,23 @@ $vitaUpdaterFlags = @(
     '-DCURL_STATICLIB=1', '-DMELEE_VITA_VERSION="0.6.0"',
     '-DMELEE_UPDATE_PUBLIC_KEY_HEX="d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"'
 ) + $vitaFlags
+$vitaCCompilerName =
+    if ($IsWindows) { 'bin/arm-vita-eabi-gcc.exe' }
+    else { 'bin/arm-vita-eabi-gcc' }
+$vitaCCompiler = Join-Path $VitaSdk $vitaCCompilerName
+$vitaClientFlags = @(
+    '-std=gnu11', '-O2', '-DNDEBUG', '-Wall', '-Wextra', '-Werror',
+    '-I', (Join-Path $PSScriptRoot 'updater'), '-c'
+)
+$clientSource = Join-Path $PSScriptRoot 'updater/homebrew_update_client.c'
+& $vitaCCompiler @vitaClientFlags $clientSource -o (Join-Path $build 'homebrew_update_client.vita.o')
+if ($LASTEXITCODE -ne 0) {
+    throw "Homebrew Update client Release compilation failed with exit code $LASTEXITCODE"
+}
+& python (Join-Path $PSScriptRoot 'tests/homebrew_update_metadata_test.py')
+if ($LASTEXITCODE -ne 0) {
+    throw "Homebrew Update metadata validation failed with exit code $LASTEXITCODE"
+}
 foreach ($runtimeSource in @(
     (Join-Path $PSScriptRoot 'updater/update_vita.cpp'),
     (Join-Path $PSScriptRoot 'updater/update_runtime.cpp'),

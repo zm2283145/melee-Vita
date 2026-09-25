@@ -56,6 +56,27 @@ enable updater code. To build the opt-in Release variant:
 compiled into both Melee and the helper. Keep the corresponding private key
 offline and outside the repository, CI logs, and release artifacts.
 
+Before contacting GitHub, an updater-capable build queries the upcoming
+Homebrew Update shell service with the main application's title ID,
+`MLVITA002`. A response of exactly `HOMEBREW_UPDATE_READY` delegates update
+discovery to that service. If the service is absent, disabled, reports a hook
+error, times out, or returns an invalid response, the existing built-in check
+continues unchanged. Transaction recovery and cleanup are always handled
+before this query.
+
+Every Melee VPK advertises the same title-scoped feed in
+`sce_sys/homebrew_update.ini`:
+
+```text
+https://github.com/zm2283145/melee-Vita/releases/latest/download/MLVITA002-ver.xml
+```
+
+The release workflow generates `MLVITA002-ver.xml` and
+`MLVITA002-changeinfo.xml` from the final versioned VPK. The feed contains the
+VPK's exact byte size and SHA-1, the package APP_VER and content ID, and stable
+`releases/latest/download` URLs. These assets are separate from the signed
+manifest consumed by Melee's built-in updater.
+
 The `vita-release.yml` workflow reads the checked-in public key from
 `platforms/vita/updater/public-key.hex` and the matching PEM private key from
 the encrypted `VITA_UPDATER_PRIVATE_KEY_PEM` repository secret. Branch and

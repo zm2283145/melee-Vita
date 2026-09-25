@@ -185,8 +185,18 @@ jobs:
           version = json.loads(Path("dist/version.json").read_text())["release"]
           with zipfile.ZipFile(f"dist/SmashMeleevita-{version}.vpk") as vpk:
               assert vpk.testzip() is None, "Corrupt VPK"
-              assert {"eboot.bin", "sce_sys/param.sfo"} <= set(vpk.namelist())
+              assert {
+                  "eboot.bin",
+                  "sce_sys/param.sfo",
+                  "sce_sys/homebrew_update.ini",
+              } <= set(vpk.namelist())
               assert not any(name.lower().endswith((".iso", ".gcm", ".rvz", ".dol", ".suprx", ".skprx")) for name in vpk.namelist())
+              assert vpk.read("sce_sys/homebrew_update.ini").decode("ascii") == (
+                  "title_id=MLVITA002\n"
+                  "name=Smash Melee Vita\n"
+                  "update_url=https://github.com/zm2283145/melee-Vita/"
+                  "releases/latest/download/MLVITA002-ver.xml\n"
+              )
               sfo = vpk.read("sce_sys/param.sfo")
               magic, revision, keys, values, count = struct.unpack_from("<5I", sfo)
               assert magic == 0x46535000, "Invalid SFO"
@@ -197,6 +207,7 @@ jobs:
                   fields[name] = sfo[values + offset:values + offset + size].rstrip(b"\0")
               assert fields["TITLE"] == b"Smash Melee Vita", "Incorrect game title"
               assert fields["TITLE_ID"] == b"MLVITA002", "Title ID must remain compatible"
+              assert fields["CONTENT_ID"] == b"EP9000-MLVITA002_00-0000000000000000"
               with open("dist/version.json") as version_file:
                   assert fields["APP_VER"].decode("ascii") == json.load(version_file)["app"]
               assert {
@@ -205,6 +216,11 @@ jobs:
                   "updater/sce_sys/package/head.bin",
               } <= set(vpk.namelist()), "Updater helper package is incomplete"
           PY
+          python3 platforms/vita/updater/generate-homebrew-update-metadata.py \
+            --version-file dist/version.json \
+            --release-notes .github/RELEASE_NOTES.md \
+            --vpk "dist/SmashMeleevita-${version}.vpk" \
+            --output-directory dist
 
       - name: Sign updater manifest
         if: github.event_name != 'pull_request'
@@ -308,12 +324,18 @@ jobs:
             --notes-file release-notes.md \
             --draft \
             "dist/SmashMeleevita-${version}.vpk" dist/melee-update-manifest.txt \
+            dist/MLVITA002-ver.xml dist/MLVITA002-changeinfo.xml \
             dist/DEBUG-TOOLS.md dist/version.json
           mkdir release-verify
           gh release download "$tag" --dir release-verify \
             --pattern "SmashMeleevita-${version}.vpk" \
-            --pattern melee-update-manifest.txt
+            --pattern melee-update-manifest.txt \
+            --pattern MLVITA002-ver.xml \
+            --pattern MLVITA002-changeinfo.xml
           cmp "dist/SmashMeleevita-${version}.vpk" \
             "release-verify/SmashMeleevita-${version}.vpk"
           cmp dist/melee-update-manifest.txt \
             release-verify/melee-update-manifest.txt
+          cmp dist/MLVITA002-ver.xml release-verify/MLVITA002-ver.xml
+          cmp dist/MLVITA002-changeinfo.xml \
+            release-verify/MLVITA002-changeinfo.xml

@@ -320,6 +320,7 @@ $platformSources = @(
 )
 if ($EnableUpdater) {
     $platformSources += @(
+        'platforms/vita/updater/homebrew_update_client.c',
         'platforms/vita/updater/update_core.cpp',
         'platforms/vita/updater/update_crypto_sodium.cpp',
         'platforms/vita/updater/update_vita.cpp',
@@ -490,6 +491,7 @@ if ($EnableUpdater) {
 }
 Invoke-VitaTool 'vita-mksfoex' @(
     '-s', 'TITLE_ID=MLVITA002', '-s', "APP_VER=$($version.app)",
+    '-s', 'CONTENT_ID=EP9000-MLVITA002_00-0000000000000000',
     'Smash Melee Vita', $sfo
 )
 $livearea = Join-Path $PSScriptRoot 'livearea'
@@ -500,6 +502,7 @@ $vpkArguments = @(
     '-a', "$(Join-Path $livearea 'bg.png')=sce_sys/livearea/contents/bg.png",
     '-a', "$(Join-Path $livearea 'startup.png')=sce_sys/livearea/contents/startup.png",
     '-a', "$(Join-Path $livearea 'template.xml')=sce_sys/livearea/contents/template.xml",
+    '-a', "$(Join-Path $PSScriptRoot 'homebrew_update.ini')=sce_sys/homebrew_update.ini",
     '-a', "$(Join-Path $PSScriptRoot 'shadercache/warm5.bin')=shadercache/warm5.bin"
 )
 # These five costume archives come from the user's supplied Giga Bowser mod pack.

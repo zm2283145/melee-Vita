@@ -293,6 +293,24 @@ the stable `MLVITA002-ver.xml` asset on the latest GitHub release. The release
 workflow generates that feed and `MLVITA002-changeinfo.xml` from the final VPK,
 its APP_VER, and the current release-notes section.
 
+### Native LiveArea updates with Homebrew Update
+
+Installing and enabling
+[VitaHomebrewUpdate](https://github.com/zm2283145/VitaHomebrewUpdate) lets
+Melee updates appear through the native LiveArea workflow on its currently
+validated retail firmware 3.65 scope. The plugin discovers Melee's packaged
+`sce_sys/homebrew_update.ini`, downloads and verifies the release VPK, shows
+the update's notification states, and stages it. Activating the notification
+or starting Melee installs the staged update and then launches the updated
+game.
+
+**Before installing, read the VitaHomebrewUpdate repository's prominent
+VitaDB daemon incompatibility warning. Do not enable the two daemon plugins
+together unless that warning says the incompatibility has been resolved.**
+
+If the Homebrew Update service is missing, disabled, or not ready, Melee
+automatically keeps using its built-in updater.
+
 ## Opt-in Debug build
 
 Debug builds are for development only and are **not** used by release CI.

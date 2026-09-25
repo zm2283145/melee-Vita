@@ -22,6 +22,19 @@
 #include <sysdolphin/baselib/gobjproc.h>
 #include <sysdolphin/baselib/jobj.h>
 
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+extern void melee_vita_bump_scope_begin(void);
+extern bool melee_vita_bump_scope_register(const void* identity);
+
+/* The Bowser trophies use bump-mapped materials. Outside a registered bump
+ * scope those display lists fall back to per-frame CPU decoding, which held
+ * this cutscene near 12 fps on Vita. */
+static void vi1202_EnableGpuBump(HSD_GObj* gobj)
+{
+    (void) melee_vita_bump_scope_register(gobj);
+}
+#endif
+
 static SceneDesc* un_804D7040;
 static SceneDesc* un_804D7044;
 static HSD_Joint* un_804D7048;
@@ -71,6 +84,9 @@ void un_80321178(void)
         jobj = HSD_JObjLoadJoint(DP(HSD_Joint, model->joint));
         HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
         GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 0xB, 0);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+        vi1202_EnableGpuBump(gobj);
+#endif
         gm_8016895C(jobj, model, 0);
         HSD_JObjReqAnimAll(jobj, 0.0f);
         HSD_JObjAnimAll(jobj);
@@ -119,6 +135,10 @@ void vi1202_Scene_OnEnter(void* arg)
     lbArchive_LoadSymbols("GmRgStnd.dat", &un_804D7044, "standScene", NULL);
     Toy_803124BC();
 
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    melee_vita_bump_scope_begin();
+#endif
+
     gobj = GObj_Create(0xB, 0x3, 0);
     lobj = lb_80011AC4(DP(DiscU32, un_804D7040->lights));
     HSD_GObjObject_80390A70(gobj, HSD_GObj_LightKind, lobj);
@@ -139,6 +159,9 @@ void vi1202_Scene_OnEnter(void* arg)
     jobj = HSD_JObjLoadJoint(un_804D7048);
     HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
     GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 0xB, 0);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    vi1202_EnableGpuBump(gobj);
+#endif
 
     HSD_JObjSetScaleX(jobj, 0.49f);
     HSD_JObjSetScaleY(jobj, 0.49f);
@@ -153,6 +176,9 @@ void vi1202_Scene_OnEnter(void* arg)
         DP(HSD_Joint, vi_SceneModel(un_804D7044, 0)->joint));
     HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
     GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 0xB, 0);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    vi1202_EnableGpuBump(gobj);
+#endif
     HSD_GObj_SetupProc(gobj, un_8032110C, 0x17);
 
     if (jobj == NULL) {

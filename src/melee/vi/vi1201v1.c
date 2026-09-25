@@ -33,6 +33,19 @@
 #include <sysdolphin/baselib/jobj.h>
 #include <sysdolphin/baselib/lobj.h>
 
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+extern void melee_vita_bump_scope_begin(void);
+extern bool melee_vita_bump_scope_register(const void* identity);
+
+/* The Bowser trophies use bump-mapped materials. Outside a registered bump
+ * scope those display lists fall back to per-frame CPU decoding, which held
+ * this cutscene near 12 fps on Vita. */
+static void vi1201v1_EnableGpuBump(HSD_GObj* gobj)
+{
+    (void) melee_vita_bump_scope_register(gobj);
+}
+#endif
+
 /* 4D6FE0 */ static SceneDesc* un_804D6FE0;
 /* 4D6FE4 */ static SceneDesc* un_804D6FE4;
 /* 4D6FE8 */ static HSD_Archive* un_804D6FE8;
@@ -163,6 +176,9 @@ static inline void un_8031FD18_SetupScene(void)
         jobj = HSD_JObjLoadJoint(DP(HSD_Joint, model->joint));
         HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
         GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 0xB, 0);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+        vi1201v1_EnableGpuBump(gobj);
+#endif
         gm_8016895C(jobj, model, 0);
         HSD_JObjReqAnimAll(jobj, 0.0f);
         HSD_JObjAnimAll(jobj);
@@ -198,6 +214,9 @@ static inline void un_8031FD18_SetupKoopa(void)
     jobj = HSD_JObjLoadJoint(un_804D6FEC);
     HSD_GObjObject_80390A70(koopa_gobj, HSD_GObj_JObjKind, jobj);
     GObj_SetupGXLink(koopa_gobj, HSD_GObj_JObjCallback, 0xB, 0);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    vi1201v1_EnableGpuBump(koopa_gobj);
+#endif
 
     HSD_JObjSetScaleX(jobj, 0.55f);
     HSD_JObjSetScaleY(jobj, 0.55f);
@@ -235,6 +254,9 @@ static inline void un_8031FD18_SetupStand(void)
         DP(HSD_Joint, vi_SceneModel(un_804D6FE4, 0)->joint));
     HSD_GObjObject_80390A70(stand_gobj, HSD_GObj_JObjKind, jobj);
     GObj_SetupGXLink(stand_gobj, HSD_GObj_JObjCallback, 0xB, 0);
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    vi1201v1_EnableGpuBump(stand_gobj);
+#endif
     HSD_GObj_SetupProc(stand_gobj, un_8031F990, 0);
 
     if (jobj == NULL) {
@@ -288,6 +310,10 @@ void vi1201v1_Scene_OnEnter(void* arg)
     lbAudioAx_80024E50(1);
 
     un_8031FD18_LoadAssets(input);
+
+#if defined(TARGET_VITA) && defined(MELEE_VITA_GPU_BUMP_DL)
+    melee_vita_bump_scope_begin();
+#endif
 
     un_8031FD18_SetupCamera();
 

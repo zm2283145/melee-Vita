@@ -1,4 +1,5 @@
 #include "dobj.h"
+#include "vita_prof.h"
 
 #include "aobj.h"
 #include "class.h"
@@ -299,13 +300,17 @@ void HSD_DObjDisp(HSD_DObj* dobj, Mtx vmtx, Mtx pmtx, u32 rendermode)
 
     HSD_MObjSetCurrent(dobj->mobj);
     if ((rendermode & 0x4000000) == 0) {
+        const u64 vprof = HSD_VPROF_BEGIN();
         HSD_MOBJ_METHOD(dobj->mobj)->setup(dobj->mobj, rendermode);
+        HSD_VPROF_END(HSD_VPROF_ZONE_MOBJ, vprof);
     }
     for (p = dobj->pobj; p != NULL; p = p->next) {
         HSD_POBJ_METHOD(p)->disp(p, vmtx, pmtx, rendermode);
     }
     if ((rendermode & 0x4000000) == 0) {
+        const u64 vprof = HSD_VPROF_BEGIN();
         HSD_MOBJ_METHOD(dobj->mobj)->unset(dobj->mobj, rendermode);
+        HSD_VPROF_END(HSD_VPROF_ZONE_MOBJ, vprof);
     }
     HSD_MObjSetCurrent(NULL);
 }

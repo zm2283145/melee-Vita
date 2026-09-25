@@ -1,4 +1,5 @@
 #include "pobj.h"
+#include "vita_prof.h"
 
 #include <math.h> // IWYU pragma: keep
 #include <string.h>
@@ -1232,8 +1233,10 @@ static void PObjSetupMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx, u32 rendermode)
 
 static void PObjDispSimplePrimitive(HSD_PObj* pobj, u32 rendermode)
 {
+    const u64 vprof = HSD_VPROF_BEGIN();
     setupArrayDesc(pobj->verts);
     setupVtxDesc(pobj);
+    HSD_VPROF_END(HSD_VPROF_ZONE_VTXDESC, vprof);
 
 #if defined(TARGET_VITA)
     /* Archive display bytes are immutable for a PObj's lifetime. Indexed
@@ -1269,11 +1272,17 @@ void HSD_PObjDisp(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx, u32 rendermode)
         return;
     }
 
-    HSD_POBJ_METHOD(pobj)->setup_mtx(pobj, vmtx, pmtx, rendermode);
-    if (pobj_type(pobj) == POBJ_SHAPEANIM) {
-        PObjDispShapeAnim(pobj, rendermode);
-    } else {
-        PObjDispSimplePrimitive(pobj, rendermode);
+    {
+        u64 vprof = HSD_VPROF_BEGIN();
+        HSD_POBJ_METHOD(pobj)->setup_mtx(pobj, vmtx, pmtx, rendermode);
+        HSD_VPROF_END(HSD_VPROF_ZONE_POBJ_MTX, vprof);
+        vprof = HSD_VPROF_BEGIN();
+        if (pobj_type(pobj) == POBJ_SHAPEANIM) {
+            PObjDispShapeAnim(pobj, rendermode);
+        } else {
+            PObjDispSimplePrimitive(pobj, rendermode);
+        }
+        HSD_VPROF_END(HSD_VPROF_ZONE_POBJ_DRAW, vprof);
     }
 }
 

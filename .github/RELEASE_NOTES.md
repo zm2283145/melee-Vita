@@ -6,6 +6,10 @@ supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.8.14
+
+- Homebrew Update discovery and installation validation release.
+
 ## Changes in Vita v0.8.13
 
 - Added support for the upcoming Homebrew Update plugin. When the plugin

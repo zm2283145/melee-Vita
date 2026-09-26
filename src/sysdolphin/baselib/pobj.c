@@ -1,5 +1,6 @@
 #include "pobj.h"
 #include "vita_prof.h"
+#include "vita_skin.h"
 
 #include <math.h> // IWYU pragma: keep
 #include <string.h>
@@ -1149,6 +1150,35 @@ static void SetupEnvelopeModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
     jobj = HSD_JObjGetCurrent();
     HSD_PObjClearMtxMark(NULL, HSD_MTX_ENVELOPE);
     flags = GetSetupFlags(jobj, rendermode);
+#ifdef MELEE_VITA_SKIN_JOBS
+    {
+        /* World matrices blended ahead of time (core 2); only the view
+         * matrix and the normal matrix remain per draw. */
+        Mtx scratch[10];
+        int count = 0;
+        const Mtx* world =
+            melee_vita_skin_lookup(pobj, jobj, &count, scratch);
+        if (world != NULL) {
+            for (MtxIdx = 0; MtxIdx < count; MtxIdx++) {
+                Mtx tmp;
+                s32 mtx_no = HSD_Index2PosNrmMtx(MtxIdx);
+                MTXConcat(vmtx, (MtxPtr) world[MtxIdx], tmp);
+                GXLoadPosMtxImm(tmp, mtx_no);
+                if (flags & SETUP_NORMAL) {
+                    HSD_MtxInverseTranspose(tmp, mtx);
+                    if (jobj->flags & JOBJ_LIGHTING) {
+                        GXLoadNrmMtxImm(mtx, mtx_no);
+                    }
+                    if (flags & SETUP_NORMAL_PROJECTION) {
+                        GXLoadTexMtxImm(mtx, HSD_Index2TexMtx(MtxIdx),
+                                        GX_MTX3x4);
+                    }
+                }
+            }
+            return;
+        }
+    }
+#endif
     right = _HSD_mkEnvelopeModelNodeMtx(jobj, mtx);
 
     for (MtxIdx = 0, list = pobj->u.envelope_list; MtxIdx < 10 && list;

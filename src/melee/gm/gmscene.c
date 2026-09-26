@@ -456,8 +456,18 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
         {
             extern u64 sceKernelGetProcessTimeWide(void);
             extern void melee_vita_prof_add(int zone, u64 us);
+            extern void melee_vita_skin_begin_frame(void)
+                __attribute__((weak));
+            extern void melee_vita_skin_end_frame(void)
+                __attribute__((weak));
             u64 t0 = sceKernelGetProcessTimeWide(), t1;
+            if (melee_vita_skin_begin_frame != NULL) {
+                melee_vita_skin_begin_frame();
+            }
             HSD_GObj_80390FC0();
+            if (melee_vita_skin_end_frame != NULL) {
+                melee_vita_skin_end_frame();
+            }
             t1 = sceKernelGetProcessTimeWide();
             melee_vita_prof_add(0 /* gobj_render */, t1 - t0);
             HSD_Init_803755A8();

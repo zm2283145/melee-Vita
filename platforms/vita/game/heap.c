@@ -36,6 +36,13 @@ static s32 s_heap_count;
 static u8* s_heap_arena_start;
 static u8* s_heap_arena_end;
 static u32 s_allocation_generation;
+/* Bumped whenever any heap's allocated list changes; lets
+ * melee_vita_heap_allocation_generation memoize its (linear) cell walk.
+ * Copy-texture validation calls it for every draw that samples an EFB copy,
+ * and walking every live allocation each time cost several ms per frame on
+ * the results screen. */
+static u32 s_heap_epoch = 1u;
+#define HEAP_TOUCH() (++s_heap_epoch)
 
 static uintptr_t round_up(uintptr_t value)
 {
@@ -111,6 +118,7 @@ void* OSInitAlloc(void* arena_start, void* arena_end, int max_heaps)
         s_heaps[i].size = -1;
         s_heaps[i].free_list = NULL;
         s_heaps[i].allocated = NULL;
+        HEAP_TOUCH();
     }
     descriptor_end = round_up((uintptr_t) arena_start +
                               sizeof(HeapDesc) * (uintptr_t) max_heaps);
@@ -137,6 +145,7 @@ OSHeapHandle OSCreateHeap(void* start, void* end)
         s_heaps[heap].size = cell->size;
         s_heaps[heap].free_list = cell;
         s_heaps[heap].allocated = NULL;
+        HEAP_TOUCH();
         return heap;
     }
     return -1;
@@ -148,6 +157,7 @@ void OSDestroyHeap(OSHeapHandle heap)
     s_heaps[heap].size = -1;
     s_heaps[heap].free_list = NULL;
     s_heaps[heap].allocated = NULL;
+    HEAP_TOUCH();
     if (__OSCurrHeap == heap) __OSCurrHeap = -1;
 }
 
@@ -175,6 +185,7 @@ void* OSAllocFromHeap(OSHeapHandle heap, u32 size)
     if (++s_allocation_generation == 0) ++s_allocation_generation;
     cell->generation = s_allocation_generation;
     descriptor->allocated = list_push(descriptor->allocated, cell);
+    HEAP_TOUCH();
     return (u8*) cell + HEAP_CELL_HEADER;
 }
 
@@ -187,6 +198,7 @@ void OSFreeToHeap(OSHeapHandle heap, void* pointer)
     cell = (HeapCell*) ((u8*) pointer - HEAP_CELL_HEADER);
     if (cell->owner != descriptor) return;
     descriptor->allocated = list_remove(descriptor->allocated, cell);
+    HEAP_TOUCH();
     descriptor->free_list = insert_free(descriptor->free_list, cell);
 }
 
@@ -217,11 +229,31 @@ u32 OSReferentSize(void* pointer)
     return cell->owner != NULL ? (u32) cell->size - HEAP_CELL_HEADER : 0;
 }
 
+static u32 heap_allocation_generation_walk(const void* pointer);
+
 u32 melee_vita_heap_allocation_generation(const void* pointer)
+{
+    static struct {
+        const void* pointer;
+        u32 epoch;
+        u32 generation;
+    } memo[64];
+    u32 slot, generation;
+    if (pointer == NULL) return 0;
+    slot = ((u32) (uintptr_t) pointer >> 5) * 0x9E3779B1u >> 26;
+    if (memo[slot].pointer == pointer && memo[slot].epoch == s_heap_epoch)
+        return memo[slot].generation;
+    generation = heap_allocation_generation_walk(pointer);
+    memo[slot].pointer = pointer;
+    memo[slot].epoch = s_heap_epoch;
+    memo[slot].generation = generation;
+    return generation;
+}
+
+static u32 heap_allocation_generation_walk(const void* pointer)
 {
     s32 heap;
     uintptr_t address = (uintptr_t) pointer;
-    if (pointer == NULL) return 0;
     for (heap = 0; heap < s_heap_count; ++heap) {
         HeapCell* cell;
         if (!valid_heap(heap)) continue;

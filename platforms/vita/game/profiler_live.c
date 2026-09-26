@@ -26,12 +26,12 @@
 #endif
 
 #define PROFILER_RING_CAPACITY 2048u
-#define PROFILER_NAME_CAPACITY 96u
-#define PROFILER_NAME_TEXT_BYTES 3072u
+#define PROFILER_NAME_CAPACITY 128u
+#define PROFILER_NAME_TEXT_BYTES 4096u
 #define PROFILER_STREAM_BUFFER_BYTES 8192u
 #define PROFILER_NET_MEMORY_BYTES (1024u * 1024u)
 #define PROFILER_DRAIN_EVENTS 128u
-#define PROFILER_DURATION_COUNT 52u
+#define PROFILER_DURATION_COUNT 57u
 #define PROFILER_RECONNECT_DELAY_US 500000u
 #define PROFILER_STATUS_PATH "ux0:data/melee/profiler-live-status.txt"
 
@@ -60,6 +60,8 @@ static const char* const s_duration_names[] = {
     "count.dl_fallback", "count.fb_unavailable", "count.fb_movie",
     "count.fb_short", "count.fb_bump", "count.fb_build", "count.fb_draw",
     "count.bump_draws", "count.game_ticks",
+    "duration.skin_prepass_us", "count.skin_hits", "count.skin_main",
+    "count.skin_fallback", "duration.skin_wait_us",
 };
 _Static_assert(
     sizeof(s_duration_names) / sizeof(s_duration_names[0]) ==

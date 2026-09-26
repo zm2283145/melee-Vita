@@ -143,6 +143,18 @@ int __real_sceGxmBeginScene(
     const SceGxmColorSurface* color_surface,
     const SceGxmDepthStencilSurface* depth_stencil);
 
+/* A frame is split into several GXM scenes whenever it copies the frame
+ * mid-way (GXCopyTex: refraction for the Cloaking Device, results
+ * portraits, stage monitors) or renders an offscreen pass.  GXM neither
+ * stores depth at the end of a scene nor reloads it at the start of the
+ * next unless asked, so everything drawn after a split depth-tested against
+ * a cleared buffer: water drew over the bottoms of Great Bay's props while
+ * a fighter was cloaked.  For split frames, the main scenes store depth and
+ * the resumed ones reload it.  Set on the render thread. */
+static int s_rt_split_frame;
+static int s_rt_resume_scene;
+static int s_rt_main_begin;
+
 int __wrap_sceGxmBeginScene(
     SceGxmContext* context, unsigned int flags,
     const SceGxmRenderTarget* render_target,
@@ -153,6 +165,16 @@ int __wrap_sceGxmBeginScene(
     const SceGxmDepthStencilSurface* depth_stencil)
 {
     SceGxmSyncObject* fragment_sync = fragment_sync_object;
+    SceGxmDepthStencilSurface kept_depth;
+    if (s_rt_main_begin && s_rt_split_frame && depth_stencil != NULL) {
+        kept_depth = *depth_stencil;
+        sceGxmDepthStencilSurfaceSetForceStoreMode(
+            &kept_depth, SCE_GXM_DEPTH_STENCIL_FORCE_STORE_ENABLED);
+        if (s_rt_resume_scene)
+            sceGxmDepthStencilSurfaceSetForceLoadMode(
+                &kept_depth, SCE_GXM_DEPTH_STENCIL_FORCE_LOAD_ENABLED);
+        depth_stencil = &kept_depth;
+    }
     if (fragment_sync == NULL) {
         int option;
         for (option = MELEE_VITA_RESOLUTION_75;
@@ -806,12 +828,16 @@ static void rt_begin_scene_impl(u32 clear_color, int clear)
         s_render_width = MELEE_VITA_DISPLAY_WIDTH;
         s_render_height = MELEE_VITA_DISPLAY_HEIGHT;
     }
+    s_rt_resume_scene = !clear;
+    s_rt_main_begin = 1;
     if (s_rendering_internal) {
         vita2d_pool_reset();
         vita2d_start_drawing_advanced(s_active_internal_target, 0u);
     } else {
         vita2d_start_drawing();
     }
+    s_rt_main_begin = 0;
+    s_rt_resume_scene = 0;
     ++g_melee_vita_gxm_state_epoch;
     context = vita2d_get_context();
     rt_set_viewport(s_render_width, s_render_height, false);
@@ -836,6 +862,22 @@ static void rt_begin_scene_impl(u32 clear_color, int clear)
     rt_default_depth();
 }
 
+static void exec_copy(const void* payload);
+static void exec_target(const void* payload);
+
+/* Does this recorded frame end and resume the main scene part-way? */
+static int rq_frame_splits(const RqFrame* frame)
+{
+    u32 offset = 0;
+    while (offset < frame->size) {
+        const RqCommand* command = (const RqCommand*) (frame->cmds + offset);
+        if (command->exec == exec_copy || command->exec == exec_target)
+            return 1;
+        offset += sizeof(RqCommand) + command->size;
+    }
+    return 0;
+}
+
 static int render_thread(SceSize args, void* argp)
 {
     (void) args;
@@ -848,6 +890,7 @@ static int render_thread(SceSize args, void* argp)
         if (s_rq_quit) break;
         frame = s_exec_frame;
         t0 = sceKernelGetProcessTimeWide();
+        s_rt_split_frame = rq_frame_splits(frame);
         rt_begin_scene(frame->clear_color, 1);
         while (offset < frame->size) {
             const RqCommand* command = (const RqCommand*) (frame->cmds + offset);

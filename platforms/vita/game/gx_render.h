@@ -22,6 +22,7 @@
 #define GXR_MAX_STAGES 16
 #define GXR_MAX_TEXCOORDS 8
 #define GXR_MAX_TEXMAPS 8
+#define GXR_TEX_PALETTE_ROW 24u
 
 typedef struct GxrStage {
     u8 color_in[4];
@@ -29,7 +30,8 @@ typedef struct GxrStage {
     u8 color_op, color_bias, color_scale, color_clamp, color_out;
     u8 alpha_op, alpha_bias, alpha_scale, alpha_clamp, alpha_out;
     u8 tex_coord, tex_map, channel, kcsel, kasel, swap_ras, swap_tex;
-    u8 mirror; /* bit0: mirror S, bit1: mirror T (GXM rejects ADDR_MIRROR) */
+    u8 mirror; /* bit0: mirror S, bit1: mirror T (GXM rejects ADDR_MIRROR);
+                * bit7: indirect offset, bits2-4 its texcoord, bits5-6 its map */
 } GxrStage;
 
 /* Everything that changes the generated fragment source.  Zero padding is
@@ -71,6 +73,10 @@ typedef struct GxrDraw {
     f32 fog_params[4];    /* A, B, C, unused */
     f32 registers[4][4];  /* GX_TEVPREV..GX_TEVREG2 */
     f32 konst[4][4];
+    /* Indirect texture offset for the one indirect TEV stage: rows map the
+     * sampled indirect texel (A,B,G in 0..255) to a normalised coordinate
+     * offset; w holds the bias term.  See GxrStage.mirror bit 7. */
+    f32 ind_mtx[2][4];
     MeleeVitaTextureSource textures[GXR_MAX_TEXMAPS];
     u8 texture_valid[GXR_MAX_TEXMAPS];
 } GxrDraw;
@@ -100,7 +106,9 @@ typedef struct GxrVtxChan {
 } GxrVtxChan;
 
 typedef struct GxrVtxTexGen {
-    u8 type, source, has_matrix, normalize, has_post, reserved;
+    /* palette: 0 = matrix in uTex rows, 1 = per-vertex position matrix,
+     * 2 = per-vertex texture matrix (display list TEXnMTXIDX). */
+    u8 type, source, has_matrix, normalize, has_post, palette;
 } GxrVtxTexGen;
 
 typedef struct GxrVtxKey {
@@ -121,7 +129,9 @@ typedef struct GxrVtxUniforms {
     f32 pos[30][4];    /* 10 position matrices, 3 rows each */
     f32 nrm[30][4];
     f32 proj[4][4];    /* p1..p6, ax bx ay by, z_far z_range, current slot */
-    f32 tex[24][4];    /* resolved texgen matrix per texgen (3 rows) */
+    f32 tex[54][4];    /* resolved texgen matrix per texgen (3 rows);
+                        * rows 24..53 hold GX_TEXMTX0..9 when a texgen
+                        * picks its matrix per vertex */
     f32 post[24][4];
     f32 light[40][4];  /* per light: color, pos, dir, a0-a2, k0-k2 */
     f32 mat[2][4];

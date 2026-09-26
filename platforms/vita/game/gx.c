@@ -127,6 +127,8 @@ typedef struct VitaDecodedVertex {
     u8 has_position_matrix;
     u8 has_color[2];
     u8 has_nbt;
+    u8 tex_matrix_mask;              /* texcoords with a TEXnMTXIDX */
+    u8 tex_matrix[GX_MAX_TEXCOORD];  /* per-vertex texgen matrix ids */
 } VitaDecodedVertex;
 
 typedef struct VitaChanCtrl {
@@ -441,6 +443,12 @@ static void decode_attribute(VitaDecodedVertex* vertex, GXAttr attr,
     if (attr == GX_VA_PNMTXIDX) {
         vertex->position_matrix = source[0];
         vertex->has_position_matrix = 1;
+    } else if (attr >= GX_VA_TEX0MTXIDX && attr <= GX_VA_TEX7MTXIDX) {
+        /* Overrides the texgen's matrix for this vertex: envelope models use
+         * it for reflection maps, the Cloaking Device for its screen grab. */
+        const u32 n = (u32) (attr - GX_VA_TEX0MTXIDX);
+        vertex->tex_matrix[n] = source[0];
+        vertex->tex_matrix_mask |= (u8) (1u << n);
     } else if (attr == GX_VA_POS) {
         u32 components = attribute_components(attr, format->count);
         vertex->position[0] = read_component(source, format->type, format->fraction, little_endian);
@@ -1000,10 +1008,13 @@ static void build_gxr_vertex(const GxrXform* x, const VitaDecodedVertex* input, 
         } else if (generator->source == GX_TG_COLOR1) {
             tex[0] = out->color[1][0]; tex[1] = out->color[1][1];
         }
-        if (generator->matrix != GX_IDENTITY) {
-            const f32 (*m)[4] = generator->matrix < GX_TEXMTX0
-                ? (const f32 (*)[4]) s_gx.position_matrices[matrix_slot(generator->matrix)]
-                : (generator->matrix / 3u < 20u ? (const f32 (*)[4]) s_gx.texture_matrices[generator->matrix / 3u] : NULL);
+        if (generator->matrix != GX_IDENTITY ||
+            (input->tex_matrix_mask & (1u << i)) != 0u) {
+            const u32 mid = (input->tex_matrix_mask & (1u << i)) != 0u
+                ? (u32) input->tex_matrix[i] : (u32) generator->matrix;
+            const f32 (*m)[4] = mid < GX_TEXMTX0
+                ? (const f32 (*)[4]) s_gx.position_matrices[matrix_slot(mid)]
+                : (mid / 3u < 20u ? (const f32 (*)[4]) s_gx.texture_matrices[mid / 3u] : NULL);
             if (m != NULL) {
                 const f32 w = (generator->source == GX_TG_NRM) ? 0.0f : 1.0f;
                 const f32 src2 = generator->source == GX_TG_POS || generator->source == GX_TG_NRM ? tex[2] : 1.0f;
@@ -1039,10 +1050,20 @@ static void build_gxr_vertex(const GxrXform* x, const VitaDecodedVertex* input, 
     }
 }
 
+/* Indirect texture state (GXSetIndTex*, GXSetTevIndirect). */
+static struct {
+    u8 count;
+    u8 coord[4];
+    u8 map[4];
+    f32 mtx[3][2][3];   /* already scaled by 2^exponent */
+} s_ind;
+static struct { u8 stage, format, bias, matrix; } s_tev_ind[GX_MAX_TEVSTAGE];
+
 static void fill_gxr_draw(GxrDraw* draw)
 {
     u32 i;
     bool ztex_active;
+    bool indirect_done = false;
     memset(&draw->key, 0, sizeof(draw->key));
     draw->key.stage_count = s_gx.tev_stage_count == 0 ? 1u :
         (u8) (s_gx.tev_stage_count > GXR_MAX_STAGES ? GXR_MAX_STAGES : s_gx.tev_stage_count);
@@ -1112,6 +1133,40 @@ static void fill_gxr_draw(GxrDraw* draw)
         if (st->tex_map < GXR_MAX_TEXMAPS && draw->texture_valid[st->tex_map]) {
             st->mirror = (u8) ((draw->textures[st->tex_map].wrap_s == GX_MIRROR ? 1u : 0u) |
                                (draw->textures[st->tex_map].wrap_t == GX_MIRROR ? 2u : 0u));
+        }
+        if (i < GX_MAX_TEVSTAGE && !indirect_done &&
+            s_tev_ind[i].matrix >= GX_ITM_0 && s_tev_ind[i].matrix <= GX_ITM_2 &&
+            s_tev_ind[i].format == GX_ITF_8 && s_tev_ind[i].stage < s_ind.count &&
+            s_tev_ind[i].stage < 4u && st->tex_coord < GXR_MAX_TEXCOORDS &&
+            st->tex_map < GXR_MAX_TEXMAPS && draw->texture_valid[st->tex_map]) {
+            /* One indirect stage per draw (the Cloaking Device's refraction
+             * warp); its map and coordinate ride in the key's mirror bits. */
+            const u32 ind = s_tev_ind[i].stage;
+            const u32 imap = s_ind.map[ind];
+            const u32 icoord = s_ind.coord[ind];
+            if (imap < 4u && icoord < GXR_MAX_TEXCOORDS) {
+                if (!draw->texture_valid[imap])
+                    draw->texture_valid[imap] =
+                        texture_source_for_map(imap, &draw->textures[imap]);
+                if (draw->texture_valid[imap]) {
+                    const f32 (*m)[3] = s_ind.mtx[s_tev_ind[i].matrix - GX_ITM_0];
+                    const u32 bias = s_tev_ind[i].bias;
+                    const f32 b[3] = { (bias & 1u) ? 128.0f : 0.0f,
+                                       (bias & 2u) ? 128.0f : 0.0f,
+                                       (bias & 4u) ? 128.0f : 0.0f };
+                    const f32 size[2] = {
+                        draw->textures[st->tex_map].width ? (f32) draw->textures[st->tex_map].width : 1.0f,
+                        draw->textures[st->tex_map].height ? (f32) draw->textures[st->tex_map].height : 1.0f };
+                    for (u32 r = 0; r < 2u; ++r) {
+                        for (u32 k = 0; k < 3u; ++k)
+                            draw->ind_mtx[r][k] = m[r][k] / size[r];
+                        draw->ind_mtx[r][3] =
+                            -(m[r][0] * b[0] + m[r][1] * b[1] + m[r][2] * b[2]) / size[r];
+                    }
+                    st->mirror |= (u8) (0x80u | (icoord << 2) | (imap << 5));
+                    indirect_done = true;
+                }
+            }
         }
     }
     if (ztex_active) {
@@ -2165,6 +2220,7 @@ typedef struct DlCacheEntry {
     u8 has_mtxidx;
     u8 immutable_bytecode;
     u8 array_count;
+    u8 tex_palette[GX_MAX_TEXCOORD];
     struct { u8 attr; u32 end; } ranges[GX_VA_MAX_ATTR];
     struct DlCacheEntry* next;
 } DlCacheEntry;
@@ -2470,6 +2526,27 @@ static bool build_gpu_point_buffers(DlCacheEntry* e, u32 point_count)
     return expanded_vertices == point_count * 4u;
 }
 
+/* How each texcoord's per-vertex matrix (TEXnMTXIDX) relates to the
+ * vertex's position matrix across one display list: 0xff unseen, 1 same
+ * index (position matrix memory), 2 index + 30 (GX_TEXMTX0.. envelope
+ * normal matrices), 0xfe anything else. */
+static u8 s_decode_tex_palette[GX_MAX_TEXCOORD];
+
+static void note_tex_palette(const VitaDecodedVertex* vertex)
+{
+    for (u32 n = 0; n < GX_MAX_TEXCOORD; ++n) {
+        u8 mode;
+        int delta;
+        if ((vertex->tex_matrix_mask & (1u << n)) == 0u) continue;
+        delta = (int) vertex->tex_matrix[n] - (int) vertex->position_matrix;
+        mode = delta == 0 ? 1u : delta == (int) GX_TEXMTX0 ? 2u : 0xfeu;
+        if (s_decode_tex_palette[n] == 0xffu) s_decode_tex_palette[n] = mode;
+        else if (s_decode_tex_palette[n] != mode) s_decode_tex_palette[n] = 0xfeu;
+    }
+}
+
+static const u8* s_fill_tex_palette;
+
 /* Decodes one primitive's vertices into s_decode_vertices (count vertices).
  * Tracks, per indexed attribute, the furthest array byte read. */
 static bool decode_primitive_vertices(const u8* stream, u32 bytes, u32* cursor_io,
@@ -2541,6 +2618,8 @@ static bool decode_primitive_vertices(const u8* stream, u32 bytes, u32* cursor_i
             }
             decode_attribute(vertex, e->attr, e->format, source, little_endian);
         }
+        if (vertex->tex_matrix_mask != 0u && vertex->has_position_matrix)
+            note_tex_palette(vertex);
     }
     *cursor_io = cursor;
     return true;
@@ -2556,6 +2635,7 @@ static DlCacheEntry* build_dl_entry(
     bool has_mtxidx = false;
     DlCacheEntry* e;
     tris.count = lines.count = points.count = 0;
+    memset(s_decode_tex_palette, 0xff, sizeof(s_decode_tex_palette));
 
     while (cursor + 3u <= bytes) {
         const u8 command = stream[cursor];
@@ -2664,6 +2744,10 @@ static DlCacheEntry* build_dl_entry(
     e->line_count = lines.count;
     e->point_count = points.count;
     e->has_mtxidx = has_mtxidx;
+    for (u32 n = 0; n < GX_MAX_TEXCOORD; ++n) {
+        const u8 mode = s_decode_tex_palette[n];
+        e->tex_palette[n] = mode == 1u || mode == 2u ? mode : 0u;
+    }
     for (u32 attr = 0; attr < GX_VA_MAX_ATTR; ++attr) {
         if (s_gx.descriptors[attr] == GX_INDEX8 || s_gx.descriptors[attr] == GX_INDEX16) {
             e->ranges[e->array_count].attr = (u8) attr;
@@ -2911,6 +2995,16 @@ static int fill_vertex_key_uniforms(
                 : (g->matrix / 3u < 20u ? (const f32 (*)[4]) s_gx.texture_matrices[g->matrix / 3u] : NULL);
         }
         if (m != NULL) { k->has_matrix = 1u; copy_rows(u->tex + i * 3u, m, 3u); }
+        if (has_mtxidx && bump_plan == NULL && s_fill_tex_palette != NULL &&
+            i < GX_MAX_TEXCOORD && s_fill_tex_palette[i] != 0u) {
+            /* The display list picks this texgen's matrix per vertex. */
+            k->palette = s_fill_tex_palette[i];
+            k->has_matrix = 1u;
+            if (k->palette == 2u)
+                for (u32 t = 0; t < 10u; ++t)
+                    copy_rows(u->tex + GXR_TEX_PALETTE_ROW + t * 3u,
+                              (const f32 (*)[4]) s_gx.texture_matrices[10u + t], 3u);
+        }
         if (g->post_matrix != GX_PTIDENTITY && g->post_matrix >= GX_PTTEXMTX0 &&
             (g->post_matrix - GX_PTTEXMTX0) / 3u < 20u) {
             k->has_post = 1u;
@@ -3250,8 +3344,10 @@ static bool draw_display_list_gpu(
         const u64 fill_start = GX_PROF_NOW();
         const u8 cull = current_cull();
         bool ok = true;
+        s_fill_tex_palette = e->tex_palette;
         (void) fill_vertex_key_uniforms(
             &key, &uniforms, e->has_mtxidx != 0, NULL);
+        s_fill_tex_palette = NULL;
         draw->primitive = e->tri_count ? GXR_PRIM_TRIANGLES
             : e->line_count ? GXR_PRIM_LINES : GXR_PRIM_POINTS;
         fill_gxr_draw(draw);
@@ -4536,18 +4632,40 @@ void GXSetTevOrder(GXTevStageID stage, GXTexCoordID coordinate, GXTexMapID map, 
 void GXSetNumTevStages(u8 count)
 { s_gx.tev_stage_count = count > GX_MAX_TEVSTAGE ? GX_MAX_TEVSTAGE : count; }
 
-void GXSetNumIndStages(u8 count) { (void) count; }
+void GXSetNumIndStages(u8 count) { s_ind.count = count > 4u ? 4u : count; }
 void GXSetIndTexMtx(GXIndTexMtxID matrix, const void* values, s8 exponent)
-{ (void) matrix; (void) values; (void) exponent; }
+{
+    const f32 (*v)[3] = (const f32 (*)[3]) values;
+    f32 scale = 1.0f;
+    u32 slot;
+    if (matrix < GX_ITM_0 || matrix > GX_ITM_2 || values == NULL) return;
+    slot = (u32) (matrix - GX_ITM_0);
+    if (exponent > 0) { for (s8 e = 0; e < exponent; ++e) scale *= 2.0f; }
+    else { for (s8 e = 0; e > exponent; --e) scale *= 0.5f; }
+    for (u32 r = 0; r < 2u; ++r)
+        for (u32 k = 0; k < 3u; ++k)
+            s_ind.mtx[slot][r][k] = v[r][k] * scale;
+}
 void GXSetIndTexOrder(GXIndTexStageID stage, GXTexCoordID coordinate, GXTexMapID map)
-{ (void) stage; (void) coordinate; (void) map; }
+{
+    if ((u32) stage >= 4u) return;
+    s_ind.coord[stage] = (u8) coordinate;
+    s_ind.map[stage] = (u8) map;
+}
 void GXSetIndTexCoordScale(GXIndTexStageID stage, GXIndTexScale s, GXIndTexScale t)
 { (void) stage; (void) s; (void) t; }
 void GXSetTevIndirect(GXTevStageID tev, GXIndTexStageID ind, GXIndTexFormat format,
                       GXIndTexBiasSel bias, GXIndTexMtxID matrix, GXIndTexWrap wrap_s,
                       GXIndTexWrap wrap_t, GXBool add_previous, GXBool lod,
                       GXIndTexAlphaSel alpha)
-{ (void) tev; (void) ind; (void) format; (void) bias; (void) matrix; (void) wrap_s; (void) wrap_t; (void) add_previous; (void) lod; (void) alpha; }
+{
+    (void) wrap_s; (void) wrap_t; (void) add_previous; (void) lod; (void) alpha;
+    if ((u32) tev >= GX_MAX_TEVSTAGE) return;
+    s_tev_ind[tev].stage = (u8) ind;
+    s_tev_ind[tev].format = (u8) format;
+    s_tev_ind[tev].bias = (u8) bias;
+    s_tev_ind[tev].matrix = (u8) matrix;
+}
 void GXSetTevDirect(GXTevStageID stage)
 { GXSetTevIndirect(stage, GX_INDTEXSTAGE0, GX_ITF_8, GX_ITB_NONE, GX_ITM_OFF, GX_ITW_OFF, GX_ITW_OFF, GX_FALSE, GX_FALSE, GX_ITBA_OFF); }
 

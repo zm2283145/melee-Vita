@@ -70,6 +70,7 @@ typedef struct GxrProgram {
     const SceGxmProgramParameter* z_bias;
     const SceGxmProgramParameter* fog_color;
     const SceGxmProgramParameter* fog_params;
+    const SceGxmProgramParameter* ind_mtx[2];
     bool failed;
     bool blocked;
     struct GxrFragment* fragments;
@@ -541,11 +542,17 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
     const u8 fog_type = key->z_tex_op >> 4;
     bool uses_coord[GXR_MAX_TEXCOORDS] = { false };
     bool uses_map[GXR_MAX_TEXMAPS] = { false };
+    bool uses_indirect = false;
     for (u32 i = 0; i < key->stage_count; ++i) {
         const GxrStage* st = &key->stages[i];
         if (st->tex_map < GXR_MAX_TEXMAPS) {
             uses_map[st->tex_map] = true;
             if (st->tex_coord < GXR_MAX_TEXCOORDS) uses_coord[st->tex_coord] = true;
+            if ((st->mirror & 0x80u) != 0u) {
+                uses_indirect = true;
+                uses_map[(st->mirror >> 5) & 3u] = true;
+                uses_coord[(st->mirror >> 2) & 7u] = true;
+            }
         }
     }
 
@@ -566,6 +573,8 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         if (uses_map[i]) emit(s, ",\n    uniform sampler2D uMap%u : TEXUNIT%u", i, i);
     emit(s, ",\n    uniform float4 uPrev, uniform float4 uReg0, uniform float4 uReg1, uniform float4 uReg2");
     emit(s, ",\n    uniform float4 uK0, uniform float4 uK1, uniform float4 uK2, uniform float4 uK3");
+    if (uses_indirect)
+        emit(s, ",\n    uniform float4 uIndMtx0, uniform float4 uIndMtx1");
     if (needs_position)
         emit(s, ",\n    float4 vPosition : WPOS");
     if (fog_type != GX_FOG_NONE)
@@ -587,7 +596,19 @@ static bool build_fragment_source(const GxrShaderKey* key, Source* s)
         const GxrStage* st = &key->stages[i];
         char a[96], b[96], c[96], d[96];
         if (st->tex_map < GXR_MAX_TEXMAPS) {
-            if (st->tex_coord < GXR_MAX_TEXCOORDS && st->mirror != 0u) {
+            if (st->tex_coord < GXR_MAX_TEXCOORDS && (st->mirror & 0x80u) != 0u) {
+                /* GX indirect texturing: offset this stage's coordinate by
+                 * a matrix times the indirect texel (Dolphin reads .abg). */
+                emit(s, "    float3 ind%u = float3(tex2D(uMap%u, vTex%u).abg) * 255.0;\n",
+                     i, (u32) ((st->mirror >> 5) & 3u), (u32) ((st->mirror >> 2) & 7u));
+                emit(s, "    float2 uv%u = vTex%u + float2(dot(uIndMtx0.xyz, ind%u) + uIndMtx0.w, dot(uIndMtx1.xyz, ind%u) + uIndMtx1.w);\n",
+                     i, st->tex_coord, i, i);
+                if (st->mirror & 1u)
+                    emit(s, "    uv%u.x = 1.0 - abs(frac(uv%u.x * 0.5) * 2.0 - 1.0);\n", i, i);
+                if (st->mirror & 2u)
+                    emit(s, "    uv%u.y = 1.0 - abs(frac(uv%u.y * 0.5) * 2.0 - 1.0);\n", i, i);
+                emit(s, "    " TEVT "4 s%u = tex2D(uMap%u, uv%u);\n", i, st->tex_map, i);
+            } else if (st->tex_coord < GXR_MAX_TEXCOORDS && (st->mirror & 3u) != 0u) {
                 emit(s, "    float2 uv%u = vTex%u;\n", i, st->tex_coord);
                 if (st->mirror & 1u)
                     emit(s, "    uv%u.x = 1.0 - abs(frac(uv%u.x * 0.5) * 2.0 - 1.0);\n", i, i);
@@ -1273,6 +1294,8 @@ static GxrProgram* find_program(const GxrShaderKey* key)
         sceGxmProgramFindParameterByName(p->program, "uFogColor");
     p->fog_params =
         sceGxmProgramFindParameterByName(p->program, "uFogParams");
+    p->ind_mtx[0] = sceGxmProgramFindParameterByName(p->program, "uIndMtx0");
+    p->ind_mtx[1] = sceGxmProgramFindParameterByName(p->program, "uIndMtx1");
     return p;
 }
 
@@ -1411,8 +1434,10 @@ typedef struct RqDraw {
     u8 bump_path;
     u8 reserved8;
     u16 mtx_comps, tg_comps, light_comps, point_comps;
+    u16 tex_comps;
     f32 registers[4][4];
     f32 konst[4][4];
+    f32 ind_mtx[2][4];
     f32 uniforms[]; /* pos, nrm, proj, tex, post, light, mat, amb, point */
 } RqDraw;
 
@@ -1541,7 +1566,10 @@ static void resolve_textures(const GxrDraw* draw, RqDraw* d)
     for (u32 map = 0; map < GXR_MAX_TEXMAPS; ++map) {
         bool used = false;
         for (u32 i = 0; i < draw->key.stage_count; ++i) {
-            if (draw->key.stages[i].tex_map == map) {
+            if (draw->key.stages[i].tex_map == map ||
+                ((draw->key.stages[i].mirror & 0x80u) != 0u &&
+                 ((draw->key.stages[i].mirror >> 5) & 3u) == map)) {
+                /* the second test binds an indirect stage's offset map */
                 used = true;
                 break;
             }
@@ -1599,6 +1627,7 @@ static bool gxr_draw_now(const GxrDraw* draw, GxrVertex* vertices,
     d->point_size = draw->line_width < 1.0f ? 1.0f : draw->line_width;
     memcpy(d->registers, draw->registers, sizeof(d->registers));
     memcpy(d->konst, draw->konst, sizeof(d->konst));
+    memcpy(d->ind_mtx, draw->ind_mtx, sizeof(d->ind_mtx));
     d->alpha_ref[0] = (f32) draw->key.alpha_ref[0];
     d->alpha_ref[1] = (f32) draw->key.alpha_ref[1];
     d->z_bias = (f32) draw->z_tex_bias;
@@ -1712,13 +1741,16 @@ static void emit_light_channel(Source* s, const GxrVtxKey* key, u32 index,
     emit(s, "        vColor%u%s = (%s * clamp(lit, 0.0, 1.0))%s;\n    }\n", index, sw, mat, sw);
 }
 
+static bool key_uses_tex_palette(const GxrVtxKey* key);
+
 static bool build_vertex_source(const GxrVtxKey* key, bool point,
                                 u8 point_tex_mask, Source* s)
 {
     emit(s, "void main(float3 aPos, float aMtx, float3 aNrm, float4 aC0, float4 aC1,\n");
     emit(s, "    float2 aT0, float2 aT1, float2 aT2, float2 aT3,\n");
     emit(s, "    uniform float4 uPos[30], uniform float4 uNrm[30], uniform float4 uProj[4],\n");
-    emit(s, "    uniform float4 uTex[24], uniform float4 uPost[24], uniform float4 uLight[40],\n");
+    emit(s, "    uniform float4 uTex[%u], uniform float4 uPost[24], uniform float4 uLight[40],\n",
+         key_uses_tex_palette(key) ? GXR_TEX_PALETTE_ROW + 30u : 24u);
     emit(s, "    uniform float4 uMat[2], uniform float4 uAmb[2],\n");
     if (point)
         emit(s, "    uniform float4 uPoint,\n");
@@ -1778,13 +1810,29 @@ static bool build_vertex_source(const GxrVtxKey* key, bool point,
         if (tg->has_matrix) {
             const bool pn = tg->source == GX_TG_POS || tg->source == GX_TG_NRM;
             const char* w = tg->source == GX_TG_NRM ? "0.0" : "1.0";
+            char r0[32], r1[32], r2[32];
+            if (tg->palette == 1u && key->has_mtxidx) {
+                /* Matrix index per vertex, in position matrix memory. */
+                snprintf(r0, sizeof(r0), "uPos[m]");
+                snprintf(r1, sizeof(r1), "uPos[m + 1]");
+                snprintf(r2, sizeof(r2), "uPos[m + 2]");
+            } else if (tg->palette == 2u && key->has_mtxidx) {
+                /* Matrix index per vertex, in texture matrix memory. */
+                snprintf(r0, sizeof(r0), "uTex[%u + m]", GXR_TEX_PALETTE_ROW);
+                snprintf(r1, sizeof(r1), "uTex[%u + m]", GXR_TEX_PALETTE_ROW + 1u);
+                snprintf(r2, sizeof(r2), "uTex[%u + m]", GXR_TEX_PALETTE_ROW + 2u);
+            } else {
+                snprintf(r0, sizeof(r0), "uTex[%u]", r);
+                snprintf(r1, sizeof(r1), "uTex[%u]", r + 1u);
+                snprintf(r2, sizeof(r2), "uTex[%u]", r + 2u);
+            }
             emit(s, "        float3 src = float3(t.xy, %s);\n", pn ? "t.z" : "1.0");
             if (tg->type == GX_TG_MTX2x4)
-                emit(s, "        t = float3(dot(uTex[%u].xyz, src) + uTex[%u].w * %s, dot(uTex[%u].xyz, src) + uTex[%u].w * %s, 1.0);\n",
-                     r, r, w, r + 1u, r + 1u, w);
+                emit(s, "        t = float3(dot(%s.xyz, src) + %s.w * %s, dot(%s.xyz, src) + %s.w * %s, 1.0);\n",
+                     r0, r0, w, r1, r1, w);
             else
-                emit(s, "        t = float3(dot(uTex[%u].xyz, src) + uTex[%u].w * %s, dot(uTex[%u].xyz, src) + uTex[%u].w * %s, dot(uTex[%u].xyz, src) + uTex[%u].w * %s);\n",
-                     r, r, w, r + 1u, r + 1u, w, r + 2u, r + 2u, w);
+                emit(s, "        t = float3(dot(%s.xyz, src) + %s.w * %s, dot(%s.xyz, src) + %s.w * %s, dot(%s.xyz, src) + %s.w * %s);\n",
+                     r0, r0, w, r1, r1, w, r2, r2, w);
         }
         if (tg->type == GX_TG_MTX3x4 && !tg->has_post)
             emit(s, "        t.xy = (t.z != 0.0) ? t.xy / t.z : t.xy;\n");
@@ -2321,6 +2369,22 @@ void melee_vita_prof_add(int zone, u64 us);
 #define GXR_ZONE_RESOLVE_TEXTURES 16
 #define GXR_ZONE_UNIFORM_COPY 17
 
+static bool key_uses_tex_palette(const GxrVtxKey* key)
+{
+    if (!key->has_mtxidx) return false;
+    for (u32 i = 0; i < key->texgen_count && i < GXR_MAX_TEXCOORDS; ++i)
+        if (key->tg[i].palette == 2u) return true;
+    return false;
+}
+
+/* uTex components: one 3-row matrix per texgen, or the full array when a
+ * texgen picks one of GX_TEXMTX0..9 per vertex. */
+static u32 tex_uniform_comps(const GxrVtxKey* key)
+{
+    return key_uses_tex_palette(key)
+        ? (GXR_TEX_PALETTE_ROW + 30u) * 4u : key->texgen_count * 12u;
+}
+
 /* Uniform block layout shared by the synchronous path and queued jobs. */
 static u32 gpu_uniform_layout(const GxrVtxKey* vkey, bool point_draw,
                               u32* mtx_comps, u32* tg_comps, u32* light_comps)
@@ -2332,18 +2396,19 @@ static u32 gpu_uniform_layout(const GxrVtxKey* vkey, bool point_draw,
     *mtx_comps = vkey->has_mtxidx ? 120u : 12u;
     *tg_comps = vkey->texgen_count * 12u;
     *light_comps = top * 20u;
-    return 2u * *mtx_comps + 16u + 2u * *tg_comps + *light_comps + 16u +
+    return 2u * *mtx_comps + 16u + tex_uniform_comps(vkey) + *tg_comps +
+           *light_comps + 16u +
            (point_draw ? 4u : 0u);
 }
 
 static void pack_gpu_uniforms(f32* out, const GxrVtxUniforms* u,
                               const GxrPointParams* point, u32 mtx_comps,
-                              u32 tg_comps, u32 light_comps)
+                              u32 tex_comps, u32 tg_comps, u32 light_comps)
 {
     memcpy(out, u->pos, mtx_comps * sizeof(f32)); out += mtx_comps;
     memcpy(out, u->nrm, mtx_comps * sizeof(f32)); out += mtx_comps;
     memcpy(out, u->proj, 16u * sizeof(f32)); out += 16u;
-    memcpy(out, u->tex, tg_comps * sizeof(f32)); out += tg_comps;
+    memcpy(out, u->tex, tex_comps * sizeof(f32)); out += tex_comps;
     memcpy(out, u->post, tg_comps * sizeof(f32)); out += tg_comps;
     memcpy(out, u->light, light_comps * sizeof(f32)); out += light_comps;
     memcpy(out, u->mat, 8u * sizeof(f32)); out += 8u;
@@ -2413,10 +2478,12 @@ static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
     d->line_width = draw->line_width < 1.0f ? 1u : (u32) (draw->line_width + 0.5f);
     d->mtx_comps = (u16) mtx_comps;
     d->tg_comps = (u16) tg_comps;
+    d->tex_comps = (u16) tex_uniform_comps(vkey);
     d->light_comps = (u16) light_comps;
     d->point_comps = point_draw ? 4u : 0u;
     memcpy(d->registers, draw->registers, sizeof(d->registers));
     memcpy(d->konst, draw->konst, sizeof(d->konst));
+    memcpy(d->ind_mtx, draw->ind_mtx, sizeof(d->ind_mtx));
     d->alpha_ref[0] = (f32) draw->key.alpha_ref[0];
     d->alpha_ref[1] = (f32) draw->key.alpha_ref[1];
     d->z_bias = (f32) draw->z_tex_bias;
@@ -2427,8 +2494,8 @@ static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
     if (packed != NULL)
         memcpy(d->uniforms, packed, total * sizeof(f32));
     else
-        pack_gpu_uniforms(d->uniforms, u, point, mtx_comps, tg_comps,
-                          light_comps);
+        pack_gpu_uniforms(d->uniforms, u, point, mtx_comps,
+                          tex_uniform_comps(vkey), tg_comps, light_comps);
     GXR_SUBZONE_END(GXR_ZONE_UNIFORM_COPY);
     melee_vita_profiler_record_duration(39u, 1u);
     ++s_stats.draws;
@@ -2550,9 +2617,11 @@ static bool gxr_draw_bump_now(
         draw->line_width < 1.0f ? 1u : (u32) (draw->line_width + 0.5f);
     d->mtx_comps = (u16) mtx_comps;
     d->tg_comps = (u16) tg_comps;
+    d->tex_comps = (u16) tg_comps;
     d->light_comps = (u16) light_comps;
     memcpy(d->registers, draw->registers, sizeof(d->registers));
     memcpy(d->konst, draw->konst, sizeof(d->konst));
+    memcpy(d->ind_mtx, draw->ind_mtx, sizeof(d->ind_mtx));
     d->alpha_ref[0] = (f32) draw->key.alpha_ref[0];
     d->alpha_ref[1] = (f32) draw->key.alpha_ref[1];
     d->z_bias = (f32) draw->z_tex_bias;
@@ -2767,7 +2836,7 @@ static bool submit_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
             job->indices = indices;
             job->count = count;
             pack_gpu_uniforms((f32*) (job->data + extra), u, point, mtx_comps,
-                              tg_comps, light_comps);
+                              tex_uniform_comps(vkey), tg_comps, light_comps);
             return true;
         }
     }
@@ -2960,9 +3029,9 @@ static void exec_draw(const void* payload)
             in += d->mtx_comps;
             if (u_proj) set_uniform(vbuf, u_proj, 16, in, "u_proj");
             in += 16u;
-            if (u_tex && d->tg_comps)
-                set_uniform(vbuf, u_tex, d->tg_comps, in, "tex");
-            in += d->tg_comps;
+            if (u_tex && d->tex_comps)
+                set_uniform(vbuf, u_tex, d->tex_comps, in, "tex");
+            in += d->tex_comps;
             if (u_post && d->tg_comps)
                 set_uniform(vbuf, u_post, d->tg_comps, in, "post");
             in += d->tg_comps;
@@ -2985,6 +3054,7 @@ static void exec_draw(const void* payload)
             program->alpha_ref[1] != NULL) any = true;
         if (program->z_bias != NULL) any = true;
         if (program->fog_color != NULL || program->fog_params != NULL) any = true;
+        if (program->ind_mtx[0] != NULL || program->ind_mtx[1] != NULL) any = true;
         if (any) {
             void* fbuf = NULL;
             sceGxmReserveFragmentDefaultUniformBuffer(context, &fbuf);
@@ -3009,6 +3079,10 @@ static void exec_draw(const void* payload)
                 if (program->fog_params != NULL)
                     sceGxmSetUniformDataF(
                         fbuf, program->fog_params, 0, 4, d->fog_params);
+                for (u32 i = 0; i < 2u; ++i)
+                    if (program->ind_mtx[i] != NULL)
+                        sceGxmSetUniformDataF(
+                            fbuf, program->ind_mtx[i], 0, 4, d->ind_mtx[i]);
             }
         }
     }

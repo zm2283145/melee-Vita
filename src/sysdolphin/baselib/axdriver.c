@@ -853,6 +853,18 @@ bool AXDriver_8038D9D8(int vid)
     if (v->unk != vid || !(v->flags & SMSTATE_MASK)) {
         return false;
     }
+#ifdef TARGET_VITA
+    /* Queued but not yet run by the driver (x30 is still -1).  On GameCube
+     * the AX interrupt picks a new sound up within 5 ms, before the next
+     * game tick asks.  On Vita several ticks can run back to back before
+     * the mixer does, so the Hammer/Starman jingle (restarted by
+     * lbAudioAx_80027DF8 whenever this returns false) was started over
+     * and over: its opening stuttered and stray copies kept playing after
+     * the item ended. */
+    if (v->x30 == -1) {
+        return true;
+    }
+#endif
     if (HSD_SynthSFXCheck(v->vID) == -1) {
         return false;
     }

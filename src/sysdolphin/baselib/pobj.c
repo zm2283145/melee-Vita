@@ -1155,22 +1155,29 @@ static void SetupEnvelopeModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
         /* World matrices blended ahead of time (core 2); only the view
          * matrix and the normal matrix remain per draw. */
         Mtx scratch[10];
-        int count = 0;
-        const Mtx* world =
-            melee_vita_skin_lookup(pobj, jobj, &count, scratch);
-        if (world != NULL) {
-            for (MtxIdx = 0; MtxIdx < count; MtxIdx++) {
+        MeleeVitaSkinResult skin;
+        if (melee_vita_skin_lookup(pobj, jobj, vmtx, &skin, scratch)) {
+            for (MtxIdx = 0; MtxIdx < skin.count; MtxIdx++) {
                 Mtx tmp;
+                MtxPtr nrm = mtx;
                 s32 mtx_no = HSD_Index2PosNrmMtx(MtxIdx);
-                MTXConcat(vmtx, (MtxPtr) world[MtxIdx], tmp);
-                GXLoadPosMtxImm(tmp, mtx_no);
+                if (skin.pos != NULL) {
+                    /* View predicted on the worker: matrices are final. */
+                    GXLoadPosMtxImm((MtxPtr) skin.pos[MtxIdx], mtx_no);
+                    nrm = (MtxPtr) skin.nrm[MtxIdx];
+                } else {
+                    MTXConcat(vmtx, (MtxPtr) skin.world[MtxIdx], tmp);
+                    GXLoadPosMtxImm(tmp, mtx_no);
+                    if (flags & SETUP_NORMAL) {
+                        HSD_MtxInverseTranspose(tmp, mtx);
+                    }
+                }
                 if (flags & SETUP_NORMAL) {
-                    HSD_MtxInverseTranspose(tmp, mtx);
                     if (jobj->flags & JOBJ_LIGHTING) {
-                        GXLoadNrmMtxImm(mtx, mtx_no);
+                        GXLoadNrmMtxImm(nrm, mtx_no);
                     }
                     if (flags & SETUP_NORMAL_PROJECTION) {
-                        GXLoadTexMtxImm(mtx, HSD_Index2TexMtx(MtxIdx),
+                        GXLoadTexMtxImm(nrm, HSD_Index2TexMtx(MtxIdx),
                                         GX_MTX3x4);
                     }
                 }

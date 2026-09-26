@@ -16,10 +16,17 @@
 void melee_vita_skin_begin_frame(void);
 /* Main thread, after the scene is drawn (before game logic runs again). */
 void melee_vita_skin_end_frame(void);
-/* Returns the blended world matrices for the pobj's envelopes (count written
- * to *out_count), or NULL if the caller must use the original path. */
-const Mtx* melee_vita_skin_lookup(HSD_PObj* pobj, HSD_JObj* owner,
-                                  int* out_count, Mtx* scratch);
+typedef struct MeleeVitaSkinResult {
+    int count;
+    const Mtx* world; /* blended envelope matrices (model space) */
+    const Mtx* pos;   /* view * world, or NULL if the view was not predicted */
+    const Mtx* nrm;   /* inverse transpose of pos (valid with pos) */
+} MeleeVitaSkinResult;
+
+/* Returns 1 with the pobj's envelope matrices in *out, or 0 if the caller
+ * must use the original path.  scratch holds SKIN_MAX_MTX (10) matrices. */
+int melee_vita_skin_lookup(HSD_PObj* pobj, HSD_JObj* owner, MtxPtr vmtx,
+                           MeleeVitaSkinResult* out, Mtx* scratch);
 #endif
 
 #endif

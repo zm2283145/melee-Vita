@@ -4,6 +4,7 @@
 
 #include <float.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <psp2/kernel/threadmgr.h>
@@ -43,8 +44,25 @@ typedef struct SkinJob {
     HSD_JObj* owner;
     int state;
     int count;
+    int has_view;
+    Mtx view;
     Mtx w[SKIN_MAX_MTX];
+    Mtx pos[SKIN_MAX_MTX];
+    Mtx nrm[SKIN_MAX_MTX];
 } SkinJob;
+
+/* The view matrix each (pobj, owner) was last drawn with.  The worker
+ * predicts the next frame uses the same one (true for static cameras such
+ * as the results screen and menus) and also produces the final position and
+ * normal matrices; the draw then only compares the view matrix. */
+#define SKIN_VIEW_SIZE 4096
+typedef struct SkinView {
+    HSD_PObj* pobj;
+    HSD_JObj* owner;
+    u32 epoch;
+    Mtx view;
+} SkinView;
+static SkinView* s_views;
 
 typedef struct SkinSlot {
     HSD_PObj* pobj;
@@ -53,7 +71,9 @@ typedef struct SkinSlot {
     u32 job;
 } SkinSlot;
 
-static SkinJob s_jobs[SKIN_MAX_JOBS];
+/* Heap-allocated for the same reason as the GX submit ring. */
+static SkinJob* s_jobs;
+static u32 s_stat_view_hits;
 static SkinSlot s_hash[SKIN_HASH_SIZE];
 static int s_job_count;
 static u32 s_epoch;
@@ -139,6 +159,13 @@ static int skin_thread(SceSize args, void* argp)
                 continue;
             }
             job->count = skin_compute(job->pobj, job->owner, job->w);
+            if (job->has_view) {
+                int m;
+                for (m = 0; m < job->count; m++) {
+                    MTXConcat(job->view, job->w[m], job->pos[m]);
+                    HSD_MtxInverseTranspose(job->pos[m], job->nrm[m]);
+                }
+            }
             __atomic_store_n(&job->state, SKIN_DONE, __ATOMIC_RELEASE);
         }
         __atomic_store_n(&s_busy, 0, __ATOMIC_RELEASE);
@@ -152,6 +179,16 @@ static int skin_ensure_thread(void)
         return 1;
     }
     if (s_thread_failed) {
+        return 0;
+    }
+    s_jobs = malloc(sizeof(SkinJob) * SKIN_MAX_JOBS);
+    s_views = calloc(SKIN_VIEW_SIZE, sizeof(SkinView));
+    if (s_jobs == NULL || s_views == NULL) {
+        free(s_jobs);
+        free(s_views);
+        s_jobs = NULL;
+        s_views = NULL;
+        s_thread_failed = 1;
         return 0;
     }
     s_sema = sceKernelCreateSema("melee skin", 0, 0, 1, NULL);
@@ -178,6 +215,28 @@ static void skin_wait_idle(void)
     while (__atomic_load_n(&s_busy, __ATOMIC_ACQUIRE)) {
         /* The worker checks s_abort between jobs; each job is a few us. */
     }
+}
+
+static SkinView* skin_view_find(HSD_PObj* pobj, HSD_JObj* owner, int insert)
+{
+    u32 h = skin_hash(pobj, owner) & (SKIN_VIEW_SIZE - 1);
+    SkinView* victim = NULL;
+    int probe;
+    for (probe = 0; probe < 8; probe++) {
+        SkinView* v = &s_views[(h + probe) & (SKIN_VIEW_SIZE - 1)];
+        if (v->pobj == pobj && v->owner == owner) {
+            return v;
+        }
+        if (victim == NULL || v->epoch < victim->epoch) {
+            victim = v;
+        }
+    }
+    if (!insert) {
+        return NULL;
+    }
+    victim->pobj = pobj;
+    victim->owner = owner;
+    return victim;
 }
 
 static void skin_add_jobj(HSD_JObj* jobj)
@@ -216,6 +275,13 @@ static void skin_add_jobj(HSD_JObj* jobj)
             job->owner = jobj;
             job->count = 0;
             job->state = SKIN_PENDING;
+            {
+                const SkinView* v = skin_view_find(pobj, jobj, 0);
+                job->has_view = v != NULL && s_epoch - v->epoch <= 2u;
+                if (job->has_view) {
+                    MTXCopy((MtxPtr) v->view, job->view);
+                }
+            }
             s_hash[h].pobj = pobj;
             s_hash[h].owner = jobj;
             s_hash[h].job = (u32) s_job_count;
@@ -277,7 +343,9 @@ void melee_vita_skin_end_frame(void)
         melee_vita_profiler_record_duration(SKIN_ZONE_FALLBACK,
                                             s_stat_fallback);
         melee_vita_profiler_record_duration(SKIN_ZONE_WAIT, s_stat_wait_us);
+        melee_vita_profiler_record_duration(57u, s_stat_view_hits);
     }
+    s_stat_view_hits = 0;
     s_stat_hits = s_stat_main = s_stat_fallback = 0;
     s_stat_wait_us = 0;
 }
@@ -291,22 +359,31 @@ static void skin_invalidate_frame(void)
     s_frame_valid = 0;
 }
 
-const Mtx* melee_vita_skin_lookup(HSD_PObj* pobj, HSD_JObj* owner,
-                                  int* out_count, Mtx* scratch)
+static void skin_remember_view(HSD_PObj* pobj, HSD_JObj* owner, MtxPtr vmtx)
+{
+    SkinView* v = skin_view_find(pobj, owner, 1);
+    v->epoch = s_epoch;
+    MTXCopy(vmtx, v->view);
+}
+
+int melee_vita_skin_lookup(HSD_PObj* pobj, HSD_JObj* owner, MtxPtr vmtx,
+                           MeleeVitaSkinResult* out, Mtx* scratch)
 {
     SkinJob* job;
     HSD_SList* list;
     u32 h;
     int state, idx;
 
+    out->pos = NULL;
+    out->nrm = NULL;
     if (!s_frame_valid) {
-        return NULL;
+        return 0;
     }
     h = skin_hash(pobj, owner);
     for (;;) {
         if (s_hash[h].epoch != s_epoch) {
             s_stat_fallback++;
-            return NULL;
+            return 0;
         }
         if (s_hash[h].pobj == pobj && s_hash[h].owner == owner) {
             break;
@@ -331,6 +408,7 @@ const Mtx* melee_vita_skin_lookup(HSD_PObj* pobj, HSD_JObj* owner,
             }
         }
     }
+    skin_remember_view(pobj, owner, vmtx);
 
     state = __atomic_load_n(&job->state, __ATOMIC_ACQUIRE);
     if (state == SKIN_PENDING) {
@@ -339,11 +417,14 @@ const Mtx* melee_vita_skin_lookup(HSD_PObj* pobj, HSD_JObj* owner,
                                         false, __ATOMIC_ACQ_REL,
                                         __ATOMIC_ACQUIRE))
         {
+            /* World matrices only; the caller applies the view. */
+            job->has_view = 0;
             job->count = skin_compute(pobj, owner, job->w);
             __atomic_store_n(&job->state, SKIN_DONE, __ATOMIC_RELEASE);
             s_stat_main++;
-            *out_count = job->count;
-            return (const Mtx*) job->w;
+            out->count = job->count;
+            out->world = (const Mtx*) job->w;
+            return 1;
         }
         state = expected;
     }
@@ -356,20 +437,27 @@ const Mtx* melee_vita_skin_lookup(HSD_PObj* pobj, HSD_JObj* owner,
                 /* Worker was preempted mid-job; compute a private copy. */
                 s_stat_wait_us += now - t0;
                 s_stat_main++;
-                *out_count = skin_compute(pobj, owner, scratch);
-                return (const Mtx*) scratch;
+                out->count = skin_compute(pobj, owner, scratch);
+                out->world = (const Mtx*) scratch;
+                return 1;
             }
         }
         s_stat_wait_us += now - t0;
     }
     s_stat_hits++;
-    *out_count = job->count;
-    return (const Mtx*) job->w;
+    out->count = job->count;
+    out->world = (const Mtx*) job->w;
+    if (job->has_view && memcmp(job->view, vmtx, sizeof(Mtx)) == 0) {
+        out->pos = (const Mtx*) job->pos;
+        out->nrm = (const Mtx*) job->nrm;
+        s_stat_view_hits++;
+    }
+    return 1;
 
 invalid:
     skin_invalidate_frame();
     s_stat_fallback++;
-    return NULL;
+    return 0;
 }
 
 #endif

@@ -254,6 +254,15 @@ static u64 s_vpz_us[VPZ_COUNT];
 static u32 s_vpz_calls[VPZ_COUNT];
 
 
+/* Timing for the per-draw stats above.  A kernel timer read costs ~0.7 us
+ * on Vita and the draw path took ~11 of them per display list, so outside
+ * live-profiler builds they read as 0. */
+#ifdef MELEE_VITA_PROFILER
+#define GX_PROF_NOW() sceKernelGetProcessTimeWide()
+#else
+#define GX_PROF_NOW() ((u64) 0)
+#endif
+
 void melee_vita_prof_add(int zone, u64 us)
 {
     if ((unsigned) zone < VPZ_COUNT) {
@@ -1386,7 +1395,7 @@ static bool submit_gxr(GXPrimitive primitive,
                        const VitaDecodedVertex* vertices, u32 count,
                        bool draw_ready)
 {
-    const u64 prof_start = sceKernelGetProcessTimeWide();
+    const u64 prof_start = GX_PROF_NOW();
     u32 output = 0, i;
     u32 needed;
     u32 vertex_count = count;
@@ -1470,7 +1479,7 @@ static bool submit_gxr(GXPrimitive primitive,
             output = kept;
         }
     }
-    s_prof_vertex_us += sceKernelGetProcessTimeWide() - prof_start;
+    s_prof_vertex_us += GX_PROF_NOW() - prof_start;
     s_prof_vertices += count;
     if (output == 0) return true;
 
@@ -1482,15 +1491,15 @@ static bool submit_gxr(GXPrimitive primitive,
         draw->line_width = 1.0f;
     }
     if (!draw_ready) {
-        const u64 fill_start = sceKernelGetProcessTimeWide();
+        const u64 fill_start = GX_PROF_NOW();
         fill_gxr_draw(draw);
-        s_prof_fill_us += sceKernelGetProcessTimeWide() - fill_start;
+        s_prof_fill_us += GX_PROF_NOW() - fill_start;
     }
     {
-        const u64 draw_start = sceKernelGetProcessTimeWide();
+        const u64 draw_start = GX_PROF_NOW();
         const bool ok = gxr_draw(draw, out, idx, output);
         if (!draw_ready)
-            s_prof_draw_us += sceKernelGetProcessTimeWide() - draw_start;
+            s_prof_draw_us += GX_PROF_NOW() - draw_start;
         ++s_prof_draws;
         return ok;
     }
@@ -2075,10 +2084,10 @@ void GXBeginIndexed(GXVtxFmt format, u16 vertices, const u16* indices, u32 count
 void GXEnd(void)
 {
     if (s_gx.immediate.active && s_gx.immediate.vertex_count != 0) {
-        const u64 t0 = sceKernelGetProcessTimeWide();
+        const u64 t0 = GX_PROF_NOW();
         submit_decoded(s_gx.immediate.primitive, s_decode_vertices,
                        s_gx.immediate.vertex_count);
-        melee_vita_prof_add(VPZ_IMMEDIATE, sceKernelGetProcessTimeWide() - t0);
+        melee_vita_prof_add(VPZ_IMMEDIATE, GX_PROF_NOW() - t0);
     }
     s_gx.immediate.active = GX_FALSE;
 }
@@ -3028,11 +3037,11 @@ static bool draw_bump_display_list_gpu(
     int plan_result;
 
     memset(&key, 0, sizeof(key));
-    started = sceKernelGetProcessTimeWide();
+    started = GX_PROF_NOW();
     plan_result = fill_vertex_key_uniforms(
         &key.legacy, &uniforms, false, &key.plan);
     {
-        const u64 elapsed = sceKernelGetProcessTimeWide() - started;
+        const u64 elapsed = GX_PROF_NOW() - started;
         s_prof_fill_us += elapsed;
         melee_vita_profiler_record_duration(19u, elapsed);
     }
@@ -3055,12 +3064,12 @@ static bool draw_bump_display_list_gpu(
     }
     if (e != NULL && e->validated_frame != s_array_epoch) {
 #ifdef MELEE_VITA_PROFILER
-        started = sceKernelGetProcessTimeWide();
+        started = GX_PROF_NOW();
 #endif
         const u32 h = bump_entry_content_hash(e);
 #ifdef MELEE_VITA_PROFILER
         melee_vita_profiler_record_duration(
-            18u, sceKernelGetProcessTimeWide() - started);
+            18u, GX_PROF_NOW() - started);
 #endif
         e->validated_frame = s_array_epoch;
         if (h != e->content_hash) {
@@ -3075,11 +3084,11 @@ static bool draw_bump_display_list_gpu(
         }
     }
     if (e == NULL) {
-        started = sceKernelGetProcessTimeWide();
+        started = GX_PROF_NOW();
         e = build_bump_dl_entry(
             list, bytes, state_hash, scope_generation);
         {
-            const u64 elapsed = sceKernelGetProcessTimeWide() - started;
+            const u64 elapsed = GX_PROF_NOW() - started;
             s_prof_decode_us += elapsed;
             melee_vita_profiler_record_duration(20u, elapsed);
         }
@@ -3104,11 +3113,11 @@ static bool draw_bump_display_list_gpu(
     }
 
     memset(&key, 0, sizeof(key));
-    started = sceKernelGetProcessTimeWide();
+    started = GX_PROF_NOW();
     plan_result = fill_vertex_key_uniforms(
         &key.legacy, &uniforms, e->has_mtxidx != 0, &key.plan);
     {
-        const u64 elapsed = sceKernelGetProcessTimeWide() - started;
+        const u64 elapsed = GX_PROF_NOW() - started;
         s_prof_fill_us += elapsed;
         melee_vita_profiler_record_duration(19u, elapsed);
     }
@@ -3124,14 +3133,14 @@ static bool draw_bump_display_list_gpu(
         bool ok = true;
         draw->primitive = GXR_PRIM_TRIANGLES;
         fill_gxr_draw(draw);
-        started = sceKernelGetProcessTimeWide();
+        started = GX_PROF_NOW();
         draw->line_width = 1.0f;
         ok = gxr_draw_bump_gpu(
             draw, &key, &uniforms, e->vertices, e->indices,
             e->tri_count, cull);
         ++s_prof_draws;
         {
-            const u64 elapsed = sceKernelGetProcessTimeWide() - started;
+            const u64 elapsed = GX_PROF_NOW() - started;
             s_prof_draw_us += elapsed;
             melee_vita_profiler_record_duration(21u, elapsed);
         }
@@ -3195,7 +3204,7 @@ static bool draw_display_list_gpu(
                 immutable_bytecode))
             break;
     {
-        const u64 t0 = sceKernelGetProcessTimeWide();
+        const u64 t0 = GX_PROF_NOW();
         if (e != NULL && e->validated_frame != s_array_epoch) {
             const u32 h = entry_content_hash(e, false);
             e->validated_frame = s_array_epoch;
@@ -3211,15 +3220,15 @@ static bool draw_display_list_gpu(
                 ++s_dl_stats.rebuilds;
             }
         }
-        s_dl_stats.hash_us += sceKernelGetProcessTimeWide() - t0;
-        melee_vita_prof_add(VPZ_DL_HASH, sceKernelGetProcessTimeWide() - t0);
+        s_dl_stats.hash_us += GX_PROF_NOW() - t0;
+        melee_vita_prof_add(VPZ_DL_HASH, GX_PROF_NOW() - t0);
     }
     if (e == NULL) {
-        const u64 t0 = sceKernelGetProcessTimeWide();
+        const u64 t0 = GX_PROF_NOW();
         e = build_dl_entry(
             list, bytes, state_hash, immutable_bytecode);
-        s_prof_decode_us += sceKernelGetProcessTimeWide() - t0;
-        melee_vita_prof_add(VPZ_DL_BUILD, sceKernelGetProcessTimeWide() - t0);
+        s_prof_decode_us += GX_PROF_NOW() - t0;
+        melee_vita_prof_add(VPZ_DL_BUILD, GX_PROF_NOW() - t0);
         if (e == NULL) {
             ++s_dl_stats.fallbacks;
             s_dl_fallback_reason = 5u;
@@ -3238,7 +3247,7 @@ static bool draw_display_list_gpu(
         GxrVtxKey key;
         static GxrVtxUniforms uniforms;
         GxrDraw* draw = &s_gxr_draw;
-        const u64 fill_start = sceKernelGetProcessTimeWide();
+        const u64 fill_start = GX_PROF_NOW();
         const u8 cull = current_cull();
         bool ok = true;
         (void) fill_vertex_key_uniforms(
@@ -3246,10 +3255,10 @@ static bool draw_display_list_gpu(
         draw->primitive = e->tri_count ? GXR_PRIM_TRIANGLES
             : e->line_count ? GXR_PRIM_LINES : GXR_PRIM_POINTS;
         fill_gxr_draw(draw);
-        s_prof_fill_us += sceKernelGetProcessTimeWide() - fill_start;
-        melee_vita_prof_add(VPZ_DRAW_SETUP, sceKernelGetProcessTimeWide() - fill_start);
+        s_prof_fill_us += GX_PROF_NOW() - fill_start;
+        melee_vita_prof_add(VPZ_DRAW_SETUP, GX_PROF_NOW() - fill_start);
         {
-            const u64 draw_start = sceKernelGetProcessTimeWide();
+            const u64 draw_start = GX_PROF_NOW();
             if (e->tri_count) {
                 draw->primitive = GXR_PRIM_TRIANGLES;
                 draw->line_width = 1.0f;
@@ -3311,8 +3320,8 @@ static bool draw_display_list_gpu(
                     }
                 }
             }
-            s_prof_draw_us += sceKernelGetProcessTimeWide() - draw_start;
-            melee_vita_prof_add(VPZ_GPU_SUBMIT, sceKernelGetProcessTimeWide() - draw_start);
+            s_prof_draw_us += GX_PROF_NOW() - draw_start;
+            melee_vita_prof_add(VPZ_GPU_SUBMIT, GX_PROF_NOW() - draw_start);
         }
         s_prof_vertices += e->vertex_count - e->point_count;
         /* A shader failure falls back to the CPU path for this draw only if
@@ -3362,7 +3371,7 @@ static void call_display_list(
         const GXPrimitive primitive = (GXPrimitive) (command & 0xf8u);
         const GXVtxFmt format = (GXVtxFmt) (command & 7u);
         const u32 count = (u32) stream[cursor + 1u] << 8 | stream[cursor + 2u];
-        const u64 decode_start = sceKernelGetProcessTimeWide();
+        const u64 decode_start = GX_PROF_NOW();
         VitaAttrPlan plan[GX_VA_MAX_ATTR];
         u32 plan_count = 0;
         u32 vertex_index;
@@ -3440,35 +3449,35 @@ static void call_display_list(
             }
         }
         {
-            const u64 elapsed = sceKernelGetProcessTimeWide() - decode_start;
+            const u64 elapsed = GX_PROF_NOW() - decode_start;
             s_prof_decode_us += elapsed;
             melee_vita_profiler_record_duration(22u, elapsed);
         }
 #ifdef MELEE_VITA_PROFILER
-        const u64 submit_start = sceKernelGetProcessTimeWide();
+        const u64 submit_start = GX_PROF_NOW();
 #endif
         submit_decoded(primitive, s_decode_vertices, count);
 #ifdef MELEE_VITA_PROFILER
         melee_vita_profiler_record_duration(
-            23u, sceKernelGetProcessTimeWide() - submit_start);
+            23u, GX_PROF_NOW() - submit_start);
 #endif
     }
 }
 
 void GXCallDisplayList(const void* list, u32 bytes)
 {
-    const u64 started = sceKernelGetProcessTimeWide();
+    const u64 started = GX_PROF_NOW();
     call_display_list(list, bytes, false);
     melee_vita_profiler_record_duration(
-        38u, sceKernelGetProcessTimeWide() - started);
+        38u, GX_PROF_NOW() - started);
 }
 
 void GXCallDisplayListImmutable(const void* list, u32 bytes)
 {
-    const u64 started = sceKernelGetProcessTimeWide();
+    const u64 started = GX_PROF_NOW();
     call_display_list(list, bytes, true);
     melee_vita_profiler_record_duration(
-        38u, sceKernelGetProcessTimeWide() - started);
+        38u, GX_PROF_NOW() - started);
 }
 
 #define GX_VALUE_FN_1(name, type) void name(type a) { (void) a; note_value(); }
@@ -3993,11 +4002,11 @@ void melee_vita_gx_end_shadow(void)
 
 void GXCopyTex(void* destination, GXBool clear)
 {
-    const u64 t0 = sceKernelGetProcessTimeWide();
+    const u64 t0 = GX_PROF_NOW();
     melee_vita_gxm_require_full_resolution(
         MELEE_VITA_NATIVE_REASON_COPY);
     copy_tex_impl(destination, clear);
-    melee_vita_prof_add(VPZ_COPYTEX, sceKernelGetProcessTimeWide() - t0);
+    melee_vita_prof_add(VPZ_COPYTEX, GX_PROF_NOW() - t0);
 }
 
 static void copy_tex_impl(void* destination, GXBool clear)

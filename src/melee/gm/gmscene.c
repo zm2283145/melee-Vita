@@ -443,6 +443,8 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
                     28u, gm_804D6720 != NULL ? gm_804D6720->scene_kind : 0u);
                 melee_vita_profiler_record_duration(29u, stage_info.grkind);
                 melee_vita_profiler_record_duration(30u, fighters);
+                melee_vita_profiler_record_duration(
+                    51u, (u64) pad_queue_count);
             }
         }
 #endif

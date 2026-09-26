@@ -31,7 +31,7 @@
 #define PROFILER_STREAM_BUFFER_BYTES 8192u
 #define PROFILER_NET_MEMORY_BYTES (1024u * 1024u)
 #define PROFILER_DRAIN_EVENTS 128u
-#define PROFILER_DURATION_COUNT 51u
+#define PROFILER_DURATION_COUNT 52u
 #define PROFILER_RECONNECT_DELAY_US 500000u
 #define PROFILER_STATUS_PATH "ux0:data/melee/profiler-live-status.txt"
 
@@ -59,7 +59,7 @@ static const char* const s_duration_names[] = {
     "count.tex_lookups", "duration.tex_sample_us",
     "count.dl_fallback", "count.fb_unavailable", "count.fb_movie",
     "count.fb_short", "count.fb_bump", "count.fb_build", "count.fb_draw",
-    "count.bump_draws",
+    "count.bump_draws", "count.game_ticks",
 };
 _Static_assert(
     sizeof(s_duration_names) / sizeof(s_duration_names[0]) ==

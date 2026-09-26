@@ -42,13 +42,22 @@
 static u32 arena_size;
 static bool gmMain_804D6594;
 
-static HSD_PadData gmMain_8046B108[5];
+#ifdef TARGET_VITA
+/* The pad queue caps how many 60 Hz game ticks can run per rendered frame.
+ * GameCube's 5 keeps up only down to 12 fps; heavier Vita scenes (results
+ * screen, busy stages) dropped below that and the whole game ran in slow
+ * motion.  8 keeps game speed correct down to 7.5 fps. */
+#define GM_PAD_QUEUE_SIZE 8
+#else
+#define GM_PAD_QUEUE_SIZE 5
+#endif
+static HSD_PadData gmMain_8046B108[GM_PAD_QUEUE_SIZE];
 static HSD_PadRumbleListData gmMain_8046B1F8[12];
 
 static void gmMain_8015FD24(void)
 {
     PADSetSpec(5);
-    HSD_PadInit(5, gmMain_8046B108, 12, gmMain_8046B1F8);
+    HSD_PadInit(GM_PAD_QUEUE_SIZE, gmMain_8046B108, 12, gmMain_8046B1F8);
     HSD_PadLibData.clamp_stickType = 0;
     HSD_PadLibData.clamp_stickShift = 1;
     HSD_PadLibData.clamp_stickMax = 80;

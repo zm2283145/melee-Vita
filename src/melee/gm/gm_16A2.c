@@ -809,6 +809,15 @@ void fn_8016A4C8(void)
                 Player_SetFlagsBit6(spawn_slot, lbl_8046B488.unk_10_b5);
                 {
                     f32 model_scale = gp->x1C;
+#ifdef TARGET_PC
+                    /* Some routes into a stage with enemy respawns (such as
+                     * the Underground Maze from the debug menu) enable them
+                     * without the setup that sets the scale, leaving it 0;
+                     * a zero scale trips the knockback assert on spawn. */
+                    if (!(model_scale > 0.0f)) {
+                        model_scale = 1.0f;
+                    }
+#endif
                     Player_SetModelScale(spawn_slot, model_scale);
                 }
                 Player_SetAttackRatio(spawn_slot, fn_8016A4C8_attack_ratio());

@@ -6,6 +6,23 @@ supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.8.15
+
+- Bowser's defeat cutscenes, before and after Giga Bowser, now run at around
+  30 FPS instead of 8-12 FPS, and the freeze when Bowser turns into Giga
+  Bowser is much shorter.
+- Fixed a ghost trail that stayed on screen during the Giga Bowser defeat
+  scene.
+- Faster rendering in busy scenes. Graphics preparation and character
+  animation now run on a second CPU core, textures are stored in a layout the
+  Vita's GPU reads faster, and per-object overhead is lower. The results
+  screen went from about 12 to about 18 FPS, and 4-fighter matches run
+  noticeably smoother.
+- Characters with bump-mapped materials, such as Bowser, no longer slow
+  matches down.
+- The game keeps running at full speed when the frame rate dips, instead of
+  slowing down.
+
 ## Changes in Vita v0.8.14
 
 - Homebrew Update discovery and installation validation release.

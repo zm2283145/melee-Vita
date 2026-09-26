@@ -43,8 +43,8 @@ pwsh -NoProfile -File platforms/vita/build-full.ps1 -Configuration Release -Jobs
 
 The output is **`build-vita/full/SmashMeleevita.vpk`**, with the game title
 **Smash Melee Vita** and unchanged title ID `MLVITA002`.
-[`version.json`](version.json) sets release version **0.8.14** and Vita's
-two-part `APP_VER` value **00.92**. Update both entries for future releases.
+[`version.json`](version.json) sets release version **0.8.15** and Vita's
+two-part `APP_VER` value **00.93**. Update both entries for future releases.
 The Press Start screen shows `VITA <release> BUILD <run>.<attempt>` in its
 bottom-right corner. CI supplies the GitHub Actions run and attempt numbers;
 local builds show `BUILD local` unless `-VitaBuildNumber`, or the

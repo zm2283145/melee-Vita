@@ -6,7 +6,6 @@
 #include "../vita_log.h"
 
 #include <dolphin/ai.h>
-#include <dolphin/os.h>
 #include <dolphin/ar.h>
 #include <dolphin/ax.h>
 #include <dolphin/axfx.h>
@@ -83,16 +82,6 @@ static volatile int s_audio_thread_running;
 static SceUID s_audio_thread = -1;
 static volatile u32 s_audio_underruns;
 static volatile int s_audio_flush_requested;
-static volatile u32 s_audio_mix_us_pending;
-
-
-extern void melee_vita_irq_init(SceUID audio_thread);
-extern int melee_vita_irq_try_enter_audio(void);
-extern void melee_vita_irq_leave_audio(void);
-/* AX state is shared with the audio thread's mixer: setters take the
- * "interrupt" lock like the GameCube AX library disables interrupts. */
-#define AX_LOCKED(...) do { const BOOL ax_irq = OSDisableInterrupts(); __VA_ARGS__; OSRestoreInterrupts(ax_irq); } while (0)
-static void render_audio_frame(s16* output);
 
 static u32 ring_fill(void)
 {
@@ -111,34 +100,6 @@ static int audio_output_thread(SceSize args, void* argp)
             const u32 write =
                 __atomic_load_n(&s_ring_write, __ATOMIC_ACQUIRE);
             __atomic_store_n(&s_ring_read, write, __ATOMIC_RELEASE);
-        }
-        /* Mix ahead on this thread (core 2) instead of the game thread:
-         * run the AX callback and render whole AX frames while the game is
-         * not inside an OSDisableInterrupts section. */
-        {
-            static s16 ax_frame[VITA_AX_FRAME * 2] __attribute__((aligned(64)));
-            u32 rendered = 0;
-            const u64 mix_start = sceKernelGetProcessTimeWide();
-            while (ring_fill() + VITA_AX_FRAME <= VITA_RING_TARGET &&
-                   rendered < VITA_RING_MAX_RENDER &&
-                   melee_vita_irq_try_enter_audio()) {
-                const u32 write =
-                    __atomic_load_n(&s_ring_write, __ATOMIC_ACQUIRE);
-                u32 i;
-                render_audio_frame(ax_frame);
-                melee_vita_irq_leave_audio();
-                for (i = 0; i < VITA_AX_FRAME; ++i) {
-                    const u32 slot = (write + i) % VITA_RING_FRAMES;
-                    s_ring[slot * 2u] = ax_frame[i * 2u];
-                    s_ring[slot * 2u + 1u] = ax_frame[i * 2u + 1u];
-                }
-                __atomic_add_fetch(&s_ring_write, VITA_AX_FRAME,
-                                   __ATOMIC_RELEASE);
-                ++rendered;
-            }
-            if (rendered != 0u)
-                s_audio_mix_us_pending +=
-                    (u32) (sceKernelGetProcessTimeWide() - mix_start);
         }
         u32 available = ring_fill();
         u32 take = available < VITA_AUDIO_GRAIN ? available : VITA_AUDIO_GRAIN;
@@ -353,15 +314,11 @@ void ARQPostRequest(ARQRequest* request, uintptr_t owner, u32 type,
     request->dest = destination;
     request->length = length;
     request->callback = callback;
-    AX_LOCKED({
-        next = (s_arq_write + 1u) % VITA_ARQ_CAPACITY;
-        if (next != s_arq_read) {
-            s_arq[s_arq_write] = (VitaArqJob) {
-                request, type, source, destination, length, callback
-            };
-            s_arq_write = next;
-        }
-    });
+    if (next == s_arq_read) return;
+    s_arq[s_arq_write] = (VitaArqJob) {
+        request, type, source, destination, length, callback
+    };
+    s_arq_write = next;
 }
 
 static void poll_arq(void)
@@ -399,10 +356,8 @@ void AXInit(void)
             s_audio_thread = sceKernelCreateThread(
                 "melee audio out", audio_output_thread, 0x10000100 - 20,
                 0x10000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
-            if (s_audio_thread >= 0) {
-                melee_vita_irq_init(s_audio_thread);
+            if (s_audio_thread >= 0)
                 sceKernelStartThread(s_audio_thread, 0, NULL);
-            }
             melee_vita_log_info("[AUDIO] output thread=%d", s_audio_thread);
         }
     }
@@ -422,7 +377,7 @@ void AXQuit(void)
     }
 }
 
-static AXVPB* AXAcquireVoice_unlocked(u32 priority, void (*callback)(void*), u32 user_context)
+AXVPB* AXAcquireVoice(u32 priority, void (*callback)(void*), u32 user_context)
 {
     VitaVoice* selected = NULL;
     u32 i;
@@ -448,25 +403,13 @@ static AXVPB* AXAcquireVoice_unlocked(u32 priority, void (*callback)(void*), u32
     selected->voice.userContext = user_context;
     return &selected->voice;
 }
-AXVPB* AXAcquireVoice(u32 priority, void (*callback)(void*), u32 user_context)
-{
-    AXVPB* result;
-    AX_LOCKED(result = AXAcquireVoice_unlocked(priority, callback, user_context));
-    return result;
-}
 
-
-static void AXFreeVoice_unlocked(AXVPB* voice)
+void AXFreeVoice(AXVPB* voice)
 {
     if (voice == NULL) return;
     ((VitaVoice*) voice)->used = GX_FALSE;
     voice->pb.state = 0;
 }
-void AXFreeVoice(AXVPB* voice)
-{
-    AX_LOCKED(AXFreeVoice_unlocked(voice));
-}
-
 
 void AXRegisterCallback(void (*callback)(void)) { s_ax_callback = callback; }
 void AXRegisterAuxACallback(void (*callback)(void*, void*), void* context)
@@ -481,7 +424,7 @@ void AXSetVoiceItdTarget(AXVPB* p, u16 l, u16 r)
 { if (p) { p->pb.itd.targetShiftL = l; p->pb.itd.targetShiftR = r; } }
 void AXSetVoiceVe(AXVPB* p, AXPBVE* v) { if (p && v) p->pb.ve = *v; }
 void AXSetVoiceVeDelta(AXVPB* p, s16 v) { if (p) p->pb.ve.currentDelta = v; }
-static void AXSetVoiceAdpcm_unlocked(AXVPB* p, AXPBADPCM* value)
+void AXSetVoiceAdpcm(AXVPB* p, AXPBADPCM* value)
 {
     VitaVoice* voice = (VitaVoice*) p;
     u32 i;
@@ -498,39 +441,24 @@ static void AXSetVoiceAdpcm_unlocked(AXVPB* p, AXPBADPCM* value)
     voice->yn1 = (s16) p->pb.adpcm.yn1;
     voice->yn2 = (s16) p->pb.adpcm.yn2;
 }
-void AXSetVoiceAdpcm(AXVPB* p, AXPBADPCM* value)
-{
-    AX_LOCKED(AXSetVoiceAdpcm_unlocked(p, value));
-}
-
-static void AXSetVoiceAdpcmLoop_unlocked(AXVPB* p, AXPBADPCMLOOP* value)
+void AXSetVoiceAdpcmLoop(AXVPB* p, AXPBADPCMLOOP* value)
 {
     if (p == NULL || value == NULL) return;
     p->pb.adpcmLoop.loop_pred_scale = from_be16(value->loop_pred_scale);
     p->pb.adpcmLoop.loop_yn1 = from_be16(value->loop_yn1);
     p->pb.adpcmLoop.loop_yn2 = from_be16(value->loop_yn2);
 }
-void AXSetVoiceAdpcmLoop(AXVPB* p, AXPBADPCMLOOP* value)
-{
-    AX_LOCKED(AXSetVoiceAdpcmLoop_unlocked(p, value));
-}
-
-static void AXSetVoiceSrc_unlocked(AXVPB* p, AXPBSRC* value)
+void AXSetVoiceSrc(AXVPB* p, AXPBSRC* value)
 {
     VitaVoice* voice = (VitaVoice*) p;
     if (p == NULL || value == NULL) return;
     p->pb.src = *value;
     voice->fraction = value->currentAddressFrac;
 }
-void AXSetVoiceSrc(AXVPB* p, AXPBSRC* value)
-{
-    AX_LOCKED(AXSetVoiceSrc_unlocked(p, value));
-}
-
 void AXSetVoiceSrcRatio(AXVPB* p, float ratio)
 { if (p) { u32 fixed = (u32) (ratio * 65536.0f); p->pb.src.ratioHi = fixed >> 16; p->pb.src.ratioLo = fixed; } }
 
-static void AXSetVoiceAddr_unlocked(AXVPB* p, AXPBADDR* value)
+void AXSetVoiceAddr(AXVPB* p, AXPBADDR* value)
 {
     VitaVoice* voice = (VitaVoice*) p;
     if (p == NULL || value == NULL) return;
@@ -552,19 +480,14 @@ static void AXSetVoiceAddr_unlocked(AXVPB* p, AXPBADDR* value)
     voice->previous_sample = 0;
     voice->current_sample = 0;
 }
-void AXSetVoiceAddr(AXVPB* p, AXPBADDR* value)
-{
-    AX_LOCKED(AXSetVoiceAddr_unlocked(p, value));
-}
-
 
 void AXSetVoiceLoop(AXVPB* p, u16 value) { if (p) p->pb.addr.loopFlag = value; }
 void AXSetVoiceLoopAddr(AXVPB* p, u32 value)
-{ if (p) AX_LOCKED({ ((VitaVoice*) p)->loop_address = value; set_pair(&p->pb.addr.loopAddressHi, &p->pb.addr.loopAddressLo, value); }); }
+{ if (p) { ((VitaVoice*) p)->loop_address = value; set_pair(&p->pb.addr.loopAddressHi, &p->pb.addr.loopAddressLo, value); } }
 void AXSetVoiceEndAddr(AXVPB* p, u32 value)
-{ if (p) AX_LOCKED({ ((VitaVoice*) p)->end_address = value; set_pair(&p->pb.addr.endAddressHi, &p->pb.addr.endAddressLo, value); }); }
+{ if (p) { ((VitaVoice*) p)->end_address = value; set_pair(&p->pb.addr.endAddressHi, &p->pb.addr.endAddressLo, value); } }
 void AXSetVoiceCurrentAddr(AXVPB* p, u32 value)
-{ if (p) AX_LOCKED({ ((VitaVoice*) p)->current_address = value; set_pair(&p->pb.addr.currentAddressHi, &p->pb.addr.currentAddressLo, value); }); }
+{ if (p) { ((VitaVoice*) p)->current_address = value; set_pair(&p->pb.addr.currentAddressHi, &p->pb.addr.currentAddressLo, value); } }
 
 void melee_vita_audio_poll(void)
 {
@@ -577,14 +500,28 @@ void melee_vita_audio_poll(void)
     (void) ax_frame_offset;
     (void) sample;
     if (s_audio_port >= 0 && s_audio_thread >= 0) {
-        /* Mixing happens on the audio thread; report its time to the
-         * profiler's audio_mix zone (now off the game thread). */
+        /* Render whole AX frames until the output thread has ~100 ms queued.
+         * AX's clock advances exactly once per 160 rendered samples, so music
+         * tempo stays correct regardless of the game's frame rate. */
+        u32 rendered = 0;
+        const u64 mix_start = sceKernelGetProcessTimeWide();
         static u32 last_underruns;
-        const u32 mixed = __atomic_exchange_n(&s_audio_mix_us_pending, 0u,
-                                              __ATOMIC_ACQ_REL);
+        while (ring_fill() + VITA_AX_FRAME <= VITA_RING_TARGET &&
+               rendered < VITA_RING_MAX_RENDER) {
+            u32 write = __atomic_load_n(&s_ring_write, __ATOMIC_ACQUIRE);
+            u32 i;
+            render_audio_frame(ax_frame);
+            for (i = 0; i < VITA_AX_FRAME; ++i) {
+                const u32 slot = (write + i) % VITA_RING_FRAMES;
+                s_ring[slot * 2u] = ax_frame[i * 2u];
+                s_ring[slot * 2u + 1u] = ax_frame[i * 2u + 1u];
+            }
+            __atomic_add_fetch(&s_ring_write, VITA_AX_FRAME, __ATOMIC_RELEASE);
+            ++rendered;
+        }
         {
             extern void melee_vita_prof_add(int zone, u64 us);
-            melee_vita_prof_add(10 /* audio_mix */, mixed);
+            melee_vita_prof_add(10 /* audio_mix */, sceKernelGetProcessTimeWide() - mix_start);
         }
         if (s_audio_underruns != last_underruns && (s_audio_underruns % 50u) == 1u) {
             melee_vita_log_info("[AUDIO] underruns=%u", s_audio_underruns);

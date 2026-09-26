@@ -10,7 +10,6 @@
 #include <dolphin/os/OSError.h>
 
 #include <psp2/kernel/processmgr.h>
-#include <psp2/kernel/threadmgr.h>
 
 #include <stdarg.h>
 #include <stdint.h>
@@ -97,12 +96,8 @@ int melee_vita_platform_init(void)
 void melee_vita_platform_poll(void)
 {
     /* DVD callbacks may enqueue ARQ copies, so preserve this order. */
-    {
-        const BOOL enabled = OSDisableInterrupts();
-        melee_vita_dvd_poll();
-        melee_vita_audio_poll();
-        OSRestoreInterrupts(enabled);
-    }
+    melee_vita_dvd_poll();
+    melee_vita_audio_poll();
     melee_vita_card_poll();
     melee_vita_opening_audio_poll();
 }
@@ -249,87 +244,28 @@ OSTime OSCalendarTimeToTicks(OSCalendarTime* value)
            OSMicrosecondsToTicks(value->usec);
 }
 
-/* "Interrupts" and the audio thread.
- *
- * On GameCube the AX (audio DSP) callback runs from an interrupt, so the
- * game already guards everything it shares with the sound engine with
- * OSDisableInterrupts/OSRestoreInterrupts.  The Vita runs that callback and
- * the voice mixer on the audio output thread (core 2) instead of the game
- * thread; "interrupts disabled" on the game thread is therefore a real lock
- * that the audio thread must hold while it renders.  Inside that render the
- * audio thread behaves like interrupt context: interrupts count as already
- * disabled and the calls are no-ops. */
-static SceKernelLwMutexWork s_irq_lock;
-static volatile int s_irq_lock_ready;
-static volatile SceUID s_irq_audio_thread = -1;
-static volatile int s_irq_audio_inside;
-
-static int irq_on_audio_thread(void)
-{
-    return s_irq_audio_inside && sceKernelGetThreadId() == s_irq_audio_thread;
-}
-
-void melee_vita_irq_init(SceUID audio_thread)
-{
-    if (!s_irq_lock_ready &&
-        sceKernelCreateLwMutex(&s_irq_lock, "melee_irq", 0, 0, NULL) >= 0)
-        s_irq_lock_ready = 1;
-    s_irq_audio_thread = audio_thread;
-}
-
-/* Audio thread: enter "interrupt context" if the game thread is not inside
- * a critical section.  Never blocks, so the audio thread cannot deadlock
- * with a game thread that waits on it. */
-int melee_vita_irq_try_enter_audio(void)
-{
-    if (!s_irq_lock_ready) return 0;
-    if (sceKernelTryLockLwMutex(&s_irq_lock, 1) < 0) return 0;
-    s_irq_audio_inside = 1;
-    return 1;
-}
-
-void melee_vita_irq_leave_audio(void)
-{
-    s_irq_audio_inside = 0;
-    sceKernelUnlockLwMutex(&s_irq_lock, 1);
-}
-
 BOOL OSDisableInterrupts(void)
 {
-    BOOL enabled;
-    if (irq_on_audio_thread()) return FALSE;
-    enabled = s_interrupt_depth == 0;
-    if (enabled && s_irq_lock_ready) sceKernelLockLwMutex(&s_irq_lock, 1, NULL);
+    BOOL enabled = s_interrupt_depth == 0;
     ++s_interrupt_depth;
     return enabled;
 }
 
-static void irq_release_all(void)
-{
-    if (s_interrupt_depth > 0 && s_irq_lock_ready)
-        sceKernelUnlockLwMutex(&s_irq_lock, 1);
-    s_interrupt_depth = 0;
-}
-
 BOOL OSEnableInterrupts(void)
 {
-    BOOL enabled;
-    if (irq_on_audio_thread()) return FALSE;
-    enabled = s_interrupt_depth == 0;
-    irq_release_all();
+    BOOL enabled = s_interrupt_depth == 0;
+    s_interrupt_depth = 0;
     melee_vita_os_run_alarms();
     return enabled;
 }
 
 BOOL OSRestoreInterrupts(BOOL enabled)
 {
-    BOOL was_enabled;
-    if (irq_on_audio_thread()) return FALSE;
-    was_enabled = s_interrupt_depth == 0;
+    BOOL was_enabled = s_interrupt_depth == 0;
     if (enabled) {
-        irq_release_all();
+        s_interrupt_depth = 0;
         melee_vita_os_run_alarms();
-    } else if (s_interrupt_depth > 1) {
+    } else if (s_interrupt_depth > 0) {
         --s_interrupt_depth;
     }
     return was_enabled;

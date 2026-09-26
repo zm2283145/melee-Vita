@@ -476,7 +476,20 @@ void lbRefract_80022560(void)
     if (lbl_804336D0.refractionUserCount != 0) {
         GXSetTexCopySrc(0, 0, 0x280, 0x1E0);
         GXSetTexCopyDst(0x140, 0xF0, 4, 1);
+#ifdef TARGET_VITA
+        {
+            /* The cloaked fighter shows this grab in place of what is
+             * behind it, so a stale one (Vita refreshes most copies at a
+             * reduced rate) showed the stage from frames ago: props next to
+             * a moving cloaked fighter appeared to vanish. */
+            extern int g_melee_vita_copy_every_frame;
+            g_melee_vita_copy_every_frame = 1;
+            GXCopyTex(lbl_804336D0.image_ptr, 0);
+            g_melee_vita_copy_every_frame = 0;
+        }
+#else
         GXCopyTex(lbl_804336D0.image_ptr, 0);
+#endif
         GXPixModeSync();
         GXInvalidateTexAll();
     }

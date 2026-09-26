@@ -4009,6 +4009,11 @@ void GXCopyTex(void* destination, GXBool clear)
     melee_vita_prof_add(VPZ_COPYTEX, GX_PROF_NOW() - t0);
 }
 
+/* Set around a GXCopyTex whose texture is sampled against the current
+ * frame (the Cloaking Device's refraction grab): it must never be skipped by
+ * the reduced refresh rate used for live screens. */
+int g_melee_vita_copy_every_frame;
+
 static void copy_tex_impl(void* destination, GXBool clear)
 {
     {
@@ -4072,7 +4077,8 @@ static void copy_tex_impl(void* destination, GXBool clear)
          * refresh.  Skipping it leaves stale color/depth behind the next
          * frame; the Stage Clear feedback compositor then flickers and its
          * live text appears to jump against the stale capture. */
-        if (!clear && !target_created && i < 8u &&
+        if (!clear && !target_created && !g_melee_vita_copy_every_frame &&
+            i < 8u &&
             s_gx.copied_frames - recent[slot].frame <
                 MELEE_VITA_COPY_INTERVAL)
             return;

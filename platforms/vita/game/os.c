@@ -93,6 +93,21 @@ int melee_vita_platform_init(void)
     return melee_vita_gxm_init();
 }
 
+/* Called between gobj renders.  Rendering a busy frame takes 50+ ms on
+ * Vita, and without polls in between, DVD and ARAM completions (and audio
+ * mixing) waited for the next frame.  A music stream's refill chain needs
+ * several of them, so an item theme's short first block (Starman, Hammer)
+ * looped until its successor arrived, which was heard as the opening
+ * stuttering.  Poll at most every few ms, as interrupts would have. */
+void melee_vita_render_poll(void)
+{
+    static u64 last_us;
+    const u64 now_us = sceKernelGetProcessTimeWide();
+    if (now_us - last_us < 4000u) return;
+    last_us = now_us;
+    melee_vita_platform_poll();
+}
+
 void melee_vita_platform_poll(void)
 {
     /* DVD callbacks may enqueue ARQ copies, so preserve this order. */

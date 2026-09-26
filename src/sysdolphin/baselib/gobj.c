@@ -151,12 +151,21 @@ u32 HSD_GObj_80390EB8(s32 i)
     return HSD_GObj_804085F0[i];
 }
 
+#ifdef TARGET_VITA
+extern void melee_vita_render_poll(void);
+#endif
+
 static inline void render_gobj(HSD_GObj* cur, int i)
 {
     HSD_GObj* saved = HSD_GObj_804D7814;
     HSD_GObj_804D7814 = cur;
     cur->render_cb(cur, i);
     HSD_GObj_804D7814 = saved;
+#ifdef TARGET_VITA
+    /* On GameCube, DVD/ARAM completions and audio frames are interrupts and
+     * keep running while the scene draws; see melee_vita_render_poll. */
+    melee_vita_render_poll();
+#endif
 }
 
 /// GObj_SetTextureCamera

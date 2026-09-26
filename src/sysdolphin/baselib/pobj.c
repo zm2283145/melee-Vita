@@ -1033,6 +1033,38 @@ static void SetupRigidModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
 
     jobj = HSD_JObjGetCurrent();
 
+#ifdef TARGET_PC
+    /* The mark lets later PObjs of the same joint skip the matrix loads,
+     * but it does not remember whether GX_TEXMTX0 (the normal matrix used
+     * by reflection maps) was loaded: when the joint's first PObj had no
+     * reflection texture, a later reflective one used whatever another
+     * object left in GX_TEXMTX0 (particles, a Metal or cloaked fighter),
+     * so the Great Bay hook changed with those. Reload it when needed. */
+    flags = GetSetupFlags(jobj, rendermode);
+    {
+        static u32 rigid_mark_flags;
+        void* obj;
+        u32 mark;
+
+        HSD_PObjGetMtxMark(0, &obj, &mark);
+        if (obj == jobj && mark == HSD_MTX_RIGID) {
+            if ((flags & SETUP_NORMAL_PROJECTION) &&
+                !(rigid_mark_flags & SETUP_NORMAL_PROJECTION))
+            {
+                HSD_MtxInverseTranspose(pmtx, n);
+                GXLoadTexMtxImm(n, GX_TEXMTX0, GX_MTX3x4);
+                rigid_mark_flags |= SETUP_NORMAL_PROJECTION;
+            }
+            return;
+        }
+        HSD_PObjSetMtxMark(0, jobj, HSD_MTX_RIGID);
+        rigid_mark_flags = flags;
+    }
+
+    GXSetCurrentMtx(GX_PNMTX0);
+    GXLoadPosMtxImm(pmtx, GX_PNMTX0);
+    HSD_PerfCountMtxLoad();
+#else
     {
         void* obj;
         u32 mark;
@@ -1049,6 +1081,7 @@ static void SetupRigidModelMtx(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx,
     HSD_PerfCountMtxLoad();
 
     flags = GetSetupFlags(jobj, rendermode);
+#endif
 
     if (flags & SETUP_NORMAL) {
         HSD_MtxInverseTranspose(pmtx, n);

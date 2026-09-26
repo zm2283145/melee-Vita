@@ -31,7 +31,7 @@
 #define PROFILER_STREAM_BUFFER_BYTES 8192u
 #define PROFILER_NET_MEMORY_BYTES (1024u * 1024u)
 #define PROFILER_DRAIN_EVENTS 128u
-#define PROFILER_DURATION_COUNT 57u
+#define PROFILER_DURATION_COUNT 61u
 #define PROFILER_RECONNECT_DELAY_US 500000u
 #define PROFILER_STATUS_PATH "ux0:data/melee/profiler-live-status.txt"
 
@@ -62,6 +62,8 @@ static const char* const s_duration_names[] = {
     "count.bump_draws", "count.game_ticks",
     "duration.skin_prepass_us", "count.skin_hits", "count.skin_main",
     "count.skin_fallback", "duration.skin_wait_us",
+    "count.skin_view_hits", "count.gxs_drains", "duration.gxs_drain_us",
+    "count.gxs_sync_draws",
 };
 _Static_assert(
     sizeof(s_duration_names) / sizeof(s_duration_names[0]) ==

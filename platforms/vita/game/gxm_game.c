@@ -6,6 +6,7 @@
 #include "heap.h"
 #include "../texture_decoder.h"
 #include "gx_render.h"
+#include "gx_submit.h"
 #include "profiler_live.h"
 #include "../vita_log.h"
 
@@ -864,6 +865,7 @@ static int render_thread(SceSize args, void* argp)
 /* Blocks until the render thread is idle (no frame in flight). */
 static void rq_wait_idle(void)
 {
+    gxs_drain();
     if (s_rq_done < 0) return;
     sceKernelWaitSema(s_rq_done, 1, NULL);
     sceKernelSignalSema(s_rq_done, 1);
@@ -876,7 +878,37 @@ void melee_vita_gxm_wait_idle(void)
 
 /* ---- game-thread recording API ---- */
 
+/* Game-thread pushes go through the submit worker's ring while it runs, so
+ * they stay ordered with the draws queued before them. */
+typedef struct RqRaw {
+    MeleeVitaRqExec exec;
+    u32 size;
+    u8 payload[];
+} RqRaw;
+
+static void run_raw(void* payload)
+{
+    const RqRaw* raw = payload;
+    void* out = melee_vita_rq_push_direct(raw->exec, raw->size);
+    if (out != NULL) memcpy(out, raw->payload, raw->size);
+}
+
 void* melee_vita_rq_push(MeleeVitaRqExec exec, u32 payload_size)
+{
+    if (gxs_active()) {
+        RqRaw* raw = gxs_alloc(run_raw, sizeof(RqRaw) + payload_size);
+        if (raw != NULL) {
+            raw->exec = exec;
+            raw->size = payload_size;
+            memset(raw->payload, 0, payload_size);
+            return raw->payload;
+        }
+        gxs_drain();
+    }
+    return melee_vita_rq_push_direct(exec, payload_size);
+}
+
+void* melee_vita_rq_push_direct(MeleeVitaRqExec exec, u32 payload_size)
 {
     RqFrame* frame = &s_frames[s_record];
     const u32 aligned = (payload_size + 7u) & ~7u;
@@ -1099,6 +1131,8 @@ int melee_vita_gxm_init(void)
 #ifndef MELEE_VITA_GX_LEGACY_RENDERER
     if (gxr_init() != 0)
         melee_vita_log_info("[GXR] falling back to the legacy vita2d GX path");
+    else
+        gxs_init();
 #endif
     return 0;
 }
@@ -1189,6 +1223,7 @@ void melee_vita_gxm_prepare_texture_invalidation(void)
 
 void melee_vita_gxm_invalidate_textures(void)
 {
+    gxs_drain();
 #ifndef MELEE_VITA_RELEASE
     u32 textures = 0;
     u32 copies = 0;
@@ -1298,6 +1333,8 @@ vita2d_texture* melee_vita_gxm_copy_texture(const void* key, u32 width,
                                             u32 height, bool* created)
 {
     u32 c, free_slot = VITA_COPY_TEXTURES;
+    /* Queued draws resolve textures through s_copy_textures. */
+    gxs_drain();
     if (created != NULL) *created = false;
     for (c = 0; c < VITA_COPY_TEXTURES; ++c) {
         if (s_copy_textures[c].binding.key == key) {
@@ -1938,8 +1975,10 @@ void melee_vita_gxm_present(u32 clear_color)
     RqPresent* p;
     u32 native_reasons;
     if (!s_initialized) return;
+    /* Every queued draw must be in this frame before it is handed over. */
+    gxs_drain();
     recorded = &s_frames[s_record];
-    p = melee_vita_rq_push(exec_present, sizeof(RqPresent));
+    p = melee_vita_rq_push_direct(exec_present, sizeof(RqPresent));
     if (p != NULL) {
         static const u16 quad_indices[6] = { 0, 1, 2, 2, 3, 0 };
         memset(p, 0, sizeof(*p));

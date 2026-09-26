@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* 32-byte aligned Dolphin arena heap implementation for Vita. */
+#include <psp2/kernel/threadmgr.h>
 #include <dolphin/os.h>
 
 #include <stdint.h>
@@ -42,6 +43,19 @@ static u32 s_allocation_generation;
  * and walking every live allocation each time cost several ms per frame on
  * the results screen. */
 static u32 s_heap_epoch = 1u;
+
+/* The GXM submit worker (core 2) looks up copy-texture allocation
+ * generations while the game thread allocates. */
+static SceKernelLwMutexWork s_heap_lock;
+static int s_heap_lock_ready;
+static void heap_lock(void)
+{
+    if (s_heap_lock_ready) sceKernelLockLwMutex(&s_heap_lock, 1, NULL);
+}
+static void heap_unlock(void)
+{
+    if (s_heap_lock_ready) sceKernelUnlockLwMutex(&s_heap_lock, 1);
+}
 #define HEAP_TOUCH() (++s_heap_epoch)
 
 static uintptr_t round_up(uintptr_t value)
@@ -113,6 +127,10 @@ void* OSInitAlloc(void* arena_start, void* arena_end, int max_heaps)
     s32 i;
     if (arena_start == NULL || arena_end == NULL || max_heaps <= 0) return NULL;
     s_heaps = arena_start;
+    if (!s_heap_lock_ready &&
+        sceKernelCreateLwMutex(&s_heap_lock, "melee heap",
+                               SCE_KERNEL_MUTEX_ATTR_RECURSIVE, 0, NULL) >= 0)
+        s_heap_lock_ready = 1;
     s_heap_count = max_heaps;
     for (i = 0; i < s_heap_count; ++i) {
         s_heaps[i].size = -1;
@@ -128,7 +146,7 @@ void* OSInitAlloc(void* arena_start, void* arena_end, int max_heaps)
     return s_heap_arena_start < s_heap_arena_end ? s_heap_arena_start : NULL;
 }
 
-OSHeapHandle OSCreateHeap(void* start, void* end)
+static OSHeapHandle OSCreateHeap_unlocked(void* start, void* end)
 {
     uintptr_t first = round_up((uintptr_t) start);
     uintptr_t last = round_down((uintptr_t) end);
@@ -151,7 +169,7 @@ OSHeapHandle OSCreateHeap(void* start, void* end)
     return -1;
 }
 
-void OSDestroyHeap(OSHeapHandle heap)
+static void OSDestroyHeap_unlocked(OSHeapHandle heap)
 {
     if (!valid_heap(heap)) return;
     s_heaps[heap].size = -1;
@@ -161,7 +179,7 @@ void OSDestroyHeap(OSHeapHandle heap)
     if (__OSCurrHeap == heap) __OSCurrHeap = -1;
 }
 
-void* OSAllocFromHeap(OSHeapHandle heap, u32 size)
+static void* OSAllocFromHeap_unlocked(OSHeapHandle heap, u32 size)
 {
     HeapDesc* descriptor;
     HeapCell* cell;
@@ -189,7 +207,7 @@ void* OSAllocFromHeap(OSHeapHandle heap, u32 size)
     return (u8*) cell + HEAP_CELL_HEADER;
 }
 
-void OSFreeToHeap(OSHeapHandle heap, void* pointer)
+static void OSFreeToHeap_unlocked(OSHeapHandle heap, void* pointer)
 {
     HeapDesc* descriptor;
     HeapCell* cell;
@@ -231,7 +249,7 @@ u32 OSReferentSize(void* pointer)
 
 static u32 heap_allocation_generation_walk(const void* pointer);
 
-u32 melee_vita_heap_allocation_generation(const void* pointer)
+static u32 melee_vita_heap_allocation_generation_unlocked(const void* pointer)
 {
     static struct {
         const void* pointer;
@@ -269,7 +287,7 @@ static u32 heap_allocation_generation_walk(const void* pointer)
     return 0;
 }
 
-void OSAddToHeap(OSHeapHandle heap, void* start, void* end)
+static void OSAddToHeap_unlocked(OSHeapHandle heap, void* start, void* end)
 {
     HeapCell* cell;
     uintptr_t first = round_up((uintptr_t) start);
@@ -302,4 +320,53 @@ void OSVisitAllocated(void (*visitor)(void*, u32))
             visitor((u8*) cell + HEAP_CELL_HEADER,
                     (u32) cell->size - HEAP_CELL_HEADER);
     }
+}
+
+/* Locked entry points. */
+OSHeapHandle OSCreateHeap(void* start, void* end)
+{
+    OSHeapHandle result;
+    heap_lock();
+    result = OSCreateHeap_unlocked(start, end);
+    heap_unlock();
+    return result;
+}
+
+void OSDestroyHeap(OSHeapHandle heap)
+{
+    heap_lock();
+    OSDestroyHeap_unlocked(heap);
+    heap_unlock();
+}
+
+void* OSAllocFromHeap(OSHeapHandle heap, u32 size)
+{
+    void* result;
+    heap_lock();
+    result = OSAllocFromHeap_unlocked(heap, size);
+    heap_unlock();
+    return result;
+}
+
+void OSFreeToHeap(OSHeapHandle heap, void* pointer)
+{
+    heap_lock();
+    OSFreeToHeap_unlocked(heap, pointer);
+    heap_unlock();
+}
+
+void OSAddToHeap(OSHeapHandle heap, void* start, void* end)
+{
+    heap_lock();
+    OSAddToHeap_unlocked(heap, start, end);
+    heap_unlock();
+}
+
+u32 melee_vita_heap_allocation_generation(const void* pointer)
+{
+    u32 result;
+    heap_lock();
+    result = melee_vita_heap_allocation_generation_unlocked(pointer);
+    heap_unlock();
+    return result;
 }

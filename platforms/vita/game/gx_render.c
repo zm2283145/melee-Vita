@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "gx_render.h"
+#include "gx_submit.h"
 #include "profiler_live.h"
 #include "fragment_alpha_key.h"
 #include "gxr_shader_cache.h"
@@ -249,6 +250,7 @@ s_warm_pending = pending;
 
 void gxr_flush_warm_cache(void)
 {
+    gxs_drain();
 GxrWarmPending* pending;
 u32 bytes = 0;
 u8* buffer;
@@ -1568,8 +1570,8 @@ static SceGxmDepthFunc draw_depth_function(const GxrDraw* draw)
     return draw->depth_compare ? depth_func(draw->depth_function) : SCE_GXM_DEPTH_FUNC_ALWAYS;
 }
 
-bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
-              u32 count)
+static bool gxr_draw_now(const GxrDraw* draw, GxrVertex* vertices,
+                         const u16* indices, u32 count)
 {
     GxrProgram* program;
     SceGxmFragmentProgram* fragment;
@@ -1579,7 +1581,7 @@ bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
     if (program == NULL || program->failed) { ++s_stats.fallback; return false; }
     fragment = find_fragment(program, draw);
     if (fragment == NULL) { ++s_stats.fallback; return false; }
-    d = melee_vita_rq_push(exec_draw, sizeof(RqDraw));
+    d = melee_vita_rq_push_direct(exec_draw, sizeof(RqDraw));
     if (d == NULL) return false;
     memset(d, 0, sizeof(*d));
     d->vertex = s_vertex_program;
@@ -2319,11 +2321,49 @@ void melee_vita_prof_add(int zone, u64 us);
 #define GXR_ZONE_RESOLVE_TEXTURES 16
 #define GXR_ZONE_UNIFORM_COPY 17
 
+/* Uniform block layout shared by the synchronous path and queued jobs. */
+static u32 gpu_uniform_layout(const GxrVtxKey* vkey, bool point_draw,
+                              u32* mtx_comps, u32* tg_comps, u32* light_comps)
+{
+    const u32 lights_used = (u32) (vkey->chan[0].lights | vkey->chan[1].lights |
+                                   vkey->chan[2].lights | vkey->chan[3].lights);
+    u32 top = 8u;
+    while (top > 0u && (lights_used & (1u << (top - 1u))) == 0u) --top;
+    *mtx_comps = vkey->has_mtxidx ? 120u : 12u;
+    *tg_comps = vkey->texgen_count * 12u;
+    *light_comps = top * 20u;
+    return 2u * *mtx_comps + 16u + 2u * *tg_comps + *light_comps + 16u +
+           (point_draw ? 4u : 0u);
+}
+
+static void pack_gpu_uniforms(f32* out, const GxrVtxUniforms* u,
+                              const GxrPointParams* point, u32 mtx_comps,
+                              u32 tg_comps, u32 light_comps)
+{
+    memcpy(out, u->pos, mtx_comps * sizeof(f32)); out += mtx_comps;
+    memcpy(out, u->nrm, mtx_comps * sizeof(f32)); out += mtx_comps;
+    memcpy(out, u->proj, 16u * sizeof(f32)); out += 16u;
+    memcpy(out, u->tex, tg_comps * sizeof(f32)); out += tg_comps;
+    memcpy(out, u->post, tg_comps * sizeof(f32)); out += tg_comps;
+    memcpy(out, u->light, light_comps * sizeof(f32)); out += light_comps;
+    memcpy(out, u->mat, 8u * sizeof(f32)); out += 8u;
+    memcpy(out, u->amb, 8u * sizeof(f32)); out += 8u;
+    if (point != NULL) {
+        out[0] = point->clip_half_x;
+        out[1] = point->clip_half_y;
+        out[2] = point->tex_span;
+        out[3] = 0.0f;
+    }
+}
+
+/* packed: uniforms already laid out by pack_gpu_uniforms (queued jobs), or
+ * NULL to pack from u. */
 static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
                               const GxrVtxUniforms* u,
                               const GxrPointParams* point,
                               const GxrGpuVertex* vertices,
-                              const u16* indices, u32 count, u8 cull)
+                              const u16* indices, u32 count, u8 cull,
+                              const f32* packed)
 {
     static GxrVtxProgram* last_vp;
     GxrVtxProgram* vp;
@@ -2333,7 +2373,6 @@ static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
     u32 mtx_comps, tg_comps, light_comps = 0, total;
     const bool point_draw = point != NULL;
     const u8 point_tex_mask = point_draw ? point->tex_offset_mask : 0u;
-    f32* out;
     if (!s_ready || draw == NULL || vertices == NULL || indices == NULL || count == 0)
         return false;
     if (point_draw && vkey->has_mtxidx) return false;
@@ -2354,18 +2393,9 @@ static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
     if (fragment == NULL) { ++s_stats.fallback; return false; }
     GXR_SUBZONE_END(GXR_ZONE_FRAGMENT_PROGRAM);
 
-    mtx_comps = vkey->has_mtxidx ? 120u : 12u;
-    tg_comps = vkey->texgen_count * 12u;
-    {
-        const u32 lights_used = (u32) (vkey->chan[0].lights | vkey->chan[1].lights |
-                                       vkey->chan[2].lights | vkey->chan[3].lights);
-        u32 top = 8u;
-        while (top > 0u && (lights_used & (1u << (top - 1u))) == 0u) --top;
-        light_comps = top * 20u;
-    }
-    total = 2u * mtx_comps + 16u + 2u * tg_comps + light_comps + 16u +
-            (point_draw ? 4u : 0u);
-    d = melee_vita_rq_push(exec_draw, sizeof(RqDraw) + total * sizeof(f32));
+    total = gpu_uniform_layout(vkey, point_draw, &mtx_comps, &tg_comps,
+                               &light_comps);
+    d = melee_vita_rq_push_direct(exec_draw, sizeof(RqDraw) + total * sizeof(f32));
     if (d == NULL) return false;
     memset(d, 0, sizeof(*d));
     GXR_SUBZONE_END(GXR_ZONE_RQ_PUSH);
@@ -2394,21 +2424,11 @@ static bool gxr_draw_gpu_impl(const GxrDraw* draw, const GxrVtxKey* vkey,
     memcpy(d->fog_params, draw->fog_params, sizeof(d->fog_params));
     resolve_textures(draw, d);
     GXR_SUBZONE_END(GXR_ZONE_RESOLVE_TEXTURES);
-    out = d->uniforms;
-    memcpy(out, u->pos, mtx_comps * sizeof(f32)); out += mtx_comps;
-    memcpy(out, u->nrm, mtx_comps * sizeof(f32)); out += mtx_comps;
-    memcpy(out, u->proj, 16u * sizeof(f32)); out += 16u;
-    memcpy(out, u->tex, tg_comps * sizeof(f32)); out += tg_comps;
-    memcpy(out, u->post, tg_comps * sizeof(f32)); out += tg_comps;
-    memcpy(out, u->light, light_comps * sizeof(f32)); out += light_comps;
-    memcpy(out, u->mat, 8u * sizeof(f32)); out += 8u;
-    memcpy(out, u->amb, 8u * sizeof(f32)); out += 8u;
-    if (point_draw) {
-        out[0] = point->clip_half_x;
-        out[1] = point->clip_half_y;
-        out[2] = point->tex_span;
-        out[3] = 0.0f;
-    }
+    if (packed != NULL)
+        memcpy(d->uniforms, packed, total * sizeof(f32));
+    else
+        pack_gpu_uniforms(d->uniforms, u, point, mtx_comps, tg_comps,
+                          light_comps);
     GXR_SUBZONE_END(GXR_ZONE_UNIFORM_COPY);
     melee_vita_profiler_record_duration(39u, 1u);
     ++s_stats.draws;
@@ -2424,7 +2444,7 @@ static bool bump_uniform_fits(
            components;
 }
 
-bool gxr_draw_bump_gpu(
+static bool gxr_draw_bump_now(
     const GxrDraw* draw, const GxrBumpVtxKey* vkey,
     const GxrVtxUniforms* u, const GxrGpuBumpVertex* vertices,
     const u16* indices, u32 count, u8 cull)
@@ -2504,7 +2524,7 @@ bool gxr_draw_bump_gpu(
 
     total =
         2u * mtx_comps + 16u + 2u * tg_comps + light_comps + 16u;
-    d = melee_vita_rq_push(
+    d = melee_vita_rq_push_direct(
         exec_draw, sizeof(RqDraw) + total * sizeof(f32));
     if (d == NULL) {
         ++s_bump_stats.fallback;
@@ -2562,12 +2582,208 @@ bool gxr_draw_bump_gpu(
     return true;
 }
 
+/* ---- queued submission (see gx_submit.h) --------------------------------
+ * A draw is queued only when its shader combination (fragment key, blend
+ * state, vertex key) already succeeded once; otherwise it runs synchronously
+ * after draining the queue, so a failed shader still reports false and the
+ * caller's CPU fallback keeps working. */
+#define GXR_KNOWN_SIZE 8192u
+static u64 s_known[GXR_KNOWN_SIZE];
+
+static inline void known_mix(u32* a, u32* b, const u8* bytes, u32 length)
+{
+    u32 i = 0;
+    for (; i + 4u <= length; i += 4u) {
+        u32 word;
+        memcpy(&word, bytes + i, sizeof(word));
+        *a = (*a ^ word) * 16777619u;
+        *b = (*b + word) * 0x85ebca6bu;
+        *b ^= *b >> 13;
+    }
+    for (; i < length; ++i) {
+        *a = (*a ^ bytes[i]) * 16777619u;
+        *b = (*b + bytes[i]) * 0x85ebca6bu;
+    }
+}
+
+static u64 known_hash(const GxrDraw* draw, const void* vkey, u32 vkey_size,
+                      u32 salt)
+{
+    u32 a = 2166136261u ^ salt;
+    u32 b = 0x9747b28cu + salt;
+    known_mix(&a, &b, (const u8*) &draw->key,
+              shader_key_used_length(&draw->key));
+    /* blend_mode, blend_src, blend_dst, logic_op, color_update,
+     * alpha_update: everything make_blend reads. */
+    known_mix(&a, &b, &draw->blend_mode, 6u);
+    if (vkey != NULL) known_mix(&a, &b, (const u8*) vkey, vkey_size);
+    return ((u64) a << 32 | b) | 1u;
+}
+
+static bool known_has(u64 hash)
+{
+    for (u32 probe = 0; probe < 8u; ++probe) {
+        const u64 value = __atomic_load_n(
+            &s_known[((u32) hash + probe) & (GXR_KNOWN_SIZE - 1u)],
+            __ATOMIC_RELAXED);
+        if (value == hash) return true;
+        if (value == 0u) return false;
+    }
+    return false;
+}
+
+static void known_add(u64 hash)
+{
+    for (u32 probe = 0; probe < 8u; ++probe) {
+        u64* slot = &s_known[((u32) hash + probe) & (GXR_KNOWN_SIZE - 1u)];
+        const u64 value = __atomic_load_n(slot, __ATOMIC_RELAXED);
+        if (value == hash) return;
+        if (value == 0u) {
+            __atomic_store_n(slot, hash, __ATOMIC_RELAXED);
+            return;
+        }
+    }
+}
+
+/* Queued draws carry only the parts of GxrDraw that are in use: the used
+ * prefix of the shader key (fill_gxr_draw zeroes the rest), the fixed
+ * state block, and the texture sources of valid maps.  Copying whole
+ * GxrDraw records (~1.1 KB) cost as much as the work being moved. */
+#define GXR_DRAW_FIXED_OFFSET offsetof(GxrDraw, blend_mode)
+#define GXR_DRAW_FIXED_SIZE \
+    (offsetof(GxrDraw, textures) - offsetof(GxrDraw, blend_mode))
+
+typedef struct GxrPackedDraw {
+    u16 key_length;
+    u8 texture_mask;
+    u8 texture_count;
+    u8 fixed[GXR_DRAW_FIXED_SIZE];
+} GxrPackedDraw;
+
+static u32 packed_draw_extra(const GxrDraw* draw, u8* mask, u8* count)
+{
+    u8 m = 0, n = 0;
+    for (u32 map = 0; map < GXR_MAX_TEXMAPS; ++map)
+        if (draw->texture_valid[map]) { m |= (u8) (1u << map); ++n; }
+    *mask = m;
+    *count = n;
+    return ((shader_key_used_length(&draw->key) + 3u) & ~3u) +
+           n * (u32) sizeof(MeleeVitaTextureSource);
+}
+
+/* Writes the variable part after the header; returns bytes written. */
+static u32 pack_draw(GxrPackedDraw* header, u8* out, const GxrDraw* draw)
+{
+    u8* start = out;
+    const u32 key_length = shader_key_used_length(&draw->key);
+    header->key_length = (u16) key_length;
+    memcpy(header->fixed, (const u8*) draw + GXR_DRAW_FIXED_OFFSET,
+           GXR_DRAW_FIXED_SIZE);
+    memcpy(out, &draw->key, key_length);
+    out += (key_length + 3u) & ~3u;
+    for (u32 map = 0; map < GXR_MAX_TEXMAPS; ++map) {
+        if (!(header->texture_mask & (1u << map))) continue;
+        memcpy(out, &draw->textures[map], sizeof(MeleeVitaTextureSource));
+        out += sizeof(MeleeVitaTextureSource);
+    }
+    return (u32) (out - start);
+}
+
+static const u8* unpack_draw(GxrDraw* draw, const GxrPackedDraw* header,
+                             const u8* in)
+{
+    memset(draw, 0, sizeof(*draw));
+    memcpy(&draw->key, in, header->key_length);
+    in += (header->key_length + 3u) & ~3u;
+    memcpy((u8*) draw + GXR_DRAW_FIXED_OFFSET, header->fixed,
+           GXR_DRAW_FIXED_SIZE);
+    for (u32 map = 0; map < GXR_MAX_TEXMAPS; ++map) {
+        if (!(header->texture_mask & (1u << map))) continue;
+        memcpy(&draw->textures[map], in, sizeof(MeleeVitaTextureSource));
+        draw->texture_valid[map] = 1u;
+        in += sizeof(MeleeVitaTextureSource);
+    }
+    return in;
+}
+
+typedef struct GxrGpuJob {
+    GxrVtxKey vkey;
+    GxrPointParams point;
+    const GxrGpuVertex* vertices;
+    const u16* indices;
+    u32 count;
+    u8 has_point;
+    u8 cull;
+    u16 reserved;
+    GxrPackedDraw draw;
+    u8 data[]; /* packed draw, then uniforms (4-byte aligned) */
+} GxrGpuJob;
+
+static void run_gpu_job(void* payload)
+{
+    const GxrGpuJob* job = payload;
+    GxrDraw draw;
+    const u8* uniforms = unpack_draw(&draw, &job->draw, job->data);
+    (void) gxr_draw_gpu_impl(&draw, &job->vkey, NULL,
+                             job->has_point ? &job->point : NULL,
+                             job->vertices, job->indices, job->count,
+                             job->cull, (const f32*) uniforms);
+}
+
+static bool submit_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
+                       const GxrVtxUniforms* u, const GxrPointParams* point,
+                       const GxrGpuVertex* vertices, const u16* indices,
+                       u32 count, u8 cull)
+{
+    u64 hash;
+    bool ok;
+    if (!gxs_active())
+        return gxr_draw_gpu_impl(draw, vkey, u, point, vertices, indices,
+                                 count, cull, NULL);
+    if (!s_ready || draw == NULL || vkey == NULL || u == NULL ||
+        vertices == NULL || indices == NULL || count == 0)
+        return false;
+    if (point != NULL && vkey->has_mtxidx) return false;
+    if (cull == GXR_CULL_ALL) return true;
+    hash = known_hash(draw, vkey, sizeof(*vkey),
+                      point != NULL ? 0x100u | point->tex_offset_mask : 0u);
+    if (known_has(hash)) {
+        u32 mtx_comps, tg_comps, light_comps;
+        const u32 total = gpu_uniform_layout(vkey, point != NULL, &mtx_comps,
+                                             &tg_comps, &light_comps);
+        u8 mask, textures;
+        const u32 extra = packed_draw_extra(draw, &mask, &textures);
+        GxrGpuJob* job = gxs_alloc(
+            run_gpu_job, sizeof(GxrGpuJob) + extra + total * sizeof(f32));
+        if (job != NULL) {
+            job->draw.texture_mask = mask;
+            job->draw.texture_count = textures;
+            pack_draw(&job->draw, job->data, draw);
+            job->vkey = *vkey;
+            if (point != NULL) job->point = *point;
+            job->has_point = point != NULL;
+            job->cull = cull;
+            job->vertices = vertices;
+            job->indices = indices;
+            job->count = count;
+            pack_gpu_uniforms((f32*) (job->data + extra), u, point, mtx_comps,
+                              tg_comps, light_comps);
+            return true;
+        }
+    }
+    melee_vita_profiler_record_duration(60u, 1u);
+    gxs_drain();
+    ok = gxr_draw_gpu_impl(draw, vkey, u, point, vertices, indices, count,
+                           cull, NULL);
+    if (ok) known_add(hash);
+    return ok;
+}
+
 bool gxr_draw_gpu(const GxrDraw* draw, const GxrVtxKey* vkey,
                   const GxrVtxUniforms* u, const GxrGpuVertex* vertices,
                   const u16* indices, u32 count, u8 cull)
 {
-    return gxr_draw_gpu_impl(draw, vkey, u, NULL, vertices, indices, count,
-                             cull);
+    return submit_gpu(draw, vkey, u, NULL, vertices, indices, count, cull);
 }
 
 bool gxr_draw_gpu_points(const GxrDraw* draw, const GxrVtxKey* vkey,
@@ -2577,8 +2793,65 @@ bool gxr_draw_gpu_points(const GxrDraw* draw, const GxrVtxKey* vkey,
                          u32 count)
 {
     if (point == NULL) return false;
-    return gxr_draw_gpu_impl(draw, vkey, u, point, vertices, indices, count,
-                             GXR_CULL_NONE);
+    return submit_gpu(draw, vkey, u, point, vertices, indices, count,
+                      GXR_CULL_NONE);
+}
+
+typedef struct GxrCpuJob {
+    GxrVertex* vertices;
+    const u16* indices;
+    u32 count;
+    GxrPackedDraw draw;
+    u8 data[];
+} GxrCpuJob;
+
+static void run_cpu_job(void* payload)
+{
+    GxrCpuJob* job = payload;
+    GxrDraw draw;
+    (void) unpack_draw(&draw, &job->draw, job->data);
+    (void) gxr_draw_now(&draw, job->vertices, job->indices, job->count);
+}
+
+bool gxr_draw(const GxrDraw* draw, GxrVertex* vertices, const u16* indices,
+              u32 count)
+{
+    u64 hash;
+    bool ok;
+    if (!gxs_active()) return gxr_draw_now(draw, vertices, indices, count);
+    if (!s_ready || draw == NULL || vertices == NULL || count == 0)
+        return false;
+    hash = known_hash(draw, NULL, 0u, 0x200u);
+    if (known_has(hash)) {
+        u8 mask, textures;
+        const u32 extra = packed_draw_extra(draw, &mask, &textures);
+        GxrCpuJob* job = gxs_alloc(run_cpu_job, sizeof(GxrCpuJob) + extra);
+        if (job != NULL) {
+            job->draw.texture_mask = mask;
+            job->draw.texture_count = textures;
+            pack_draw(&job->draw, job->data, draw);
+            job->vertices = vertices;
+            job->indices = indices;
+            job->count = count;
+            return true;
+        }
+    }
+    melee_vita_profiler_record_duration(60u, 1u);
+    gxs_drain();
+    ok = gxr_draw_now(draw, vertices, indices, count);
+    if (ok) known_add(hash);
+    return ok;
+}
+
+bool gxr_draw_bump_gpu(
+    const GxrDraw* draw, const GxrBumpVtxKey* vkey,
+    const GxrVtxUniforms* u, const GxrGpuBumpVertex* vertices,
+    const u16* indices, u32 count, u8 cull)
+{
+    /* Bump draws are rare and can reject late (uniform capacity), so they
+     * always run synchronously. */
+    gxs_drain();
+    return gxr_draw_bump_now(draw, vkey, u, vertices, indices, count, cull);
 }
 
 /* Render thread. */

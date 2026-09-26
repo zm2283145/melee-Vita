@@ -303,6 +303,7 @@ $platformSources = @(
     'platforms/vita/game/gx.c',
     'platforms/vita/game/gx_bump.c',
     'platforms/vita/game/gx_render.c',
+    'platforms/vita/game/gx_submit.c',
     'platforms/vita/game/gxr_shader_cache.c',
     'platforms/vita/game/gxm_game.c',
     'platforms/vita/game/heap.c',

@@ -66,6 +66,9 @@ void melee_vita_gxm_present(u32 clear_color);
 /* Render thread command queue (see gxm_game.c). */
 typedef void (*MeleeVitaRqExec)(const void* payload);
 void* melee_vita_rq_push(MeleeVitaRqExec exec, u32 payload_size);
+/* Records straight into the render queue, bypassing the submit worker's
+ * ring; for the worker itself and for code that has drained it. */
+void* melee_vita_rq_push_direct(MeleeVitaRqExec exec, u32 payload_size);
 void* melee_vita_rq_alloc_gpu(u32 size, u32 align);
 void melee_vita_gxm_begin_target(struct vita2d_texture* target, u32 width, u32 height,
                                  u32 clear_color);

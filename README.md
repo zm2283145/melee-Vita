@@ -20,6 +20,21 @@ audio/movie issues, and possible crashes. Performance and compatibility vary
 between scenes, characters, and stages; a locked frame rate is not promised.
 Back up your saves before trying a new build.
 
+## PS5 build (new, experimental)
+
+The port now also builds as a **native PS5 homebrew title** for jailbroken
+consoles. It uses the same game code with an OpenGL 4.6 renderer (Mesa over
+AGC). Menus run at 60 fps, and busy matches can still dip below 60. It also
+has 4-controller couch play, a **PS5 Options** menu (button remapping and
+render resolution up to 4K) and the hidden debug menu.
+
+- **Requirements:** a jailbroken PS5 that runs homebrew folder titles (tested
+  on 13.60 with kstuff, etaHEN and ShadowMountPlus), an FTP payload, and your
+  own uncompressed `GALE01.iso` (NTSC-U 1.02).
+- **Install, controls and build instructions:**
+  [platforms/ps5/README.md](platforms/ps5/README.md)
+- **CI builds:** each push runs the **PS5 build** workflow. Download the
+  `melee-ps5-<commit>` artifact from the Actions tab.
 ## Bugs and issue reports
 
 **There will be bugs, possible crashes, and other unexpected issues.**

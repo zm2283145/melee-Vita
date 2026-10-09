@@ -1,198 +1,181 @@
-# Smash Melee Vita - experimental PS Vita port
+# Smash Melee — experimental PS Vita and PS5 ports
 
-An **experimental native PlayStation Vita port of Super Smash Bros. Melee
-(NTSC-U 1.02)**, developed on the
+Native ports of **Super Smash Bros. Melee (NTSC-U 1.02)** to the **PlayStation
+Vita** and the **PlayStation 5**, developed on the
 [`vita-port` branch](https://github.com/zm2283145/melee-Vita/tree/vita-port).
 
-**Release version: 0.7.1.** Vita's two-part package metadata displays this as
-`00.71`; the GitHub release version is `0.7.1`.
+These are not emulators. The game code from
+[doldecomp/melee](https://github.com/doldecomp/melee) and
+[melee-pc](https://github.com/999sian/melee-pc) is compiled for each console,
+and the GameCube platform services are replaced with native input, disc
+access, audio, saves, movie playback and a GX renderer.
 
-The project builds on [melee-pc](https://github.com/999sian/melee-pc),
-[doldecomp/melee](https://github.com/doldecomp/melee), and
-[aurora](https://github.com/encounter/aurora). Rather than running a GameCube
-emulator, it compiles the game code for Vita and replaces the platform services
-with Vita-native input, disc access, audio, saves, movie decoding, and a GX-to-GXM
-renderer. The renderer generates shaders using vitaShaRK and the Vita shader
-compiler.
+**Both ports are experimental.** Expect slowdowns, visual or audio issues and
+possible crashes. Back up your saves before trying a new build.
 
-**This is not a finished or stable release.** Expect slowdowns, visual issues,
-audio/movie issues, and possible crashes. Performance and compatibility vary
-between scenes, characters, and stages; a locked frame rate is not promised.
-Back up your saves before trying a new build.
+| | PS Vita | PS5 |
+| --- | --- | --- |
+| Status | Releases on GitHub (current: **0.8.15**) | New; builds from CI |
+| Renderer | GX → GXM, shaders built with vitaShaRK | GX → OpenGL 4.6 ([ps5-opengl](https://github.com/blackbearreloaded/ps5-opengl), Mesa over AGC) |
+| Performance | Varies by scene; not locked | 60 fps menus; matches near 60 |
+| Controllers | Built-in controls, 1 player | Up to 4 DualSense pads |
+| Resolution | Scaled internal resolution, 960×544 output | Up to 4K render and 4K output |
+| Docs | [PS Vita](#ps-vita) below | [platforms/ps5/README.md](platforms/ps5/README.md) |
 
-## PS5 build (new, experimental)
+You need your own legally obtained, **uncompressed** Melee NTSC-U 1.02 disc
+image (`GALE01`), named `GALE01.iso`, on either console. Other regions,
+revisions and compressed RVZ/CISO images are not supported. No game data or
+proprietary console module is distributed with this project, and you do not
+need a disc image to compile.
 
-The port now also builds as a **native PS5 homebrew title** for jailbroken
-consoles. It uses the same game code with an OpenGL 4.6 renderer (Mesa over
-AGC). Menus run at 60 fps, and busy matches can still dip below 60. It also
-has 4-controller couch play, a **PS5 Options** menu (button remapping and
-render resolution up to 4K) and the hidden debug menu.
+---
 
-- **Requirements:** a jailbroken PS5 that runs homebrew folder titles (tested
-  on 13.60 with kstuff, etaHEN and ShadowMountPlus), an FTP payload, and your
-  own uncompressed `GALE01.iso` (NTSC-U 1.02).
-- **Install, controls and build instructions:**
-  [platforms/ps5/README.md](platforms/ps5/README.md)
-- **CI builds:** each push runs the **PS5 build** workflow. Download the
-  `melee-ps5-<commit>` artifact from the Actions tab.
-## Bugs and issue reports
+## PS Vita
 
-**There will be bugs, possible crashes, and other unexpected issues.**
-Please report them in
-[GitHub Issues](https://github.com/zm2283145/melee-Vita/issues) so they can be
-investigated. Check for an existing report first, then include the Vita release
-or commit ID, your Vita model and firmware, relevant plugins, the game mode,
-characters and stage, and clear steps to reproduce what happened. Describe
-what you expected and whether the problem repeats after revisiting the scene
-with a warmed shader cache. Screenshots or a short video can help.
+### Requirements
 
-Release builds deliberately do not collect debug logs. Do not attach your disc
-image, game assets, proprietary modules, or personal information to a report.
+- A homebrew-enabled PS Vita with HENkaku/taiHEN and **Enable Unsafe
+  Homebrew** turned on, plus [VitaShell](https://github.com/TheOfficialFloW/VitaShell)
+  to install VPKs and copy files.
+- The Vita runtime shader compiler **`libshacccg.suprx`** at
+  **`ur0:data/libshacccg.suprx`**. It is not included. Get it from your own
+  Vita software using the usual homebrew setup guides.
+- Your `GALE01.iso`, plus free space on `ux0:` for the image (1,459,978,240
+  bytes, about 1.36 GiB), the app, saves and the shader cache.
 
-## Shader compilation and stuttering
+The Release VPK does **not** need VitaDebugger, its kernel companion or
+kubridge, and contains no DebugNet logger or GDB server.
 
-**There will be stuttering while shaders compile at runtime.** New characters,
-stages, menus, and effects can introduce shaders that have not been seen before.
-The port caches compiled shaders in `ux0:data/melee/shadercache/`, so repeated
-scenes should become smoother as you play and the cache fills.
+### Install and run
 
-The cache persists between launches. Keep it when updating unless a release
-specifically asks you to clear it. Deleting it causes shaders to be compiled
-again. Cache warm-up reduces compilation-related stutters; it does not fix every
-performance issue, and new shaders can still cause pauses later.
-
-## Requirements
-
-- A homebrew-enabled PS Vita with HENkaku/taiHEN and **Enable Unsafe Homebrew**
-  enabled, plus [VitaShell](https://github.com/TheOfficialFloW/VitaShell) to
-  install VPKs and copy files.
-- The Vita runtime shader compiler, **`libshacccg.suprx`**, installed at
-  **`ur0:data/libshacccg.suprx`**. This proprietary module is not included in the
-  repository or release package; obtain it from your own legally acquired Vita
-  software using the appropriate homebrew setup instructions.
-- Your own legally obtained, **uncompressed Super Smash Bros. Melee USA
-  revision 2 / NTSC-U 1.02 disc image (`GALE01`)**, named `GALE01.iso`.
-  Other regions/revisions and compressed RVZ/CISO images are not supported by
-  this Vita backend. Renaming a compressed image does not decompress it.
-- Writable storage on `ux0:` for the image, installed application, saves, and
-  shader cache. A full-size disc image alone is 1,459,978,240 bytes
-  (about 1.36 GiB); leave additional free space.
-
-No game disc or proprietary shader compiler module is distributed with this
-project. The Vita VPK includes five alternate Giga Bowser costume archives
-from the supplied mod pack; the rest of the game data still comes from your
-own disc image. You do not need a disc image to compile the port.
-
-The normal Release VPK does **not** require VitaDebugger, its kernel companion,
-or kubridge for debugging. It contains no DebugNet logger or GDB server.
-Development/debug builds have separate requirements.
-
-## Install and run
-
-1. Download the versioned `SmashMeleevita-<version>.vpk` from a **published Vita release** in
+1. Download `SmashMeleevita-<version>.vpk` from a **published release** in
    [Releases](https://github.com/zm2283145/melee-Vita/releases).
-2. Install the VPK using VitaShell. It uses title ID **`MLVITA002`** and currently
-   appears as **Smash Melee Vita** in LiveArea.
-3. Copy your uncompressed disc image to **`ux0:data/melee/GALE01.iso`** and
-   confirm the shader compiler module is at the path above.
-4. Launch the LiveArea bubble. There is no PC-style disc picker; the Vita build
-   reads the fixed disc path.
+2. Install it with VitaShell. It uses title ID **`MLVITA002`** and appears as
+   **Smash Melee Vita** in LiveArea.
+3. Copy your disc image to **`ux0:data/melee/GALE01.iso`**. Check that the
+   shader compiler is in place.
+4. Launch the LiveArea bubble. The game reads that fixed path; there is no disc
+   picker.
 
-This is the **full-game** VPK, not the older `MLVITA001` diagnostic viewer.
-Do not install the smoke-test VPK expecting it to run the game.
+This is the full-game VPK, not the older `MLVITA001` diagnostic viewer.
 
-## Controls
+### Controls
 
-The built-in Vita controls act as GameCube controller port 1.
+The built-in controls act as GameCube controller port 1.
 
-| PS Vita input | GameCube input / use |
+| PS Vita | GameCube / use |
 | --- | --- |
-| Left stick | Main stick: movement and menu navigation |
+| Left stick | Main stick |
 | Right stick | C-stick |
-| D-pad | GameCube D-pad |
-| Cross | A: normal attack / confirm |
-| Circle | B: special attack / back |
-| Square | X: jump |
-| Triangle | Y: jump |
-| **L shoulder** | **L trigger: shield** |
-| **R shoulder** | **R trigger: shield** |
-| **Select** | **Z: grab / Z menu shortcuts** |
+| D-pad | D-pad |
+| Cross / Circle | A / B |
+| Square / Triangle | X / Y (jump) |
+| L / R | L / R triggers (shield; full press only) |
+| Select | Z (grab) |
 | Start | Start / pause |
 
-L and R report full digital trigger presses; there is no variable analog
-light-shield pressure. Touch controls, rumble, external controllers, and
-multiple human controller ports are not implemented by the current Vita input
-backend. CPU opponents use the game's normal controls.
+Touch controls, rumble, external controllers and more than one human player
+are not supported on Vita. Open **Options → Vita Options** to change the menu
+and gameplay render resolution or remap buttons. The settings persist.
 
-Open **Options -> Vita Options** to change menu and gameplay rendering
-resolution or remap Vita buttons. These settings persist across launches.
+### Shader compilation and stutter
+
+New characters, stages, menus and effects compile shaders the first time they
+appear, which causes stutter. Compiled shaders are cached in
+`ux0:data/melee/shadercache/`, so scenes get smoother as you play. Keep the
+cache when updating unless release notes say otherwise.
+
+### Saves
+
+The virtual memory card lives in **`ux0:data/melee/save/`**. Back up that
+folder with the game closed, especially before updating. Dolphin `.gci` files
+in `save/import/` are imported at boot, and game saves are exported to
+`save/export/`. Don't change those files while the game is running.
 
 ### Hidden Debug Tools
 
-The optimized Release includes a hidden, session-only version of Melee's
-original developer tools. In **Options**, enter **Up, Up, Down, Down, Left,
-Right, Left, Right, Select** on the D-pad to reveal **DEBUG TOOLS**. It becomes
-hidden again when the game process is closed and never writes an unlock setting
-to the memory card.
+Release builds include a hidden, session-only version of Melee's developer
+tools. In **Options**, press **Up, Up, Down, Down, Left, Right, Left, Right,
+Select** on the D-pad to reveal **DEBUG TOOLS**. It disappears again when the
+game closes and never writes an unlock to the memory card.
 
-Inside Debug Tools, use the D-pad to navigate/change values, Cross to select,
-Circle to return, and Start only where a page explicitly supports running a
-test. Destructive save-data, memory-card, arbitrary global-data, and unsupported
-GameCube hardware operations remain visible but disabled with an explanation.
-The hidden menu does not enable DebugNet, GDB, render tracing, or debug symbols.
-Camera Mode uses the Vita controller rather than its original controller-port-4
-input. To leave a running debug match, press Start, then hold L and R and press
-Cross for the DebugRom no-contest shortcut.
+Inside, use the D-pad to move and change values, Cross to select and Circle to
+go back. Save-data, memory-card, raw memory and unsupported GameCube hardware
+options are shown but disabled. To leave a debug match, press Start, then hold
+L and R and press Cross. See the
+[Debug Tools Guide](platforms/vita/DEBUG-TOOLS.md) for the item spawner, debug
+camera, collision overlays and match shortcuts.
 
-See the [PS Vita Debug Tools Guide](platforms/vita/DEBUG-TOOLS.md) for menu
-workflows, the item spawner, debug camera, collision overlays, match shortcuts,
-and blocked operations.
+### Building
 
-## Saves
-
-The port stores its virtual memory card in **`ux0:data/melee/save/`**.
-Back up that entire directory with the game closed, especially before updates.
-The backend also supports Dolphin `.gci` interchange: imports are read from
-`save/import/` at boot, and game saves are exported to `save/export/`.
-Do not overwrite or remove files while the game is running.
-
-## Current scope
-
-The Vita code includes native GXM rendering, cached runtime-generated GX/TEV
-shaders, Vita controls, direct ISO/FST reads, audio mixing, persistent saves,
-and THP movie playback with a hardware JPEG path. These are experimental
-implementations, not a claim that every game mode is fully working.
-
-Online play/rollback is not implemented. The desktop launcher/settings overlay,
-custom soundtrack streaming and PC cheat toggles are
-not available in the Vita build. The inherited
-[PC README](README-PC.md) and [roadmap](ROADMAP.md) describe the broader upstream
-project, not promises of Vita support.
-
-## Building
-
-See [Vita build instructions](platforms/vita/README.md) for the full toolchain
-and dependency setup. The normal build uses **Release** configuration:
+See the [Vita build instructions](platforms/vita/README.md) for the toolchain
+and dependencies. The normal build is:
 
 ```powershell
 .\platforms\vita\build-full.ps1 -Configuration Release
 ```
 
-The result is `build-vita/full/SmashMeleevita.vpk`. CI distributes it with the
-release version in the filename, such as `SmashMeleevita-0.8.5.vpk`.
-Release builds use optimization, disable diagnostic logging and debugger
-support, and do not include debug symbols. The dormant hidden Debug Tools UI
-does not change those guarantees. Runtime shader compilation and its disk cache
-remain enabled; those are needed for normal gameplay.
+The output is `build-vita/full/SmashMeleevita.vpk`. Release builds are
+optimized and have no logging, debugger support or debug symbols. The
+**Vita build and draft release** workflow builds every push to `vita-port`
+and drafts a release when `platforms/vita/version.json` is bumped.
+
+---
+
+## PS5
+
+A native homebrew folder title for jailbroken PS5 consoles. It has been
+tested on firmware 13.60 with kstuff, etaHEN and ShadowMountPlus.
+
+- **What you need:** a PS5 that runs homebrew folder titles, an FTP payload
+  (port 2121) and your `GALE01.iso`.
+- **Install:** copy the `PPSA99701` folder to `/data/homebrew/PPSA99701`, and
+  put your disc image at `/data/homebrew/PPSA99701/GALE01.iso`.
+- **Get a build:** download the `melee-ps5-<commit>` artifact from the
+  **PS5 build** workflow in the Actions tab, or build it yourself on Linux/WSL.
+- **Features:** up to 4 controllers (each signed in to a PS5 user), a **PS5
+  Options** menu with button remapping, render resolution up to 4K and video
+  output at 1080p/1440p/4K, and the same hidden debug menu. On PS5, Select is
+  the left half of the touch pad.
+
+Full requirements, controls, install steps and build instructions are in
+**[platforms/ps5/README.md](platforms/ps5/README.md)**.
+
+---
+
+## Bugs and issue reports
+
+Please report problems in
+[GitHub Issues](https://github.com/zm2283145/melee-Vita/issues). Check for an
+existing report first, then include:
+
+- the console (Vita or PS5), the release or commit ID, and the firmware and
+  plugins/payloads you use;
+- the game mode, characters and stage;
+- clear steps to reproduce, what you expected, and whether it happens again
+  once shaders are cached.
+
+Screenshots or a short video help. Never attach your disc image, game assets,
+proprietary modules or personal information.
+
+## Scope
+
+Online play and rollback are not implemented on either console. The desktop
+launcher, settings overlay, custom soundtrack streaming and PC cheat toggles
+are PC-only. The inherited [PC README](README-PC.md) and [roadmap](ROADMAP.md)
+describe the upstream PC project, not promises for these ports.
 
 ## Credits and licensing
 
-Thanks to the Melee decompilation and PC-port contributors, aurora, VitaSDK,
-vita2d, vitaShaRK, SceShaccCgExt, and the Vita homebrew community.
-The updated LiveArea artwork was created by Reddit user
-[u/cool_pain_6315](https://www.reddit.com/user/cool_pain_6315/).
-This project is not affiliated with Nintendo, HAL Laboratory, or Sony.
+Thanks to the Melee decompilation and melee-pc contributors, aurora, VitaSDK,
+vita2d, vitaShaRK, SceShaccCgExt, the Vita homebrew community, and the
+ps5-payload-sdk, ps5-native-app-boilerplate and ps5-opengl projects. The
+updated LiveArea artwork is by Reddit user
+[u/cool_pain_6315](https://www.reddit.com/user/cool_pain_6315/). The PS5
+home-screen art and music are original to this port. The Vita VPK includes
+five alternate Giga Bowser costume archives from the supplied mod pack.
 
-Read [LICENSE.md](LICENSE.md) and [COPYING](COPYING) before redistributing.
-The original port code and third-party components have their own licenses;
-the decompiled game code is not covered by the port's GPL license.
+This project is not affiliated with Nintendo, HAL Laboratory or Sony. Read
+[LICENSE.md](LICENSE.md) and [COPYING](COPYING) before redistributing. The
+port code and third-party components have their own licenses; the decompiled
+game code is not covered by the port's GPL license.

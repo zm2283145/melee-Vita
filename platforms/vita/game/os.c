@@ -4,6 +4,9 @@
 #include "opening_audio.h"
 #include "gxm_game.h"
 #include "../vita_log.h"
+#ifdef TARGET_PS5
+#include "ps5_memory.h"
+#endif
 
 #include <dolphin/os.h>
 #include <dolphin/os/OSAlarm.h>
@@ -123,7 +126,11 @@ void melee_vita_platform_shutdown(void)
     melee_vita_opening_audio_shutdown();
     melee_vita_gxm_shutdown();
     melee_vita_audio_shutdown();
+#ifdef TARGET_PS5
+    melee_ps5_free_low(s_mem1, MELEE_VITA_MEM1_SIZE);
+#else
     free(s_mem1);
+#endif
     s_mem1 = NULL;
     OSBaseAddress = 0;
 }
@@ -133,7 +140,12 @@ void OSInit(void)
     OSBootInfo* boot;
     if (s_mem1 != NULL) return;
 
+#ifdef TARGET_PS5
+    /* Disc data stores 32-bit pointers: MEM1 must sit below 4 GiB. */
+    s_mem1 = melee_ps5_alloc_low(MELEE_VITA_MEM1_SIZE);
+#else
     s_mem1 = aligned_alloc(32, MELEE_VITA_MEM1_SIZE);
+#endif
     if (s_mem1 == NULL) {
         OSPanic(__FILE__, __LINE__, "unable to allocate %u-byte MEM1 arena",
                 MELEE_VITA_MEM1_SIZE);

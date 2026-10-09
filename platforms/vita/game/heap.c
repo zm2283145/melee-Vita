@@ -14,6 +14,16 @@
 
 typedef struct HeapDesc HeapDesc;
 
+#if UINTPTR_MAX > 0xffffffffu
+/* 64-bit hosts (PS5): the same 32-byte header with wider pointers. */
+typedef struct HeapCell {
+    struct HeapCell* prev;
+    struct HeapCell* next;
+    HeapDesc* owner;
+    s32 size;
+    u32 generation;
+} HeapCell;
+#else
 typedef struct HeapCell {
     struct HeapCell* prev;
     struct HeapCell* next;
@@ -22,6 +32,7 @@ typedef struct HeapCell {
     u32 generation;
     u8 padding[12];
 } HeapCell;
+#endif
 
 struct HeapDesc {
     s32 size;

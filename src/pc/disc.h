@@ -50,7 +50,7 @@ void* pc_resolve_ext_ptr(uint32_t id);
 void pc_disc_ptr_overflow(const void* p, const char* file, int line) __attribute__((noreturn));
 
 static inline uint32_t pc_encode_dp(const void* p) {
-#ifdef TARGET_VITA
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
     /* Vita is a 32-bit target, so a relocated disc pointer always fits in the
      * GameCube's 32-bit pointer slot.  The external-pointer table is only
      * needed by 64-bit PC hosts. */
@@ -66,7 +66,7 @@ static inline uint32_t pc_encode_dp(const void* p) {
 }
 
 static inline void* pc_resolve_dp(uint32_t slot) {
-#ifdef TARGET_VITA
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
     return (void*)(uintptr_t)slot;
 #else
     if ((slot & 0xFF000000u) == 0x02000000u) {

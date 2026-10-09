@@ -36,13 +36,19 @@ gcc_ps5=(gcc -nostdinc -isystem "$(gcc -print-file-name=include)" -isystem "$sdk
 
 notify_define=-DMELEE_PS5_NO_NOTIFY=1
 [[ ${MELEE_PS5_NOTIFY:-0} == 1 ]] && notify_define=
-defines=(${MELEE_PS5_DEFINES:-} $notify_define -DTARGET_PC=1 -DMELEE_PC=1 -DTARGET_VITA=1 -DTARGET_PS5=1
+# Development log streaming: MELEE_PS5_LOG_HOST=<pc ip> sends the log to
+# platforms/ps5/tools/log-listener on TCP 18200 (off by default).
+log_defines=()
+if [[ -n ${MELEE_PS5_LOG_HOST:-} ]]; then
+    log_defines=(-DMELEE_PS5_NET_LOG=1 "-DMELEE_PS5_LOG_HOST=\"$MELEE_PS5_LOG_HOST\"")
+fi
+defines=(${MELEE_PS5_DEFINES:-} "${log_defines[@]}" $notify_define -DTARGET_PC=1 -DMELEE_PC=1 -DTARGET_VITA=1 -DTARGET_PS5=1
          -DMELEE_VITA_MODERN_DEBUG_MENU=1 -DMELEE_VITA_RUNTIME_RESOLUTION_MENU=1
          -DMELEE_VITA_SCALED_SHADOW_FRAMES=1 -DMELEE_VITA_SCALED_GX_COPY_FRAMES=1
          -DMELEE_VITA_GX_CPU_VERTEX=1 -DNDEBUG)
 includes=(-I"$here/shim" -I"$here" -I"$root/platforms/vita/game"
           -I"$root/extern/aurora/include" -I"$root/src" -I"$root/src/sdk_include")
-opt=(-O2 -g)
+opt=(-O2 -g -fno-omit-frame-pointer)
 
 game_flags=("${gcc_ps5[@]}" -std=gnu11 "${opt[@]}" "${defines[@]}" "${includes[@]}"
             -Wno-all -Wno-extra -Werror=int-conversion -Werror=implicit-function-declaration
@@ -82,7 +88,7 @@ platform_sources=(
 ps5_sources=(
     platforms/ps5/psp2_shim.c platforms/ps5/ps5_log.c platforms/ps5/ps5_services.c
     platforms/ps5/ps5_memory.c platforms/ps5/ps5_main.c platforms/ps5/gl_game.c
-    platforms/ps5/gl_render.c)
+    platforms/ps5/gl_render.c platforms/ps5/ps5_libc_extra.c)
 
 cpp_sources=(extern/aurora/lib/dolphin/thp/THPDec.cpp)
 

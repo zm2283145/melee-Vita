@@ -36,6 +36,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #ifndef MELEE_PS5_EFB_SCALE
 #define MELEE_PS5_EFB_SCALE 2u
@@ -199,10 +200,40 @@ unsigned melee_ps5_texture_depth_name(const vita2d_texture* texture)
     return texture != NULL ? texture->depth : 0u;
 }
 
+unsigned melee_ps5_texture_fbo(const vita2d_texture* texture)
+{
+    return texture != NULL ? texture->fbo : 0u;
+}
+
+unsigned melee_ps5_texture_width(const vita2d_texture* texture)
+{
+    return texture != NULL ? texture->width : 0u;
+}
+
+unsigned melee_ps5_texture_height(const vita2d_texture* texture)
+{
+    return texture != NULL ? texture->height : 0u;
+}
+
+vita2d_texture* melee_ps5_texture_create_white(void)
+{
+    static const u32 white = 0xffffffffu;
+    vita2d_texture* t = texture_create(1, 1, false, false);
+    if (t != NULL) {
+        glBindTexture(GL_TEXTURE_2D, t->tex);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &white);
+    }
+    return t;
+}
+
+u32 melee_ps5_frame_counter(void) { return s_frame_counter; }
+
 static GLint gl_wrap(u32 mode)
 {
     if (mode == 1u) return GL_REPEAT;
-    if (mode == 2u) return GL_MIRRORED_REPEAT;
+    /* Mirrored maps: the GX shaders fold the coordinate into [0, 1] (as on
+     * Vita, whose GXM rejected mirror addressing), so the sampler clamps. */
+    if (mode == 2u) return gxr_available() ? GL_CLAMP_TO_EDGE : GL_MIRRORED_REPEAT;
     return GL_CLAMP_TO_EDGE;
 }
 
@@ -567,14 +598,57 @@ void* melee_vita_rq_alloc_gpu(u32 size, u32 align)
 
 void melee_vita_gxm_wait_idle(void) {}
 void melee_vita_gxm_begin_frame(void) {}
-void melee_vita_gxm_require_full_resolution(u32 reason) { (void) reason; }
+/* Reasons gathered this frame: shadows and copies mark a match. */
+static u32 s_frame_reasons;
+void melee_vita_gxm_require_full_resolution(u32 reason) { s_frame_reasons |= reason; }
 u32 melee_vita_gxm_render_width(void) { return s_render_width; }
 u32 melee_vita_gxm_render_height(void) { return s_render_height; }
 
 #ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+/* PS5 meaning of the shared resolution options: EFB scale over 960 x 544.
+ * The window stays 1920 x 1080; higher scales supersample into it. */
+static u32 ps5_scale_for_option(int option)
+{
+    static const u32 scales[MELEE_VITA_RESOLUTION_OPTION_COUNT] = { 2u, 3u, 4u, 1u };
+    return option >= 0 && option < MELEE_VITA_RESOLUTION_OPTION_COUNT ? scales[option] : 2u;
+}
+
+#define PS5_RESOLUTION_CONFIG_PATH "/download0/resolution-settings.bin"
+#define PS5_RESOLUTION_CONFIG_MAGIC 0x35505352u /* "RSP5" */
+
+static void resolution_config_load(void)
+{
+    s32 config[3];
+    FILE* file = fopen(PS5_RESOLUTION_CONFIG_PATH, "rb");
+    if (file == NULL) return;
+    if (fread(config, sizeof(config), 1u, file) == 1u &&
+        config[0] == (s32) PS5_RESOLUTION_CONFIG_MAGIC &&
+        config[1] >= 0 && config[1] < MELEE_VITA_RESOLUTION_OPTION_COUNT &&
+        config[2] >= 0 && config[2] < MELEE_VITA_RESOLUTION_OPTION_COUNT) {
+        g_melee_vita_menu_resolution_option = config[1];
+        g_melee_vita_gameplay_resolution_option = config[2];
+    }
+    fclose(file);
+}
+
+static void resolution_config_save(void)
+{
+    const s32 config[3] = { (s32) PS5_RESOLUTION_CONFIG_MAGIC,
+                            g_melee_vita_menu_resolution_option,
+                            g_melee_vita_gameplay_resolution_option };
+    FILE* file = fopen(PS5_RESOLUTION_CONFIG_PATH, "wb");
+    if (file == NULL) return;
+    fwrite(config, sizeof(config), 1u, file);
+    fclose(file);
+}
+
 bool melee_vita_gxm_apply_resolution_options(void)
 {
-    /* The PS5 always renders above the Vita's native size. */
+    /* Takes effect at the next frame boundary (present). */
+    resolution_config_save();
+    melee_ps5_log("[GL] resolution options: menu x%u, match x%u",
+                  ps5_scale_for_option(g_melee_vita_menu_resolution_option),
+                  ps5_scale_for_option(g_melee_vita_gameplay_resolution_option));
     return true;
 }
 #endif
@@ -806,6 +880,7 @@ static void clear_region(f32 x, f32 y, f32 w, f32 h, u32 color)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glDisable(GL_SCISSOR_TEST);
     melee_ps5_gl_default_depth();
+    ++g_melee_vita_gxm_state_epoch;
     s_acc_clear += sceKernelGetProcessTimeWide() - t0;
 }
 
@@ -1147,6 +1222,9 @@ int melee_vita_gxm_init(void)
     EGLint major = 0, minor = 0, count = 0;
     if (s_initialized) return 0;
 
+    /* Compiled shader variants persist across runs (first-use hitches). */
+    mkdir("/download0/shadercache", 0777);
+    setenv("PS5_SHADER_CACHE_DIR", "/download0/shadercache", 1);
     s_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (s_display == EGL_NO_DISPLAY || !eglInitialize(s_display, &major, &minor) ||
         !eglBindAPI(EGL_OPENGL_API) ||
@@ -1171,6 +1249,10 @@ int melee_vita_gxm_init(void)
     /* Depth in [0, 1] as GXM and GX produce it. */
     glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
 
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+    resolution_config_load();
+    s_efb_scale = ps5_scale_for_option(g_melee_vita_menu_resolution_option);
+#endif
     s_efb.width = VITA_W * s_efb_scale;
     s_efb.height = VITA_H * s_efb_scale;
     {
@@ -1190,16 +1272,121 @@ int melee_vita_gxm_init(void)
     return 0;
 }
 
+bool g_ps5_rq_follows_same; /* the previous command ran the same executor */
+extern void (*const g_gxr_exec_draw)(const void*);
+extern void gxr_flush_pending(void);
+
 static void run_frame(void)
 {
     u32 offset = 0;
+    void (*previous)(const void*) = NULL;
     begin_main(s_frame.clear_color, true);
     while (offset < s_frame.size) {
         const RqCommand* command = (const RqCommand*) (s_frame.cmds + offset);
         offset += (u32) sizeof(RqCommand);
+        g_ps5_rq_follows_same = previous == command->exec;
+        previous = command->exec;
+        /* Batched draws must land before anything else touches GL state. */
+        if (command->exec != g_gxr_exec_draw) gxr_flush_pending();
         command->exec(s_frame.cmds + offset);
         offset += command->size;
     }
+    gxr_flush_pending();
+}
+
+/* ---- screenshots (L3 + R3): the EFB, halved, as a 24-bit BMP ---------------- */
+
+static volatile int s_screenshot_requested;
+static u32 s_screenshot_index;
+
+void melee_ps5_request_screenshot(void) { s_screenshot_requested = 1; }
+
+static void write_le32(u8* p, u32 v) { p[0] = (u8) v; p[1] = (u8) (v >> 8); p[2] = (u8) (v >> 16); p[3] = (u8) (v >> 24); }
+
+static void take_screenshot(void)
+{
+    const u32 w = s_efb.width, h = s_efb.height;
+    const u32 ow = w / 2u, oh = h / 2u;
+    const u32 row_bytes = (ow * 3u + 3u) & ~3u;
+    u8* pixels = malloc((size_t) w * h * 4u);
+    u8* bmp = malloc(54u + (size_t) row_bytes * oh);
+    char path[64];
+    FILE* file;
+    if (pixels == NULL || bmp == NULL) { free(pixels); free(bmp); return; }
+    glBindFramebuffer(GL_FRAMEBUFFER, s_efb.fbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glReadPixels(0, 0, (GLsizei) w, (GLsizei) h, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    memset(bmp, 0, 54);
+    bmp[0] = 'B'; bmp[1] = 'M';
+    write_le32(bmp + 2, 54u + row_bytes * oh);
+    write_le32(bmp + 10, 54u);
+    write_le32(bmp + 14, 40u);
+    write_le32(bmp + 18, ow);
+    write_le32(bmp + 22, (u32) -(s32) oh); /* top-down rows, as the EFB stores them */
+    bmp[26] = 1; bmp[28] = 24;
+    write_le32(bmp + 34, row_bytes * oh);
+    for (u32 y = 0; y < oh; ++y) {
+        u8* out = bmp + 54u + (size_t) y * row_bytes;
+        for (u32 x = 0; x < ow; ++x) {
+            const u8* in = pixels + ((size_t) (y * 2u) * w + x * 2u) * 4u;
+            out[x * 3u + 0] = in[2];
+            out[x * 3u + 1] = in[1];
+            out[x * 3u + 2] = in[0];
+        }
+    }
+    snprintf(path, sizeof(path), "/download0/shot-%03u.bmp", s_screenshot_index++);
+    file = fopen(path, "wb");
+    if (file != NULL) {
+        fwrite(bmp, 1, 54u + (size_t) row_bytes * oh, file);
+        fclose(file);
+        melee_ps5_log("[SHOT] wrote %s", path);
+    }
+    free(pixels);
+    free(bmp);
+}
+
+static vita2d_texture* texture_create(u32 width, u32 height, bool target, bool depth);
+static void texture_free(vita2d_texture* t);
+
+/* Rebuilds the EFB at a new scale between frames. */
+static void efb_set_scale(u32 scale)
+{
+    vita2d_texture* efb;
+    if (scale == s_efb_scale || scale == 0u || scale > 4u) return;
+    efb = texture_create(VITA_W * scale, VITA_H * scale, true, true);
+    if (efb == NULL || efb->fbo == 0u) {
+        texture_free(efb);
+        return;
+    }
+    glFinish();
+    glDeleteFramebuffers(1, &s_efb.fbo);
+    glDeleteTextures(1, &s_efb.depth);
+    glDeleteTextures(1, &s_efb.tex);
+    s_efb = *efb;
+    free(efb);
+    s_efb_scale = scale;
+    ++g_melee_vita_gxm_state_epoch;
+    bind_target(NULL);
+    melee_ps5_log("[GL] EFB %ux%u (x%u)", s_efb.width, s_efb.height, s_efb_scale);
+}
+
+static void update_efb_scale(void)
+{
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+    /* A match is a run of frames with shadow passes or EFB copies; wait for
+     * the scene type to settle before resizing. */
+    static bool gameplay;
+    static u32 stable;
+    const bool now = melee_vita_resolution_is_gameplay_frame(s_frame_reasons);
+    s_frame_reasons = 0;
+    if (now != gameplay) {
+        if (++stable < 20u) return;
+        gameplay = now;
+    }
+    stable = 0;
+    efb_set_scale(ps5_scale_for_option(gameplay ? g_melee_vita_gameplay_resolution_option
+                                                : g_melee_vita_menu_resolution_option));
+#endif
 }
 
 void melee_vita_gxm_present(u32 clear_color)
@@ -1224,6 +1411,10 @@ void melee_vita_gxm_present(u32 clear_color)
     }
 
     /* EFB (top row first) -> window (bottom row first): flip while scaling. */
+    if (s_screenshot_requested) {
+        s_screenshot_requested = 0;
+        take_screenshot();
+    }
     t_frame = sceKernelGetProcessTimeWide();
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, s_window_width, s_window_height);
@@ -1242,11 +1433,15 @@ void melee_vita_gxm_present(u32 clear_color)
     s_acc_swap += t_swap - t_blit;
     s_acc_cmds += s_frame.size;
     if (++s_acc_frames == 120u) {
+        extern size_t ps5_opengl_heap_live_bytes(void);
+        extern void melee_ps5_gxr_log_timing(void);
+        melee_ps5_gxr_log_timing();
         melee_ps5_log("[GLPERF] per frame: run=%.2fms (draw=%.2f clear=%.2f) present=%.2fms "
-                      "swap=%.2fms cmd=%uB",
+                      "swap=%.2fms cmd=%uB heap=%.1fMB",
                       s_acc_run / 120000.0, s_acc_draw / 120000.0, s_acc_clear / 120000.0,
                       s_acc_blit / 120000.0, s_acc_swap / 120000.0,
-                      (unsigned) (s_acc_cmds / 120u));
+                      (unsigned) (s_acc_cmds / 120u),
+                      ps5_opengl_heap_live_bytes() / 1048576.0);
         s_acc_run = s_acc_blit = s_acc_swap = s_acc_cmds = 0;
         s_acc_draw = s_acc_clear = 0;
         s_acc_frames = 0;
@@ -1257,6 +1452,7 @@ void melee_vita_gxm_present(u32 clear_color)
     s_frame.clear_color = s_next_clear_color;
     s_next_clear_color = clear_color;
     ++s_frame_counter;
+    update_efb_scale();
     {
         extern u32 g_melee_vita_texture_memo_epoch;
         ++g_melee_vita_texture_memo_epoch;

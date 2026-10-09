@@ -814,6 +814,31 @@ enum {
     VITA_CONTROL_CAPTURE_NONE = 0xFF,
 };
 
+/* The PS5 build shares this menu; only its wording and the meaning of the
+ * resolution options differ (render scale above the Vita's 960 x 544). */
+#ifdef TARGET_PS5
+#define MN_PLATFORM_OPTIONS_TITLE "PS5 OPTIONS"
+#define MN_PLATFORM_OPTIONS_DESCRIPTION "Adjust PS5 Options"
+#define MN_PLATFORM_OUTPUT_TEXT "%s RENDER  /  1920 x 1080 OUTPUT"
+#define MN_PLATFORM_RESOLUTION_HELP "HIGHER SETTINGS SUPERSAMPLE TO THE 1080P OUTPUT"
+#define MN_PLATFORM_CAPTURE_TEXT "PRESS A PS5 BUTTON FOR: %s"
+#define MN_PLATFORM_DISPLAY_FOOTER "L1/R1 PAGE   STICK/D-PAD MOVE   CROSS/CIRCLE CLOSE"
+#define MN_PLATFORM_CAPTURE_FOOTER "ANY PS5 BUTTON OK   TOUCH PAD + OPTIONS CANCEL"
+#define MN_PLATFORM_CONTROLS_FOOTER \
+    "L1/R1 PAGE   STICK/D-PAD MOVE   CROSS REMAP   CIRCLE CLOSE"
+#else
+#define MN_PLATFORM_OPTIONS_TITLE "VITA OPTIONS"
+#define MN_PLATFORM_OPTIONS_DESCRIPTION "Adjust Vita Options"
+#define MN_PLATFORM_OUTPUT_TEXT "%s INTERNAL  /  960 x 544 OUTPUT"
+#define MN_PLATFORM_RESOLUTION_HELP \
+    "VIDEOS, VITA UI, AND SCREEN OUTPUT ALWAYS STAY NATIVE"
+#define MN_PLATFORM_CAPTURE_TEXT "PRESS A VITA BUTTON FOR: %s"
+#define MN_PLATFORM_DISPLAY_FOOTER "L/R PAGE   STICK/D-PAD MOVE   X/O CLOSE"
+#define MN_PLATFORM_CAPTURE_FOOTER "PSTV L2/R2/L3/R3 OK   SELECT+START CANCEL"
+#define MN_PLATFORM_CONTROLS_FOOTER \
+    "L/R PAGE   STICK/D-PAD MOVE   X REMAP   O CLOSE"
+#endif
+
 static void mn_VitaCreateOptionsLabel(MainMenuData* data)
 {
     static Vec3 const origin = { 0.0f, 0.0f, 0.0f };
@@ -838,15 +863,21 @@ static void mn_VitaCreateOptionsLabel(MainMenuData* data)
     label->pos_z = position.z;
     label->default_alignment = 0;
     label->text_color = (GXColor){ 0xE0, 0xB8, 0x60, 0xFF };
-    HSD_SisLib_803A6B98(label, 0.0f, 0.0f, "VITA OPTIONS");
+    HSD_SisLib_803A6B98(label, 0.0f, 0.0f, MN_PLATFORM_OPTIONS_TITLE);
     data->vita_options_label = label;
 }
 
 static char const* mn_VitaResolutionScaleName(int option)
 {
+#ifdef TARGET_PS5
+    static char const* const names[MELEE_VITA_RESOLUTION_OPTION_COUNT] = {
+        "1080P", "1620P", "2160P (4K)", "544P"
+    };
+#else
     static char const* const names[MELEE_VITA_RESOLUTION_OPTION_COUNT] = {
         "100%", "75%", "60%", "50%"
     };
+#endif
 
     if (option < MELEE_VITA_RESOLUTION_NATIVE ||
         option >= MELEE_VITA_RESOLUTION_OPTION_COUNT)
@@ -858,9 +889,15 @@ static char const* mn_VitaResolutionScaleName(int option)
 
 static char const* mn_VitaResolutionDimensions(int option)
 {
+#ifdef TARGET_PS5
+    static char const* const dimensions[MELEE_VITA_RESOLUTION_OPTION_COUNT] = {
+        "1920 x 1088", "2880 x 1632", "3840 x 2176", "960 x 544"
+    };
+#else
     static char const* const dimensions[MELEE_VITA_RESOLUTION_OPTION_COUNT] = {
         "960 x 544", "720 x 408", "576 x 328", "480 x 272"
     };
+#endif
 
     if (option < MELEE_VITA_RESOLUTION_NATIVE ||
         option >= MELEE_VITA_RESOLUTION_OPTION_COUNT)
@@ -872,11 +909,19 @@ static char const* mn_VitaResolutionDimensions(int option)
 
 static char const* mn_VitaPhysicalButtonName(int button)
 {
+#ifdef TARGET_PS5
+    static char const* const names[MELEE_VITA_BUTTON_COUNT] = {
+        "CROSS", "CIRCLE", "SQUARE", "TRIANGLE",
+        "L1", "R1", "TOUCH L", "OPTIONS",
+        "L2", "R2", "L3", "R3",
+    };
+#else
     static char const* const names[MELEE_VITA_BUTTON_COUNT] = {
         "CROSS", "CIRCLE", "SQUARE", "TRIANGLE",
         "L / L1", "R / R1", "SELECT", "START",
         "L2", "R2", "L3", "R3",
     };
+#endif
     if (button < 0 || button >= MELEE_VITA_BUTTON_COUNT)
         return "INVALID";
     return names[button];
@@ -909,7 +954,7 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
 
     HSD_SisLib_803A7664(text);
     title_entry =
-        HSD_SisLib_803A6B98(text, 40.0f, 12.0f, "VITA OPTIONS");
+        HSD_SisLib_803A6B98(text, 40.0f, 12.0f, MN_PLATFORM_OPTIONS_TITLE);
     HSD_SisLib_803A74F0(text, title_entry, (GXColor*) &title_color);
     HSD_SisLib_803A6B98(
         text, 40.0f, 54.0f, "DISPLAY AND CONTROLLER SETTINGS");
@@ -948,7 +993,7 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
             text, 720.0f, 228.0f, "[ - ]     %s     [ + ]",
             mn_VitaResolutionScaleName(g_melee_vita_menu_resolution_option));
         HSD_SisLib_803A6B98(
-            text, 120.0f, 278.0f, "%s INTERNAL  /  960 x 544 OUTPUT",
+            text, 120.0f, 278.0f, MN_PLATFORM_OUTPUT_TEXT,
             mn_VitaResolutionDimensions(g_melee_vita_menu_resolution_option));
         gameplay_entry = HSD_SisLib_803A6B98(
             text, 80.0f, 358.0f, "%s GAMEPLAY",
@@ -958,12 +1003,12 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
             mn_VitaResolutionScaleName(
                 g_melee_vita_gameplay_resolution_option));
         HSD_SisLib_803A6B98(
-            text, 120.0f, 408.0f, "%s INTERNAL  /  960 x 544 OUTPUT",
+            text, 120.0f, 408.0f, MN_PLATFORM_OUTPUT_TEXT,
             mn_VitaResolutionDimensions(
                 g_melee_vita_gameplay_resolution_option));
         help_entry = HSD_SisLib_803A6B98(
             text, 70.0f, 510.0f,
-            "VIDEOS, VITA UI, AND SCREEN OUTPUT ALWAYS STAY NATIVE");
+            MN_PLATFORM_RESOLUTION_HELP);
         menu_color =
             data->vita_resolution_row == 0 ? &selected_color : &normal_color;
         gameplay_color =
@@ -985,7 +1030,7 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
         {
             capture_entry = HSD_SisLib_803A6B98(
                 text, 60.0f, 160.0f,
-                "PRESS A VITA BUTTON FOR: %s",
+                MN_PLATFORM_CAPTURE_TEXT,
                 mn_VitaPadActionName(
                     data->vita_control_capture_action));
             HSD_SisLib_803A74F0(
@@ -1022,11 +1067,11 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
     HSD_SisLib_803A6B98(
         text, 55.0f, 730.0f,
         data->vita_options_page == 0
-            ? "L/R PAGE   STICK/D-PAD MOVE   X/O CLOSE"
+            ? MN_PLATFORM_DISPLAY_FOOTER
             : data->vita_control_capture_action !=
                       VITA_CONTROL_CAPTURE_NONE
-                  ? "PSTV L2/R2/L3/R3 OK   SELECT+START CANCEL"
-                  : "L/R PAGE   STICK/D-PAD MOVE   X REMAP   O CLOSE");
+                  ? MN_PLATFORM_CAPTURE_FOOTER
+                  : MN_PLATFORM_CONTROLS_FOOTER);
     HSD_SisLib_803A74F0(
         text, help_entry,
         (GXColor*) (data->vita_options_page == 0
@@ -1360,7 +1405,7 @@ static void mn_80229A7C(MainMenuData* data, MenuKind menu_kind, int selection)
             text->text_color = (GXColor){ 0xE8, 0xDC, 0xB8, 0xFF };
             HSD_SisLib_803A6B98(
                 text, 0.0f, 0.0f,
-                "Adjust Vita Options");
+                MN_PLATFORM_OPTIONS_DESCRIPTION);
             return;
         }
 #endif

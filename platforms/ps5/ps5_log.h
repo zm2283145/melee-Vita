@@ -5,5 +5,6 @@
 /* Writes to /data/melee/melee-ps5.log (and stdout, which klog shows). */
 void melee_ps5_log(const char* format, ...) __attribute__((format(printf, 1, 2)));
 void melee_ps5_log_flush(void);
+void melee_ps5_log_drain(void);
 
 #endif

@@ -205,6 +205,56 @@ BOOL PADInit(void)
     return TRUE;
 }
 
+/* GC status for one controller from a Vita/PS TV controller sample. */
+static void fill_status(PADStatus* status, const SceCtrlData* vita, const SceCtrlData* analog)
+{
+    int i;
+    status->err = PAD_ERR_NONE;
+    if (analog != NULL) {
+        status->stickX = stick_axis(analog->lx);
+        status->stickY = stick_axis_inverted(analog->ly);
+        status->substickX = stick_axis(analog->rx);
+        status->substickY = stick_axis_inverted(analog->ry);
+    } else {
+        status->stickX = stick_axis(vita->lx);
+        status->stickY = stick_axis_inverted(vita->ly);
+        status->substickX = stick_axis(vita->rx);
+        status->substickY = stick_axis_inverted(vita->ry);
+    }
+
+    if (vita->buttons & SCE_CTRL_LEFT) status->button |= PAD_BUTTON_LEFT;
+    if (vita->buttons & SCE_CTRL_RIGHT) status->button |= PAD_BUTTON_RIGHT;
+    if (vita->buttons & SCE_CTRL_DOWN) status->button |= PAD_BUTTON_DOWN;
+    if (vita->buttons & SCE_CTRL_UP) status->button |= PAD_BUTTON_UP;
+    for (i = 0; i < MELEE_VITA_BUTTON_COUNT; ++i) {
+        uint32_t physical_button = s_physical_buttons[i];
+        u16 action_button;
+        if (!s_is_pstv) {
+            if (i == MELEE_VITA_BUTTON_L)
+                physical_button = SCE_CTRL_LTRIGGER;
+            if (i == MELEE_VITA_BUTTON_R)
+                physical_button = SCE_CTRL_RTRIGGER;
+            if (i >= MELEE_VITA_BUTTON_L2)
+                physical_button = 0;
+        }
+        if (physical_button == 0 ||
+            (vita->buttons & physical_button) == 0)
+            continue;
+        if (s_mapping[i] >= MELEE_VITA_ACTION_COUNT)
+            continue;
+        action_button = s_action_buttons[s_mapping[i]];
+        status->button |= action_button;
+        if (action_button == PAD_BUTTON_A)
+            status->analogA = 255;
+        if (action_button == PAD_BUTTON_B)
+            status->analogB = 255;
+        if (action_button == PAD_TRIGGER_L)
+            status->triggerLeft = 255;
+        if (action_button == PAD_TRIGGER_R)
+            status->triggerRight = 255;
+    }
+}
+
 u32 PADRead(PADStatus* status)
 {
     SceCtrlData vita;
@@ -241,50 +291,17 @@ u32 PADRead(PADStatus* status)
 
     s_raw_buttons_triggered |= vita.buttons & ~s_raw_buttons;
     s_raw_buttons = vita.buttons;
-    status[0].err = PAD_ERR_NONE;
-    if (s_is_pstv && analog_read > 0) {
-        status[0].stickX = stick_axis(analog.lx);
-        status[0].stickY = stick_axis_inverted(analog.ly);
-        status[0].substickX = stick_axis(analog.rx);
-        status[0].substickY = stick_axis_inverted(analog.ry);
-    } else {
-        status[0].stickX = stick_axis(vita.lx);
-        status[0].stickY = stick_axis_inverted(vita.ly);
-        status[0].substickX = stick_axis(vita.rx);
-        status[0].substickY = stick_axis_inverted(vita.ry);
+    fill_status(&status[0], &vita, s_is_pstv && analog_read > 0 ? &analog : NULL);
+#ifdef TARGET_PS5
+    /* Couch play: PS5 pads 2-4 (in login order) drive GC ports 2-4.  They
+     * share the remapping; menus listen to the first pad's raw buttons. */
+    for (i = 1; i < PAD_MAX_CONTROLLERS; ++i) {
+        SceCtrlData extra;
+        memset(&extra, 0, sizeof(extra));
+        if (sceCtrlPeekBufferPositiveExt2(i + 1, &extra, 1) < 1) continue;
+        fill_status(&status[i], &extra, &extra);
     }
-
-    if (vita.buttons & SCE_CTRL_LEFT) status[0].button |= PAD_BUTTON_LEFT;
-    if (vita.buttons & SCE_CTRL_RIGHT) status[0].button |= PAD_BUTTON_RIGHT;
-    if (vita.buttons & SCE_CTRL_DOWN) status[0].button |= PAD_BUTTON_DOWN;
-    if (vita.buttons & SCE_CTRL_UP) status[0].button |= PAD_BUTTON_UP;
-    for (i = 0; i < MELEE_VITA_BUTTON_COUNT; ++i) {
-        uint32_t physical_button = s_physical_buttons[i];
-        u16 action_button;
-        if (!s_is_pstv) {
-            if (i == MELEE_VITA_BUTTON_L)
-                physical_button = SCE_CTRL_LTRIGGER;
-            if (i == MELEE_VITA_BUTTON_R)
-                physical_button = SCE_CTRL_RTRIGGER;
-            if (i >= MELEE_VITA_BUTTON_L2)
-                physical_button = 0;
-        }
-        if (physical_button == 0 ||
-            (vita.buttons & physical_button) == 0)
-            continue;
-        if (s_mapping[i] >= MELEE_VITA_ACTION_COUNT)
-            continue;
-        action_button = s_action_buttons[s_mapping[i]];
-        status[0].button |= action_button;
-        if (action_button == PAD_BUTTON_A)
-            status[0].analogA = 255;
-        if (action_button == PAD_BUTTON_B)
-            status[0].analogB = 255;
-        if (action_button == PAD_TRIGGER_L)
-            status[0].triggerLeft = 255;
-        if (action_button == PAD_TRIGGER_R)
-            status[0].triggerRight = 255;
-    }
+#endif
     return 0;
 }
 

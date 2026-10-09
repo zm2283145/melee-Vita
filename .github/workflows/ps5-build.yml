@@ -1,0 +1,67 @@
+name: PS5 build
+
+on:
+  push:
+    branches: [vita-port, ps5-port]
+    paths:
+      - 'platforms/ps5/**'
+      - 'platforms/vita/**'
+      - 'src/**'
+      - 'extern/**'
+      - 'tools/setup_ps5_ci.sh'
+      - '.github/workflows/ps5-build.yml'
+  pull_request:
+    branches: [vita-port]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ps5-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build PS5 homebrew title
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc clang-18 lld-18 llvm-18 libclang-rt-18-dev \
+            cmake ninja-build python3 curl unzip zip xz-utils ccache
+
+      - name: Cache PS5 toolchain
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ps5
+          key: ps5-toolchain-bp4f531c4-gl1.0.1-v1
+
+      - name: Install pinned PS5 toolchain
+        run: bash tools/setup_ps5_ci.sh "$RUNNER_TEMP/ps5"
+
+      - name: Build
+        run: |
+          MELEE_PS5_DEFINES="" BUILD_JOBS=$(nproc) bash platforms/ps5/build.sh
+
+      - name: Check the package
+        run: |
+          app=build-ps5/app/dist/PPSA99701
+          test -s "$app/eboot.bin"
+          for f in param.json icon0.png pic0.dds pic1.dds; do test -s "$app/sce_sys/$f"; done
+          # The disc image is never part of a build.
+          ! find build-ps5/app/dist -iname '*.iso' | grep -q .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: melee-ps5-${{ github.sha }}
+          path: build-ps5/app/dist/PPSA99701.zip
+          if-no-files-found: error
+          retention-days: 30

@@ -711,7 +711,7 @@ static bool texture_source_for_map(u32 map, MeleeVitaTextureSource* source)
     texture = (const VitaTexObj*) object;
     if (texture->width == 0 || texture->height == 0 ||
         texture->width > 2048u || texture->height > 2048u ||
-        (uintptr_t) texture->data < 0x80000000u) {
+        PC_IS_ARAM_ADDR(texture->data)) {
         static u32 logged;
         if (logged++ < 8u) {
             const u8* raw = (const u8*) object;

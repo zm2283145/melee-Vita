@@ -161,6 +161,16 @@ bool melee_ps5_pad_read(int index, MeleePs5PadState* state)
         }
         last_raw = data.buttons;
     }
+    {
+        /* L3 + R3 together: save a screenshot (bring-up aid). */
+        static bool held;
+        const bool both = (data.buttons & 0x6u) == 0x6u;
+        if (both && !held) {
+            extern void melee_ps5_request_screenshot(void);
+            melee_ps5_request_screenshot();
+        }
+        held = both;
+    }
     state->lx = data.left_stick.x;
     state->ly = data.left_stick.y;
     state->rx = data.right_stick.x;

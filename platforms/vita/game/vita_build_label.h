@@ -9,7 +9,14 @@
 #define MELEE_VITA_BUILD_NUMBER "local"
 #endif
 
+#ifdef TARGET_PS5
+#define MELEE_VITA_PLATFORM_NAME "PS5"
+#else
+#define MELEE_VITA_PLATFORM_NAME "VITA"
+#endif
+
 #define MELEE_VITA_BUILD_LABEL                                               \
-    "VITA " MELEE_VITA_RELEASE_VERSION " BUILD " MELEE_VITA_BUILD_NUMBER
+    MELEE_VITA_PLATFORM_NAME " " MELEE_VITA_RELEASE_VERSION " BUILD "        \
+    MELEE_VITA_BUILD_NUMBER
 
 #endif

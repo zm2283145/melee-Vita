@@ -46,7 +46,9 @@ install_package taihen-0.11-1-vita.pkg.tar.xz \
 install_package libjpeg-turbo-3.2.0-1-vita.pkg.tar.xz \
     8b4b0328c16362b006e8eeae7a6c6400558d5a6de9ccb776bf055d827533eaa7
 
-vdpm refresh nightly
+# The pinned SDK snapshot is the 2026.08 release series; the nightly channel
+# moves to newer snapshots whose package database no longer matches it.
+vdpm refresh 2026.08
 VDPM_NONINTERACTIVE=1 vdpm install curl-mbedtls libsodium libarchive
 
 checkout bythos14/SceShaccCgExt fb0e9d338525b067f3679ab33571323336493cca "$deps/SceShaccCgExt"

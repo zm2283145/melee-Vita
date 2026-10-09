@@ -83,17 +83,12 @@ void gm_801B9254(GameModeState* scene)
 
 void gm_801B927C(GameModeState* state)
 {
-    VsModeData* vs = &gmMainLib_804D3EE0->modes.table[GmVsMode_Stamina];
-    SSSData* sss = gm_GetGameModeStateExitData(state);
-    if (sss->start_game != 0) {
-        *vs = sss->vs;
-
-        lbAudioAx_80026F2C(0x18);
-        lbAudioAx_8002702C(8, lbAudioAx_80026EBC(sss->force_stage_id));
-        lbAudioAx_80027168();
-        return;
-    }
-    gm_SetNextGameModeStateId(0);
+    /* Retail reads the music from sss->force_stage_id, which is -1 unless a
+     * stage is forced: an out-of-bounds stage_id_map[-1] lookup that only
+     * happens not to fault on the GameCube (it crashes the 64-bit PS5).
+     * Use the stage the player picked, like the other VS modes. */
+    gmVsMelee_ExitSss(state, &gmMainLib_804D3EE0->modes.table[GmVsMode_Stamina],
+                      0);
 }
 
 void gm_801B931C(GameModeState* state)

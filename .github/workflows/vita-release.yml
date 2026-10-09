@@ -1,4 +1,4 @@
-name: Vita build and draft release
+name: Vita + PS5 build and draft release
 
 on:
   push:
@@ -267,9 +267,69 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  build-ps5:
+    name: Build PS5 title
+    if: github.ref == 'refs/heads/vita-port' || github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc clang-18 lld-18 llvm-18 libclang-rt-18-dev \
+            cmake ninja-build bison flex glslang-tools git \
+            python3 python3-pip curl unzip zip xz-utils ccache
+          pip3 install --break-system-packages meson mako pyyaml packaging
+
+      - name: Cache PS5 toolchain
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ps5
+          key: ps5-toolchain-bp4f531c4-gl1.0.1-fast-v2
+
+      - name: Install pinned PS5 toolchain
+        run: bash tools/setup_ps5_ci.sh "$RUNNER_TEMP/ps5"
+
+      - name: Build
+        env:
+          MELEE_VITA_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
+        run: BUILD_JOBS=$(nproc) bash platforms/ps5/build.sh
+
+      - name: Check version and package
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("platforms/vita/version.json"))["release"])')
+          label="PS5 ${version} BUILD ${{ github.run_number }}.${{ github.run_attempt }}"
+          # The title-screen label must carry the same release as the Vita VPK.
+          grep -aq "$label" build-ps5/app/build/llvm-pie.elf || {
+            echo "::error::PS5 build does not carry version label '$label'"
+            exit 1
+          }
+          app=build-ps5/app/dist/PPSA99701
+          test -s "$app/eboot.bin"
+          for f in param.json icon0.png pic0.dds pic1.dds; do test -s "$app/sce_sys/$f"; done
+          if find build-ps5/app/dist -iname '*.iso' | grep -q .; then
+            echo "::error::A disc image ended up in the package"; exit 1
+          fi
+          mkdir -p dist-ps5
+          (cd build-ps5/app/dist && zip -qr "$GITHUB_WORKSPACE/dist-ps5/SmashMeleePS5-${version}.zip" PPSA99701)
+          cp platforms/ps5/README.md dist-ps5/PS5-README.md
+          printf '{"release": "%s"}\n' "$version" > dist-ps5/ps5-version.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ps5-${{ github.sha }}
+          path: dist-ps5/
+          if-no-files-found: error
+          retention-days: 30
+
   draft-release:
     name: Create unpublished release draft
-    needs: build
+    needs: [build, build-ps5]
     if: >-
       github.repository_id == '1372143812' &&
       github.ref == 'refs/heads/vita-port' &&
@@ -288,16 +348,27 @@ jobs:
           name: vita-${{ github.sha }}
           path: dist
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: ps5-${{ github.sha }}
+          path: dist
+
       - name: Create draft for manual approval
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           version=$(python3 -c 'import json; print(json.load(open("dist/version.json"))["release"])')
+          ps5_version=$(python3 -c 'import json; print(json.load(open("dist/ps5-version.json"))["release"])')
+          if [[ "$version" != "$ps5_version" ]]; then
+            echo "::error::Vita ($version) and PS5 ($ps5_version) builds disagree on the version"
+            exit 1
+          fi
+          test -s "dist/SmashMeleePS5-${version}.zip"
           tag="v${version}"
           if existing=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null); then
             if [[ "$existing" != "true" ]]; then
-              echo "::error::Published release $tag already exists; bump platforms/vita/version.json"
+              echo "::error::Published release $tag already exists; bump platforms/vita/version.json (shared by Vita and PS5)"
               exit 1
             fi
             gh release delete "$tag" --cleanup-tag --yes
@@ -308,8 +379,11 @@ jobs:
 
           version = sys.argv[1]
           notes = pathlib.Path(".github/RELEASE_NOTES.md").read_text()
-          heading = f"## Changes in Vita v{version}"
-          start = notes.find(heading)
+          # A shared "## Changes in v<version>" section or the Vita one.
+          for heading in (f"## Changes in v{version}", f"## Changes in Vita v{version}"):
+              start = notes.find(heading)
+              if start >= 0:
+                  break
           if start < 0:
               raise SystemExit(f"Missing release notes section: {heading}")
           end = notes.find("\n## ", start + len(heading))
@@ -320,18 +394,22 @@ jobs:
           PY
           gh release create "$tag" \
             --target "$GITHUB_SHA" \
-            --title "Smash Melee Vita ${version}" \
+            --title "Smash Melee ${version} (Vita + PS5)" \
             --notes-file release-notes.md \
             --draft \
             "dist/SmashMeleevita-${version}.vpk" dist/melee-update-manifest.txt \
             dist/MLVITA002-ver.xml dist/MLVITA002-changeinfo.xml \
-            dist/DEBUG-TOOLS.md dist/version.json
+            dist/DEBUG-TOOLS.md dist/version.json \
+            "dist/SmashMeleePS5-${version}.zip" dist/PS5-README.md
           mkdir release-verify
           gh release download "$tag" --dir release-verify \
             --pattern "SmashMeleevita-${version}.vpk" \
             --pattern melee-update-manifest.txt \
             --pattern MLVITA002-ver.xml \
-            --pattern MLVITA002-changeinfo.xml
+            --pattern MLVITA002-changeinfo.xml \
+            --pattern "SmashMeleePS5-${version}.zip"
+          cmp "dist/SmashMeleePS5-${version}.zip" \
+            "release-verify/SmashMeleePS5-${version}.zip"
           cmp "dist/SmashMeleevita-${version}.vpk" \
             "release-verify/SmashMeleevita-${version}.vpk"
           cmp dist/melee-update-manifest.txt \

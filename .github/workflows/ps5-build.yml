@@ -1,8 +1,10 @@
 name: PS5 build
 
+# vita-port pushes build the PS5 title in the release workflow
+# (vita-release.yml); this one covers other branches and manual runs.
 on:
   push:
-    branches: [vita-port, ps5-port]
+    branches: [ps5-port]
     paths:
       - 'platforms/ps5/**'
       - 'platforms/vita/**'
@@ -10,8 +12,6 @@ on:
       - 'extern/**'
       - 'tools/setup_ps5_ci.sh'
       - '.github/workflows/ps5-build.yml'
-  pull_request:
-    branches: [vita-port]
   workflow_dispatch:
 
 permissions:
@@ -25,7 +25,7 @@ jobs:
   build:
     name: Build PS5 homebrew title
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,20 +36,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential gcc clang-18 lld-18 llvm-18 libclang-rt-18-dev \
-            cmake ninja-build python3 curl unzip zip xz-utils ccache
+            cmake ninja-build bison flex glslang-tools git \
+            python3 python3-pip curl unzip zip xz-utils ccache
+          pip3 install --break-system-packages meson mako pyyaml packaging
 
       - name: Cache PS5 toolchain
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/ps5
-          key: ps5-toolchain-bp4f531c4-gl1.0.1-v1
+          key: ps5-toolchain-bp4f531c4-gl1.0.1-fast-v2
 
       - name: Install pinned PS5 toolchain
         run: bash tools/setup_ps5_ci.sh "$RUNNER_TEMP/ps5"
 
       - name: Build
         run: |
-          MELEE_PS5_DEFINES="" BUILD_JOBS=$(nproc) bash platforms/ps5/build.sh
+          BUILD_JOBS=$(nproc) bash platforms/ps5/build.sh
 
       - name: Check the package
         run: |

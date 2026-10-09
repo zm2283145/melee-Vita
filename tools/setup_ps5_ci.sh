@@ -34,9 +34,36 @@ fi
 mkdir -p gl
 [[ -d gl/ps5-opengl ]] || tar xf "ps5-opengl-sdk-${gl_version}/sources/ps5-opengl.tar" -C gl
 
+gl_prefix="$prefix/ps5-opengl-sdk-${gl_version}/sdk"
+
+# The release SDK is built with per-draw profiling on and draw preparation on
+# the calling thread; that costs ~4x per draw in Melee's matches. Rebuild the
+# same source snapshot with profiling off and two preparation workers
+# (MELEE_PS5_FAST_SDK=0 keeps the release SDK). About 30-45 minutes once;
+# CI caches the result.
+if [[ ${MELEE_PS5_FAST_SDK:-1} == 1 ]]; then
+    fast="$prefix/fast-sdk"
+    if [[ ! -f $fast/sdk/lib/libPS5OpenGL.a ]]; then
+        rm -rf "$fast"; mkdir -p "$fast/src"
+        tar xf "ps5-opengl-sdk-${gl_version}/sources/ps5-opengl.tar" -C "$fast/src"
+        mkdir -p "$fast/src/ps5-opengl/third_party"
+        cp "ps5-opengl-sdk-${gl_version}/sources/mesa-26.2.0.tar.xz" "$fast/src/ps5-opengl/third_party/"
+        tar xf "$fast/src/ps5-opengl/third_party/mesa-26.2.0.tar.xz" -C "$fast/src/ps5-opengl/third_party"
+        (cd "$fast/src/ps5-opengl" && python3 tools/fetch-sources.py)
+        (cd "$fast/src/ps5-opengl" &&
+            PS5_NATIVE_APP_TEMPLATE="$prefix/bp" \
+            PS5_PAYLOAD_SDK="$prefix/bp/.deps/native/ps5-payload-sdk" \
+            PS5_DRAW_PROFILE=0 PS5_ASYNC_NATIVE_PREP=1 \
+            PS5_SCANOUT_FPS=120 PS5_SCANOUT_HEIGHT=2160 PS5_DYNAMIC_SCANOUT=1 \
+            make sdk-gl46 PS5_OPENGL_SDK_PREFIX="$fast/sdk")
+        rm -rf "$fast/src"
+    fi
+    gl_prefix="$fast/sdk"
+fi
+
 env_lines=(
     "PS5_NATIVE_APP_TEMPLATE=$prefix/bp"
-    "PS5_OPENGL_PREFIX=$prefix/ps5-opengl-sdk-${gl_version}/sdk"
+    "PS5_OPENGL_PREFIX=$gl_prefix"
     "PS5_OPENGL_SRC=$prefix/gl/ps5-opengl"
 )
 printf '%s\n' "${env_lines[@]}"

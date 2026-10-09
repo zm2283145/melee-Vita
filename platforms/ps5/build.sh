@@ -42,7 +42,12 @@ log_defines=()
 if [[ -n ${MELEE_PS5_LOG_HOST:-} ]]; then
     log_defines=(-DMELEE_PS5_NET_LOG=1 "-DMELEE_PS5_LOG_HOST=\"$MELEE_PS5_LOG_HOST\"")
 fi
-defines=(${MELEE_PS5_DEFINES:-} "${log_defines[@]}" $notify_define -DTARGET_PC=1 -DMELEE_PC=1 -DTARGET_VITA=1 -DTARGET_PS5=1
+# One version for both consoles: platforms/vita/version.json ("release").
+release_version=${MELEE_RELEASE_VERSION:-$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"])' "$root/platforms/vita/version.json")}
+build_number=${MELEE_VITA_BUILD_NUMBER:-local}
+version_defines=("-DMELEE_VITA_RELEASE_VERSION=\"$release_version\"" "-DMELEE_VITA_BUILD_NUMBER=\"$build_number\"")
+echo "==> Smash Melee PS5 $release_version (build $build_number)"
+defines=(${MELEE_PS5_DEFINES:-} "${log_defines[@]}" "${version_defines[@]}" $notify_define -DTARGET_PC=1 -DMELEE_PC=1 -DTARGET_VITA=1 -DTARGET_PS5=1
          -DMELEE_VITA_MODERN_DEBUG_MENU=1 -DMELEE_VITA_RUNTIME_RESOLUTION_MENU=1
          -DMELEE_VITA_SCALED_SHADOW_FRAMES=1 -DMELEE_VITA_SCALED_GX_COPY_FRAMES=1
          -DMELEE_VITA_GX_CPU_VERTEX=1 -DNDEBUG)

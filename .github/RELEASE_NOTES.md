@@ -6,6 +6,38 @@ supply at runtime.
 
 Only **USA revision 2 (NTSC-U 1.02, GALE01)** is supported.
 
+## Changes in Vita v0.8.16
+
+This release adds a brand-new **PlayStation 5 version** alongside the Vita
+version. Both share the same version number from now on.
+
+### New: PS5 version (experimental)
+
+- Smash Melee now runs on **jailbroken PS5 consoles** as a homebrew app. You
+  still need your own `GALE01.iso`. Download `SmashMeleePS5-0.8.16.zip`, and
+  see `PS5-README.md` for install steps.
+- Menus run at a smooth 60 FPS, and matches stay close to 60 FPS.
+- **Up to 4 players** on one PS5. Each controller needs to be signed in to a
+  PS5 user; guest users work.
+- A new **PS5 Options** menu lets you remap buttons, raise the picture quality
+  (render resolution up to 4K) and pick the video output (1080p, 1440p or 4K).
+  A new video output setting takes effect the next time you start the game.
+- New home-screen icon, background art and music.
+- The hidden debug menu works too. The last button in the code is a click on
+  the left half of the touch pad.
+- This is a first release, so expect some bugs. Please report them with
+  "PS5" in the title.
+
+### Vita
+
+- Stamina mode now always plays the music for the stage you picked.
+- Brought in fixes from the upstream PC project. These fix how trophies and
+  notifications are tracked in memory, and clean up a lot of code shared with
+  the PS5 version. Your saves are not affected.
+- Behind the scenes: the automatic Vita build was broken because a download
+  server changed. It works again, and each release now builds both the Vita
+  and PS5 versions.
+
 ## Changes in Vita v0.8.15
 
 - Bowser's defeat cutscenes, before and after Giga Bowser, now run at around

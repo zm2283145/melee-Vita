@@ -42,7 +42,7 @@ void gm_InitChallengerData(u8 human_ckind, u8 human_color, u8 human_slot,
 #ifdef MELEE_VITA_MODERN_DEBUG_MENU
 void gm_InitGigaBowserChallengerTest(void)
 {
-    gm_InitChallengerData(CKind_Mario, 0, 0, GM_NAMETAG_NONE,
+    gm_InitChallengerData(CKind_Mario, 0, 0, GM_NAMETAG_COUNT,
                           CKind_GKoops, GM_DEBUG);
     giga_bowser_challenger_test = true;
 }

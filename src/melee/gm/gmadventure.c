@@ -41,21 +41,83 @@ static IntroData gm_804D68E0;
 /// in multiples of 8. Skipping to the next block goes on to the next stage.
 #define NEXT_SCENEBLOCK_AFTER(x) (((x) + 8) & ~(8 - 1))
 
-/// @todo fill this out with the rest of the scenes
+/// Scene IDs for ::gm_Mode_Adventure_States and ::gm_803DE650. Each stage
+/// of Adventure Mode owns one block of eight IDs; #gm_8017BE84 turns an ID
+/// back into its stage number.
 enum {
-    ADVENTURE_INTRO = 0x0,
-    ADVENTURE_MUSHROOM_KINGDOM,
-    ADVENTURE_LUIGI_CUTSCENE,
-    ADVENTURE_MARIO_PEACH_FIGHT,
+    /* Stage 1: Mushroom Kingdom */
+    /* 0x00 */ ADVENTURE_INTRO = 0x00,
+    /* 0x01 */ ADVENTURE_MUSHROOM_KINGDOM, ///< Yoshi team
+    /* 0x02 */ ADVENTURE_LUIGI_CUTSCENE,
+    /* 0x03 */ ADVENTURE_MARIO_PEACH_FIGHT, ///< Princess Peach's Castle
 
-    ADVENTURE_KIRBY_INTRO = 0x20,
-    ADVENTURE_KIRBY_FIGHT,
-    ADVENTURE_TEAMKIRBY_INTRO,
-    ADVENTURE_TEAMKIRBY_FIGHT,
-    ADVENTURE_GIANTKIRBY_INTRO,
-    ADVENTURE_GIANTKIRBY_FIGHT,
+    /* Stage 2: Kongo Jungle */
+    /* 0x08 */ ADVENTURE_KONGO_INTRO = 0x08,
+    /* 0x09 */ ADVENTURE_TINYDK_FIGHT,  ///< two half-size Donkey Kongs
+    /* 0x0A */ ADVENTURE_GIANTDK_FIGHT, ///< Jungle Japes
 
-    ADVENTURE_BACK_TO_CSS = 0x70,
+    /* Stage 3: Underground Maze */
+    /* 0x10 */ ADVENTURE_MAZE_INTRO = 0x10,
+    /* 0x11 */ ADVENTURE_UNDERGROUND_MAZE, ///< Link
+    /* 0x12 */ ADVENTURE_ZELDA_FIGHT,      ///< Hyrule Temple
+
+    /* Stage 4: Brinstar */
+    /* 0x18 */ ADVENTURE_BRINSTAR_INTRO = 0x18,
+    /* 0x19 */ ADVENTURE_SAMUS_FIGHT,
+    /* 0x1A */ ADVENTURE_BRINSTAR_CUTSCENE,
+    /* 0x1B */ ADVENTURE_ESCAPE_FROM_BRINSTAR,
+    /* 0x1C */ ADVENTURE_EXPLOSION_CUTSCENE,
+
+    /* Stage 5: Green Greens */
+    /* 0x20 */ ADVENTURE_KIRBY_INTRO = 0x20,
+    /* 0x21 */ ADVENTURE_KIRBY_FIGHT,
+    /* 0x22 */ ADVENTURE_TEAMKIRBY_INTRO,
+    /* 0x23 */ ADVENTURE_TEAMKIRBY_FIGHT,
+    /* 0x24 */ ADVENTURE_GIANTKIRBY_INTRO,
+    /* 0x25 */ ADVENTURE_GIANTKIRBY_FIGHT,
+
+    /* Stage 6: Corneria */
+    /* 0x28 */ ADVENTURE_CORNERIA_INTRO = 0x28,
+    /* 0x29 */ ADVENTURE_FOX_FIGHT,
+    /* 0x2A */ ADVENTURE_STARFOX_CUTSCENE,
+    /* 0x2B */ ADVENTURE_FOX_FALCO_FIGHT, ///< Fox again, or Falco if unlocked
+
+    /* Stage 7: Pokemon Stadium */
+    /* 0x30 */ ADVENTURE_POKEMON_INTRO = 0x30,
+    /* 0x31 */ ADVENTURE_POKEMON_FIGHT, ///< Pikachu, Pichu and Jigglypuff team
+
+    /* Stage 8: F-Zero Grand Prix */
+    /* 0x38 */ ADVENTURE_FZERO_CUTSCENE = 0x38,
+    /* 0x39 */ ADVENTURE_FZERO_INTRO,
+    /* 0x3A */ ADVENTURE_FZERO_GRAND_PRIX,
+    /* 0x3B */ ADVENTURE_CAPTAIN_FALCON_FIGHT, ///< Mute City
+
+    /* Stage 9: Onett */
+    /* 0x40 */ ADVENTURE_ONETT_INTRO = 0x40,
+    /* 0x41 */ ADVENTURE_NESS_FIGHT, ///< three Nesses
+
+    /* Stage 10: Icicle Mountain */
+    /* 0x48 */ ADVENTURE_ICICLE_INTRO = 0x48,
+    /* 0x49 */ ADVENTURE_ICICLE_MOUNTAIN, ///< Ice Climbers
+
+    /* Stage 11: Battlefield */
+    /* 0x50 */ ADVENTURE_BATTLEFIELD_INTRO = 0x50,
+    /* 0x51 */ ADVENTURE_WIREFRAME_FIGHT, ///< Fighting Wire Frame team
+    /* 0x52 */ ADVENTURE_METAL_CUTSCENE,
+    /* 0x53 */ ADVENTURE_METAL_MARIO_FIGHT, ///< plus Metal Luigi if unlocked
+
+    /* Stage 12: Final Destination */
+    /* 0x58 */ ADVENTURE_FINAL_DESTINATION_INTRO = 0x58,
+    /* 0x59 */ ADVENTURE_BOWSER_FIGHT,
+    /* 0x5A */ ADVENTURE_BOWSERTOY_CUTSCENE,
+    /* 0x5B */ ADVENTURE_GIGATRANSFORM_CUTSCENE,
+    /* 0x5C */ ADVENTURE_GIGABOWSER_FIGHT,
+    /* 0x5D */ ADVENTURE_GIGADEFEATED_CUTSCENE,
+
+    /* 0x68 */ ADVENTURE_COMING_SOON = 0x68,
+    /* 0x69 */ ADVENTURE_GAME_OVER,
+
+    /* 0x70 */ ADVENTURE_BACK_TO_CSS = 0x70,
 };
 
 GameModeState gm_Mode_Adventure_States[] = {
@@ -108,7 +170,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        8,
+        ADVENTURE_KONGO_INTRO,
         2,
         0,
         gm_801B3F40,
@@ -120,7 +182,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        9,
+        ADVENTURE_TINYDK_FIGHT,
         2,
         0,
         gm_801B4768,
@@ -132,7 +194,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0xA,
+        ADVENTURE_GIANTDK_FIGHT,
         2,
         0,
         gm_801B4064,
@@ -144,7 +206,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x10,
+        ADVENTURE_MAZE_INTRO,
         2,
         0,
         gm_801B3F40,
@@ -156,7 +218,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x11,
+        ADVENTURE_UNDERGROUND_MAZE,
         2,
         0,
         gm_801B4064,
@@ -168,7 +230,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x12,
+        ADVENTURE_ZELDA_FIGHT,
         2,
         0,
         gm_801B4064,
@@ -180,7 +242,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x18,
+        ADVENTURE_BRINSTAR_INTRO,
         2,
         0,
         gm_801B3F40,
@@ -192,7 +254,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x19,
+        ADVENTURE_SAMUS_FIGHT,
         2,
         0,
         gm_801B4064,
@@ -204,7 +266,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x1A,
+        ADVENTURE_BRINSTAR_CUTSCENE,
         2,
         0,
         gm_801B4430,
@@ -216,7 +278,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x1B,
+        ADVENTURE_ESCAPE_FROM_BRINSTAR,
         2,
         0,
         gm_801B47FC,
@@ -228,7 +290,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x1C,
+        ADVENTURE_EXPLOSION_CUTSCENE,
         2,
         0,
         NULL,
@@ -312,7 +374,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x28,
+        ADVENTURE_CORNERIA_INTRO,
         2,
         0,
         gm_801B3F40,
@@ -324,7 +386,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x29,
+        ADVENTURE_FOX_FIGHT,
         2,
         0,
         gm_801B4064,
@@ -336,7 +398,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x2A,
+        ADVENTURE_STARFOX_CUTSCENE,
         2,
         0,
         gm_801B4D34,
@@ -348,7 +410,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x2B,
+        ADVENTURE_FOX_FALCO_FIGHT,
         2,
         0,
         gm_801B4DAC,
@@ -360,7 +422,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x30,
+        ADVENTURE_POKEMON_INTRO,
         2,
         0,
         gm_801B3F40,
@@ -372,7 +434,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x31,
+        ADVENTURE_POKEMON_FIGHT,
         2,
         0,
         gm_801B4064,
@@ -384,7 +446,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x38,
+        ADVENTURE_FZERO_CUTSCENE,
         2,
         0,
         NULL,
@@ -396,7 +458,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x39,
+        ADVENTURE_FZERO_INTRO,
         2,
         0,
         gm_801B3F40,
@@ -408,7 +470,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x3A,
+        ADVENTURE_FZERO_GRAND_PRIX,
         2,
         0,
         gm_801B4064,
@@ -420,7 +482,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x3B,
+        ADVENTURE_CAPTAIN_FALCON_FIGHT,
         2,
         0,
         gm_801B4064,
@@ -432,7 +494,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x40,
+        ADVENTURE_ONETT_INTRO,
         2,
         0,
         gm_801B3F40,
@@ -444,7 +506,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x41,
+        ADVENTURE_NESS_FIGHT,
         2,
         0,
         gm_801B4E58,
@@ -456,7 +518,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x48,
+        ADVENTURE_ICICLE_INTRO,
         2,
         0,
         gm_801B3F40,
@@ -468,7 +530,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x49,
+        ADVENTURE_ICICLE_MOUNTAIN,
         2,
         0,
         gm_801B4064,
@@ -480,7 +542,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x50,
+        ADVENTURE_BATTLEFIELD_INTRO,
         2,
         0,
         gm_801B3F40,
@@ -492,7 +554,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x51,
+        ADVENTURE_WIREFRAME_FIGHT,
         2,
         0,
         gm_801B4064,
@@ -504,7 +566,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x52,
+        ADVENTURE_METAL_CUTSCENE,
         2,
         0,
         gm_801B4430,
@@ -516,7 +578,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x53,
+        ADVENTURE_METAL_MARIO_FIGHT,
         2,
         0,
         gm_801B4EB8,
@@ -528,7 +590,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x58,
+        ADVENTURE_FINAL_DESTINATION_INTRO,
         2,
         0,
         gm_801B3F40,
@@ -540,7 +602,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x59,
+        ADVENTURE_BOWSER_FIGHT,
         2,
         0,
         gm_801B4F44,
@@ -552,7 +614,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x5A,
+        ADVENTURE_BOWSERTOY_CUTSCENE,
         2,
         0,
         gm_801B4430,
@@ -564,7 +626,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x5B,
+        ADVENTURE_GIGATRANSFORM_CUTSCENE,
         2,
         0,
         gm_801B4430,
@@ -576,7 +638,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x5C,
+        ADVENTURE_GIGABOWSER_FIGHT,
         2,
         0,
         gm_801B4064,
@@ -588,7 +650,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x5D,
+        ADVENTURE_GIGADEFEATED_CUTSCENE,
         2,
         0,
         gm_801B4430,
@@ -600,7 +662,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x68,
+        ADVENTURE_COMING_SOON,
         2,
         0,
         NULL,
@@ -612,7 +674,7 @@ GameModeState gm_Mode_Adventure_States[] = {
         },
     },
     {
-        0x69,
+        ADVENTURE_GAME_OVER,
         2,
         0,
         gm_801B4254,
@@ -640,7 +702,7 @@ GameModeState gm_Mode_Adventure_States[] = {
 
 struct gm_803DE650_t gm_803DE650[] = {
     {
-        0x00,
+        ADVENTURE_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -652,7 +714,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         CKind_Yoshi,
     },
     {
-        0x01,
+        ADVENTURE_MUSHROOM_KINGDOM,
         0x09,
         0x01A4,
         0x0000,
@@ -664,7 +726,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         CKind_Yoshi,
     },
     {
-        0x02,
+        ADVENTURE_LUIGI_CUTSCENE,
         0x00,
         0x0000,
         0x0000,
@@ -676,7 +738,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x03,
+        ADVENTURE_MARIO_PEACH_FIGHT,
         0x00,
         0x00F0,
         0x0000,
@@ -688,7 +750,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x08,
+        ADVENTURE_KONGO_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -700,7 +762,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x09,
+        ADVENTURE_TINYDK_FIGHT,
         0x00,
         0x00F0,
         0x0000,
@@ -712,7 +774,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x0A,
+        ADVENTURE_GIANTDK_FIGHT,
         0x02,
         0x00F0,
         0x0000,
@@ -724,7 +786,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x10,
+        ADVENTURE_MAZE_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -736,7 +798,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x11,
+        ADVENTURE_UNDERGROUND_MAZE,
         0x09,
         0x01A4,
         0x0000,
@@ -748,7 +810,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x12,
+        ADVENTURE_ZELDA_FIGHT,
         0x00,
         0x00F0,
         0x0000,
@@ -760,7 +822,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x18,
+        ADVENTURE_BRINSTAR_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -772,7 +834,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x19,
+        ADVENTURE_SAMUS_FIGHT,
         0x00,
         0x00F0,
         0x0000,
@@ -784,7 +846,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x1A,
+        ADVENTURE_BRINSTAR_CUTSCENE,
         0x00,
         0x0000,
         0x0000,
@@ -796,7 +858,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x1B,
+        ADVENTURE_ESCAPE_FROM_BRINSTAR,
         0x41,
         0x0028,
         0x0000,
@@ -808,7 +870,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x1C,
+        ADVENTURE_EXPLOSION_CUTSCENE,
         0x00,
         0x0000,
         0x0000,
@@ -820,7 +882,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x20,
+        ADVENTURE_KIRBY_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -832,7 +894,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         CKind_Kirby,
     },
     {
-        0x21,
+        ADVENTURE_KIRBY_FIGHT,
         0x00,
         0x00F0,
         0x0000,
@@ -844,7 +906,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x22,
+        ADVENTURE_TEAMKIRBY_INTRO,
         0x00,
         0x0000,
         0x000F,
@@ -856,7 +918,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         CKind_Kirby,
     },
     {
-        0x23,
+        ADVENTURE_TEAMKIRBY_FIGHT,
         0x08,
         0x00F0,
         0x000F,
@@ -868,7 +930,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         CKind_Kirby,
     },
     {
-        0x24,
+        ADVENTURE_GIANTKIRBY_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -880,7 +942,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x25,
+        ADVENTURE_GIANTKIRBY_FIGHT,
         0x02,
         0x00F0,
         0x0000,
@@ -892,7 +954,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x28,
+        ADVENTURE_CORNERIA_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -904,7 +966,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x29,
+        ADVENTURE_FOX_FIGHT,
         0x00,
         0x00F0,
         0x0000,
@@ -916,7 +978,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x2A,
+        ADVENTURE_STARFOX_CUTSCENE,
         0x00,
         0x0000,
         0x0000,
@@ -928,7 +990,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x2B,
+        ADVENTURE_FOX_FALCO_FIGHT,
         0x00,
         0x00F0,
         0x0000,
@@ -940,7 +1002,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x30,
+        ADVENTURE_POKEMON_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -952,7 +1014,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x31,
+        ADVENTURE_POKEMON_FIGHT,
         0x08,
         0x00F0,
         0x000C,
@@ -964,7 +1026,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         CKind_Purin,
     },
     {
-        0x38,
+        ADVENTURE_FZERO_CUTSCENE,
         0x00,
         0x0000,
         0x0000,
@@ -976,7 +1038,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x39,
+        ADVENTURE_FZERO_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -988,7 +1050,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x3A,
+        ADVENTURE_FZERO_GRAND_PRIX,
         0x41,
         0x00F0,
         0x0000,
@@ -1000,7 +1062,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x3B,
+        ADVENTURE_CAPTAIN_FALCON_FIGHT,
         0x00,
         0x00F0,
         0x0000,
@@ -1012,7 +1074,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x40,
+        ADVENTURE_ONETT_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -1024,7 +1086,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x41,
+        ADVENTURE_NESS_FIGHT,
         0x00,
         0x00F0,
         0x0000,
@@ -1039,7 +1101,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         0x00,
     },
     {
-        0x48,
+        ADVENTURE_ICICLE_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -1051,7 +1113,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x49,
+        ADVENTURE_ICICLE_MOUNTAIN,
         0x09,
         0x00F0,
         0x0000,
@@ -1063,7 +1125,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x50,
+        ADVENTURE_BATTLEFIELD_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -1075,7 +1137,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x51,
+        ADVENTURE_WIREFRAME_FIGHT,
         0x08,
         0x00F0,
         0x000F,
@@ -1087,7 +1149,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x52,
+        ADVENTURE_METAL_CUTSCENE,
         0x00,
         0x0000,
         0x0000,
@@ -1099,7 +1161,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x53,
+        ADVENTURE_METAL_MARIO_FIGHT,
         0x04,
         0x00F0,
         0x0000,
@@ -1111,7 +1173,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x58,
+        ADVENTURE_FINAL_DESTINATION_INTRO,
         0x00,
         0x0000,
         0x0000,
@@ -1123,7 +1185,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x59,
+        ADVENTURE_BOWSER_FIGHT,
         0x02,
         0x00F0,
         0x0000,
@@ -1135,7 +1197,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x5A,
+        ADVENTURE_BOWSERTOY_CUTSCENE,
         0x00,
         0x0000,
         0x0000,
@@ -1147,7 +1209,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x5B,
+        ADVENTURE_GIGATRANSFORM_CUTSCENE,
         0x00,
         0x0000,
         0x0000,
@@ -1159,7 +1221,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x5C,
+        ADVENTURE_GIGABOWSER_FIGHT,
         0x20,
         0x00F0,
         0x0000,
@@ -1171,7 +1233,7 @@ struct gm_803DE650_t gm_803DE650[] = {
         ChKind_None,
     },
     {
-        0x5D,
+        ADVENTURE_GIGADEFEATED_CUTSCENE,
         0x00,
         0x00F0,
         0x0000,
@@ -1281,7 +1343,7 @@ void gm_801B4170(GameModeState* arg0)
     MatchExitInfo* temp_r28 = gm_GetGameModeStateExitData(arg0);
     UnkAdventureData* temp_r31 = gm_GetAdventureData();
     setValUnk(arg0->id, temp_r28->x8);
-    if (gm_8017D7AC(temp_r28, &temp_r31->x0, 0x69) &&
+    if (gm_8017D7AC(temp_r28, &temp_r31->x0, ADVENTURE_GAME_OVER) &&
         gm_8017E4C4(arg0->id)[1].x0 == 0xFF)
     {
         gm_8017CBAC(temp_r31, gmMainLib_8015CDD4(), 0x16);
@@ -1360,7 +1422,7 @@ void gm_801B44A0(GameModeState* scene)
 
     setValUnk(scene->id, temp_r30->x8);
 
-    if (gm_8017D7AC(temp_r30, &temp_r29->x0, 0x69)) {
+    if (gm_8017D7AC(temp_r30, &temp_r29->x0, ADVENTURE_GAME_OVER)) {
         /**
          * Luigi challenger approaching condition:
          * Reach the flagpole with 2 in the seconds place
@@ -1408,7 +1470,7 @@ void gm_801B4684(GameModeState* scene)
 
     setValUnk(scene->id, temp_r29->x8);
 
-    if (gm_8017D7AC(temp_r29, &temp_r31->x0, 0x69)) {
+    if (gm_8017D7AC(temp_r29, &temp_r31->x0, ADVENTURE_GAME_OVER)) {
         /// Unlock conditions for Luigi (match completed in under 1 minute)
         if (temp_r29->match_end.frame_count / 60 <= 60) {
             temp_r31->x75 = 1;
@@ -1439,7 +1501,8 @@ void gm_801B47FC(GameModeState* scene)
     temp_r31 = gm_GetAdventureData();
     gm_801B4064(scene);
     temp_r30->rules.on_match_end = gm_8017E7A0;
-    temp_r31->x0.x0.mode = 0x20;
+    /// Continuing after a game over here resumes at Green Greens.
+    temp_r31->x0.x0.mode = ADVENTURE_KIRBY_INTRO;
 }
 
 static inline void gm_801B4860_inline0(GameModeState* scene)
@@ -1460,7 +1523,7 @@ static inline void gm_801B4860_inline1(GameModeState* scene)
 
     setValUnk(scene->id, exit_info->x8);
 
-    if (gm_8017D7AC(exit_info, &adv_data->x0, 0x69) &&
+    if (gm_8017D7AC(exit_info, &adv_data->x0, ADVENTURE_GAME_OVER) &&
         gm_8017E4C4(scene->id)[1].x0 == 0xFF)
     {
         gm_8017CBAC(adv_data, gmMainLib_8015CDD4(), 0x16);
@@ -1549,7 +1612,7 @@ void gm_801B4C5C(GameModeState* scene)
     setValUnk(scene->id, temp_r30->x8);
 
     /// If the player took longer than 30 seconds, skip the Giant Kirby battle.
-    if (gm_8017D7AC(temp_r30, &temp_r29->x0, 0x69) &&
+    if (gm_8017D7AC(temp_r30, &temp_r29->x0, ADVENTURE_GAME_OVER) &&
         temp_r30->match_end.frame_count / 60 > 30)
     {
         gm_SetNextGameModeStateId(
@@ -1633,7 +1696,7 @@ void gm_801B4FCC(GameModeState* scene)
     MatchExitInfo* temp_r30 = gm_GetGameModeStateExitData(scene);
     UnkAdventureData* temp_r29 = gm_GetAdventureData();
     setValUnk(scene->id, temp_r30->x8);
-    gm_8017D7AC(temp_r30, &temp_r29->x0, 0x69);
+    gm_8017D7AC(temp_r30, &temp_r29->x0, ADVENTURE_GAME_OVER);
 }
 
 void gm_801B5078(GameModeState* scene)
@@ -1658,7 +1721,7 @@ void gm_801B50C4(GameModeState* scene)
 
     setValUnk(scene->id, temp_r31->x8);
 
-    gm_8017D7AC(temp_r31, &temp_r30->x0, 0x69);
+    gm_8017D7AC(temp_r31, &temp_r30->x0, ADVENTURE_GAME_OVER);
 }
 
 void gm_801B518C(GameModeState* scene)
@@ -1676,7 +1739,7 @@ void gm_Mode_Adventure_OnInit(void)
     temp_r3->color = 0;
     temp_r3->stocks = 3;
     temp_r3->cpu_level = 0;
-    temp_r3->nametag = GM_NAMETAG_NONE;
+    temp_r3->nametag = GM_NAMETAG_COUNT;
     temp_r3->x5 = 0;
 }
 

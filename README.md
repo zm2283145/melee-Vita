@@ -118,7 +118,7 @@ and dependencies. The normal build is:
 The output is `build-vita/full/SmashMeleevita.vpk`. Release builds are
 optimized and have no logging, debugger support or debug symbols. The
 **Vita build and draft release** workflow builds every push to `vita-port`
-and drafts a release when `platforms/vita/version.json` is bumped.
+and drafts a release, with both the Vita VPK and the PS5 build, when the shared version in `platforms/vita/version.json` is bumped.
 
 ---
 
@@ -131,8 +131,9 @@ tested on firmware 13.60 with kstuff, etaHEN and ShadowMountPlus.
   (port 2121) and your `GALE01.iso`.
 - **Install:** copy the `PPSA99701` folder to `/data/homebrew/PPSA99701`, and
   put your disc image at `/data/homebrew/PPSA99701/GALE01.iso`.
-- **Get a build:** download the `melee-ps5-<commit>` artifact from the
-  **PS5 build** workflow in the Actions tab, or build it yourself on Linux/WSL.
+- **Get a build:** download `SmashMeleePS5-<version>.zip` from a published
+  release, use a CI artifact from the Actions tab, or build it yourself on
+  Linux/WSL. PS5 and Vita releases share one version number.
 - **Features:** up to 4 controllers (each signed in to a PS5 user), a **PS5
   Options** menu with button remapping, render resolution up to 4K and video
   output at 1080p/1440p/4K, and the same hidden debug menu. On PS5, Select is

@@ -30,6 +30,7 @@
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+#include <ps5_opengl_display_modes.h>
 #include <GL/gl.h>
 
 #include <stdbool.h>
@@ -616,26 +617,39 @@ static u32 ps5_scale_for_option(int option)
 #define PS5_RESOLUTION_CONFIG_PATH "/download0/resolution-settings.bin"
 #define PS5_RESOLUTION_CONFIG_MAGIC 0x35505352u /* "RSP5" */
 
+/* Video output mode (PS5 only): 1080p, 1440p or 2160p.  The display mode
+ * can only change while EGL is down, so a new choice applies at the next
+ * launch; g_melee_ps5_active_output_option is what is running now. */
+int g_melee_ps5_output_option = 0;
+int g_melee_ps5_active_output_option = 0;
+static const EGLint k_output_modes[MELEE_PS5_OUTPUT_OPTION_COUNT][2] = {
+    { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 }
+};
+
 static void resolution_config_load(void)
 {
-    s32 config[3];
+    s32 config[4] = { 0, 0, 0, 0 };
+    size_t read;
     FILE* file = fopen(PS5_RESOLUTION_CONFIG_PATH, "rb");
     if (file == NULL) return;
-    if (fread(config, sizeof(config), 1u, file) == 1u &&
-        config[0] == (s32) PS5_RESOLUTION_CONFIG_MAGIC &&
+    read = fread(config, sizeof(s32), 4u, file);
+    if (read >= 3u && config[0] == (s32) PS5_RESOLUTION_CONFIG_MAGIC &&
         config[1] >= 0 && config[1] < MELEE_VITA_RESOLUTION_OPTION_COUNT &&
         config[2] >= 0 && config[2] < MELEE_VITA_RESOLUTION_OPTION_COUNT) {
         g_melee_vita_menu_resolution_option = config[1];
         g_melee_vita_gameplay_resolution_option = config[2];
+        if (read == 4u && config[3] >= 0 && config[3] < MELEE_PS5_OUTPUT_OPTION_COUNT)
+            g_melee_ps5_output_option = config[3];
     }
     fclose(file);
 }
 
 static void resolution_config_save(void)
 {
-    const s32 config[3] = { (s32) PS5_RESOLUTION_CONFIG_MAGIC,
+    const s32 config[4] = { (s32) PS5_RESOLUTION_CONFIG_MAGIC,
                             g_melee_vita_menu_resolution_option,
-                            g_melee_vita_gameplay_resolution_option };
+                            g_melee_vita_gameplay_resolution_option,
+                            g_melee_ps5_output_option };
     FILE* file = fopen(PS5_RESOLUTION_CONFIG_PATH, "wb");
     if (file == NULL) return;
     fwrite(config, sizeof(config), 1u, file);
@@ -646,9 +660,10 @@ bool melee_vita_gxm_apply_resolution_options(void)
 {
     /* Takes effect at the next frame boundary (present). */
     resolution_config_save();
-    melee_ps5_log("[GL] resolution options: menu x%u, match x%u",
+    melee_ps5_log("[GL] resolution options: menu x%u, match x%u, output %dp (next launch)",
                   ps5_scale_for_option(g_melee_vita_menu_resolution_option),
-                  ps5_scale_for_option(g_melee_vita_gameplay_resolution_option));
+                  ps5_scale_for_option(g_melee_vita_gameplay_resolution_option),
+                  k_output_modes[g_melee_ps5_output_option][1]);
     return true;
 }
 #endif
@@ -1226,6 +1241,17 @@ int melee_vita_gxm_init(void)
     mkdir("/download0/shadercache", 0777);
     setenv("PS5_SHADER_CACHE_DIR", "/download0/shadercache", 1);
     s_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
+    resolution_config_load();
+    g_melee_ps5_active_output_option = g_melee_ps5_output_option;
+    if (s_display != EGL_NO_DISPLAY &&
+        !eglSetDisplayModePS5(s_display, k_output_modes[g_melee_ps5_output_option][0],
+                              k_output_modes[g_melee_ps5_output_option][1])) {
+        melee_ps5_log("[GL] output mode %dp refused (0x%04x); using 1080p",
+                      k_output_modes[g_melee_ps5_output_option][1], (unsigned) eglGetError());
+        g_melee_ps5_active_output_option = 0;
+    }
+#endif
     if (s_display == EGL_NO_DISPLAY || !eglInitialize(s_display, &major, &minor) ||
         !eglBindAPI(EGL_OPENGL_API) ||
         !eglChooseConfig(s_display, config_attributes, &config, 1, &count) || count != 1) {
@@ -1250,7 +1276,6 @@ int melee_vita_gxm_init(void)
     glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
 
 #ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
-    resolution_config_load();
     s_efb_scale = ps5_scale_for_option(g_melee_vita_menu_resolution_option);
 #endif
     s_efb.width = VITA_W * s_efb_scale;

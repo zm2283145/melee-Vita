@@ -819,8 +819,10 @@ enum {
 #ifdef TARGET_PS5
 #define MN_PLATFORM_OPTIONS_TITLE "PS5 OPTIONS"
 #define MN_PLATFORM_OPTIONS_DESCRIPTION "Adjust PS5 Options"
-#define MN_PLATFORM_OUTPUT_TEXT "%s RENDER  /  1920 x 1080 OUTPUT"
-#define MN_PLATFORM_RESOLUTION_HELP "HIGHER SETTINGS SUPERSAMPLE TO THE 1080P OUTPUT"
+#define MN_PLATFORM_OUTPUT_TEXT "%s RENDER  /  %s OUTPUT"
+#define MN_PLATFORM_RESOLUTION_HELP "OUTPUT CHANGES APPLY THE NEXT TIME THE GAME STARTS"
+#define MN_DISPLAY_CLOSE_ROW 3
+#define MN_PLATFORM_HELP_Y 560.0f
 #define MN_PLATFORM_CAPTURE_TEXT "PRESS A PS5 BUTTON FOR: %s"
 #define MN_PLATFORM_DISPLAY_FOOTER "L1/R1 PAGE   STICK/D-PAD MOVE   CROSS/CIRCLE CLOSE"
 #define MN_PLATFORM_CAPTURE_FOOTER "ANY PS5 BUTTON OK   TOUCH PAD + OPTIONS CANCEL"
@@ -830,6 +832,8 @@ enum {
 #define MN_PLATFORM_OPTIONS_TITLE "VITA OPTIONS"
 #define MN_PLATFORM_OPTIONS_DESCRIPTION "Adjust Vita Options"
 #define MN_PLATFORM_OUTPUT_TEXT "%s INTERNAL  /  960 x 544 OUTPUT"
+#define MN_DISPLAY_CLOSE_ROW 2
+#define MN_PLATFORM_HELP_Y 510.0f
 #define MN_PLATFORM_RESOLUTION_HELP \
     "VIDEOS, VITA UI, AND SCREEN OUTPUT ALWAYS STAY NATIVE"
 #define MN_PLATFORM_CAPTURE_TEXT "PRESS A VITA BUTTON FOR: %s"
@@ -906,6 +910,28 @@ static char const* mn_VitaResolutionDimensions(int option)
     }
     return dimensions[option];
 }
+
+#ifdef TARGET_PS5
+static char const* mn_Ps5OutputName(int option)
+{
+    static char const* const names[MELEE_PS5_OUTPUT_OPTION_COUNT] = {
+        "1080P", "1440P", "2160P (4K)"
+    };
+    if (option < 0 || option >= MELEE_PS5_OUTPUT_OPTION_COUNT)
+        return "1080P";
+    return names[option];
+}
+
+static char const* mn_Ps5OutputDimensions(int option)
+{
+    static char const* const dimensions[MELEE_PS5_OUTPUT_OPTION_COUNT] = {
+        "1920 x 1080", "2560 x 1440", "3840 x 2160"
+    };
+    if (option < 0 || option >= MELEE_PS5_OUTPUT_OPTION_COUNT)
+        return "1920 x 1080";
+    return dimensions[option];
+}
+#endif
 
 static char const* mn_VitaPhysicalButtonName(int button)
 {
@@ -994,7 +1020,11 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
             mn_VitaResolutionScaleName(g_melee_vita_menu_resolution_option));
         HSD_SisLib_803A6B98(
             text, 120.0f, 278.0f, MN_PLATFORM_OUTPUT_TEXT,
-            mn_VitaResolutionDimensions(g_melee_vita_menu_resolution_option));
+            mn_VitaResolutionDimensions(g_melee_vita_menu_resolution_option)
+#ifdef TARGET_PS5
+            , mn_Ps5OutputDimensions(g_melee_ps5_active_output_option)
+#endif
+            );
         gameplay_entry = HSD_SisLib_803A6B98(
             text, 80.0f, 358.0f, "%s GAMEPLAY",
             data->vita_resolution_row == 1 ? ">" : " ");
@@ -1005,9 +1035,29 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
         HSD_SisLib_803A6B98(
             text, 120.0f, 408.0f, MN_PLATFORM_OUTPUT_TEXT,
             mn_VitaResolutionDimensions(
-                g_melee_vita_gameplay_resolution_option));
+                g_melee_vita_gameplay_resolution_option)
+#ifdef TARGET_PS5
+            , mn_Ps5OutputDimensions(g_melee_ps5_active_output_option)
+#endif
+            );
+#ifdef TARGET_PS5
+        {
+            int const output_entry = HSD_SisLib_803A6B98(
+                text, 80.0f, 458.0f, "%s VIDEO OUTPUT",
+                data->vita_resolution_row == 2 ? ">" : " ");
+            int const output_buttons = HSD_SisLib_803A6B98(
+                text, 720.0f, 458.0f, "[ - ]     %s     [ + ]",
+                mn_Ps5OutputName(g_melee_ps5_output_option));
+            HSD_SisLib_803A74F0(
+                text, output_entry,
+                (GXColor*) (data->vita_resolution_row == 2 ? &selected_color
+                                                           : &normal_color));
+            HSD_SisLib_803A74F0(
+                text, output_buttons, (GXColor*) &button_color);
+        }
+#endif
         help_entry = HSD_SisLib_803A6B98(
-            text, 70.0f, 510.0f,
+            text, 70.0f, MN_PLATFORM_HELP_Y,
             MN_PLATFORM_RESOLUTION_HELP);
         menu_color =
             data->vita_resolution_row == 0 ? &selected_color : &normal_color;
@@ -1084,7 +1134,7 @@ static void mn_VitaOptionsDraw(MainMenuData* data)
         text, close_entry,
         (GXColor*) (data->vita_resolution_row ==
                             (data->vita_options_page == 0
-                                 ? 2
+                                 ? MN_DISPLAY_CLOSE_ROW
                                  : MELEE_VITA_ACTION_COUNT + 1)
                         ? &selected_color
                         : &button_color));
@@ -1304,7 +1354,7 @@ static bool mn_VitaOptionsHandleInput(void)
                 sfxBack();
                 mn_VitaOptionsClose(data);
             }
-        } else if (data->vita_resolution_row == 2) {
+        } else if (data->vita_resolution_row == MN_DISPLAY_CLOSE_ROW) {
             sfxBack();
             mn_VitaOptionsClose(data);
         } else {
@@ -1331,7 +1381,7 @@ static bool mn_VitaOptionsHandleInput(void)
     }
 
     row_count = data->vita_options_page == 0
-                    ? 3
+                    ? MN_DISPLAY_CLOSE_ROW + 1
                     : MELEE_VITA_ACTION_COUNT + 2;
     if (repeated_directions & PAD_ANY_UP) {
         data->vita_resolution_row =
@@ -1355,6 +1405,18 @@ static bool mn_VitaOptionsHandleInput(void)
     if (data->vita_options_page == 1) {
         return true;
     }
+#ifdef TARGET_PS5
+    if (data->vita_resolution_row == 2) {
+        g_melee_ps5_output_option =
+            (g_melee_ps5_output_option + direction +
+             MELEE_PS5_OUTPUT_OPTION_COUNT) %
+            MELEE_PS5_OUTPUT_OPTION_COUNT;
+        melee_vita_gxm_apply_resolution_options();
+        sfxMove();
+        mn_VitaOptionsDraw(data);
+        return true;
+    }
+#endif
     if (data->vita_resolution_row >= 2) {
         return true;
     }

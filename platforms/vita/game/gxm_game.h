@@ -50,6 +50,12 @@ void melee_vita_gxm_shutdown(void);
 extern int g_melee_vita_menu_resolution_option;
 extern int g_melee_vita_gameplay_resolution_option;
 bool melee_vita_gxm_apply_resolution_options(void);
+#ifdef TARGET_PS5
+/* Video output mode: 0 = 1080p, 1 = 1440p, 2 = 2160p (next launch). */
+#define MELEE_PS5_OUTPUT_OPTION_COUNT 3
+extern int g_melee_ps5_output_option;
+extern int g_melee_ps5_active_output_option;
+#endif
 #endif
 void melee_vita_gxm_draw_triangles(const MeleeVitaScreenVertex* vertices,
                                    u32 count,

@@ -28,11 +28,24 @@
 #define AX_FORMAT_PCM16 10
 #define AX_FORMAT_PCM8 25
 
+/* What the AX setters changed since the last frame went to the mixer. */
+enum {
+    SYNC_ADDR = 1 << 0,  /* loop, end and current address, history cleared */
+    SYNC_LOOP = 1 << 1,
+    SYNC_END = 1 << 2,
+    SYNC_CUR = 1 << 3,
+    SYNC_ADPCM = 1 << 4, /* predictor and history */
+    SYNC_SRC = 1 << 5,   /* resampler position */
+    SYNC_VOL = 1 << 6,   /* current volume */
+    SYNC_STATE = 1 << 7, /* state written: a finished voice may play again */
+    SYNC_NEW = 0xFF,     /* AXAcquireVoice */
+};
+
+/* Game thread side of a voice. The decode fields hold what the setters
+ * last asked for; the mixer keeps its own running copy (MixerVoice). */
 typedef struct VitaVoice {
     AXVPB voice;
     GXBool used;
-    s16 previous_sample;
-    s16 current_sample;
     u32 fraction;
     u16 predictor_scale;
     s32 yn1;
@@ -40,6 +53,10 @@ typedef struct VitaVoice {
     u32 loop_address;
     u32 end_address;
     u32 current_address;
+    u16 sync;        /* SYNC_* not yet sent to the mixer */
+    u32 addr_frame;  /* first mix frame with the latest address write */
+    u32 vol_frame;   /* ... volume write */
+    u32 state_frame; /* ... state write */
 } VitaVoice;
 
 typedef struct VitaArqJob {
@@ -69,9 +86,76 @@ static void* (*s_fx_alloc)(size_t);
 static void (*s_fx_free)(void*);
 static int s_audio_port = -1;
 
+/* Mixing runs on its own thread, off the game thread. The game thread still
+ * owns every AX voice and runs the synth callback once per 5 ms AX frame,
+ * then hands the mixer a copy of the voices (a MixFrame). The mixer decodes
+ * and mixes it into the output ring and reports back where each voice got
+ * to, so the synth sees positions and finished voices about a frame late,
+ * as it did with the GameCube's DSP. */
+typedef struct MixVoice {
+    u8 index;
+    u8 sync;
+    u16 state;
+    u16 format;
+    u16 loop_flag;
+    u16 coef[8][2];
+    u16 loop_pred_scale;
+    u16 loop_yn1;
+    u16 loop_yn2;
+    u32 ratio;
+    s16 delta;
+    u16 left;
+    u16 right;
+    u16 volume; /* with SYNC_VOL */
+    u32 loop_address, end_address, current_address, fraction;
+    u16 predictor_scale;
+    s32 yn1, yn2;
+} MixVoice;
+
+typedef struct MixFrame {
+    u32 index;
+    u32 count;
+    MixVoice voice[VITA_AX_VOICES];
+} MixFrame;
+
+/* the mixer's running decode state */
+typedef struct MixerVoice {
+    s16 previous_sample;
+    s16 current_sample;
+    u32 fraction;
+    u16 predictor_scale;
+    s32 yn1;
+    s32 yn2;
+    u32 loop_address;
+    u32 end_address;
+    u32 current_address;
+    s32 volume;
+    GXBool ended;
+} MixerVoice;
+
+/* mixer -> game, per voice. seq is odd while it's being written. */
+typedef struct MixReport {
+    volatile u32 seq;
+    u32 frame;
+    u32 address;
+    u16 volume;
+    u8 ended;
+} MixReport;
+
+#define VITA_MIX_FRAMES 32u
+static MixFrame* s_mix_frames;
+static volatile u32 s_mix_read;  /* advanced by the mixer */
+static volatile u32 s_mix_write; /* advanced by the game thread */
+static u32 s_mix_next = 1;       /* index of the next frame built (0 = none) */
+static MixerVoice s_mixer[VITA_AX_VOICES];
+static MixReport s_reports[VITA_AX_VOICES];
+static SceUID s_mix_thread = -1;
+static SceUID s_mix_sema = -1;
+static volatile int s_mix_running;
+
 /* Audio output runs on its own thread so a slow game frame never starves
- * SceAudioOut.  The game thread still runs the AX callback and mixing (all
- * AX state stays single-threaded) and keeps a ring buffer ~100 ms ahead. */
+ * SceAudioOut.  The game thread runs the AX callback, the mixer thread
+ * (below) mixes, and together they keep a ring buffer ~250 ms ahead. */
 #define VITA_RING_FRAMES 16384u
 #define VITA_RING_TARGET 8000u
 #define VITA_RING_MAX_RENDER 256u
@@ -131,11 +215,10 @@ static s16 clamp_s16(s64 value)
     return value > 32767 ? 32767 : value < -32768 ? -32768 : (s16) value;
 }
 
-static GXBool next_sample(VitaVoice* voice, s16* output)
+static GXBool next_sample(MixerVoice* voice, const MixVoice* params, s16* output)
 {
-    AXPB* pb = &voice->voice.pb;
-    const u16 format = pb->addr.format;
-    if (pb->state == 0 || s_aram == NULL) return GX_FALSE;
+    const u16 format = params->format;
+    if (s_aram == NULL) return GX_FALSE;
     switch (format) {
     case AX_FORMAT_ADPCM: {
         if ((voice->current_address & 15u) == 0) {
@@ -152,8 +235,8 @@ static GXBool next_sample(VitaVoice* voice, s16* output)
         const s32 scale = 1 << (voice->predictor_scale & 15u);
         if (nibble >= 8) nibble -= 16;
         const s64 decoded = (s64) nibble * scale * 2048 + 1024 +
-            (s64) (s16) pb->adpcm.a[coefficient][0] * voice->yn1 +
-            (s64) (s16) pb->adpcm.a[coefficient][1] * voice->yn2;
+            (s64) (s16) params->coef[coefficient][0] * voice->yn1 +
+            (s64) (s16) params->coef[coefficient][1] * voice->yn2;
         const s16 sample = clamp_s16(decoded >> 11);
         voice->yn2 = voice->yn1;
         voice->yn1 = sample;
@@ -175,15 +258,15 @@ static GXBool next_sample(VitaVoice* voice, s16* output)
         return GX_FALSE;
     }
     if (voice->current_address == voice->end_address) {
-        if (pb->addr.loopFlag != 0) {
+        if (params->loop_flag != 0) {
             voice->current_address = voice->loop_address;
             if (format == AX_FORMAT_ADPCM) {
-                voice->predictor_scale = pb->adpcmLoop.loop_pred_scale;
-                voice->yn1 = (s16) pb->adpcmLoop.loop_yn1;
-                voice->yn2 = (s16) pb->adpcmLoop.loop_yn2;
+                voice->predictor_scale = params->loop_pred_scale;
+                voice->yn1 = (s16) params->loop_yn1;
+                voice->yn2 = (s16) params->loop_yn2;
             }
         } else {
-            pb->state = 0;
+            voice->ended = GX_TRUE;
         }
     } else {
         ++voice->current_address;
@@ -191,24 +274,20 @@ static GXBool next_sample(VitaVoice* voice, s16* output)
     return GX_TRUE;
 }
 
-static void mix_voice(VitaVoice* voice, float* mix)
+static void mix_voice(MixerVoice* voice, const MixVoice* params, float* mix)
 {
-    AXPB* pb = &voice->voice.pb;
-    const u32 ratio = pair(pb->src.ratioHi, pb->src.ratioLo);
-    s32 volume = pb->ve.currentVolume;
-    const s32 delta = pb->ve.currentDelta;
-    const float left = pb->mix.vL / 32767.0f;
-    const float right = pb->mix.vR / 32767.0f;
+    const float left = params->left / 32767.0f;
+    const float right = params->right / 32767.0f;
+    s32 volume = voice->volume;
     u32 sample;
     for (sample = 0; sample < VITA_AX_FRAME; ++sample) {
-        voice->fraction += ratio;
+        voice->fraction += params->ratio;
         while (voice->fraction >= 0x10000u) {
             s16 decoded;
-            if (!next_sample(voice, &decoded)) {
-                pb->state = 0;
-                set_pair(&pb->addr.currentAddressHi,
-                         &pb->addr.currentAddressLo, voice->current_address);
-                pb->ve.currentVolume = (u16) volume;
+            // a voice that ended plays out the rest of this frame as silence
+            if (voice->ended || !next_sample(voice, params, &decoded)) {
+                voice->ended = GX_TRUE;
+                voice->volume = volume;
                 return;
             }
             voice->previous_sample = voice->current_sample;
@@ -221,40 +300,172 @@ static void mix_voice(VitaVoice* voice, float* mix)
             (1.0f / 32768.0f) * ((float) volume / 32767.0f);
         mix[sample * 2u] += value * left;
         mix[sample * 2u + 1u] += value * right;
-        volume += delta;
+        volume += params->delta;
         if (volume < 0) volume = 0;
         else if (volume > 32767) volume = 32767;
     }
-    pb->ve.currentVolume = (u16) volume;
-    set_pair(&pb->addr.currentAddressHi, &pb->addr.currentAddressLo,
-             voice->current_address);
+    voice->volume = volume;
 }
 
-static void render_audio_frame(s16* output)
+/* Mixer side: apply what the game changed, mix, report back. */
+static void mix_frame(const MixFrame* frame, s16* output)
 {
-    static GXBool logged_running_voice;
     float mix[VITA_AX_FRAME * 2] = { 0 };
     u32 i;
-    if (s_ax_callback != NULL) s_ax_callback();
-    for (i = 0; i < VITA_AX_VOICES; ++i) {
-        if (s_voices[i].used && s_voices[i].voice.pb.state != 0) {
-            if (!logged_running_voice) {
-                melee_vita_log_info(
-                    "[AUDIO] first AX voice: format=%u ratio=%u volume=%u",
-                    s_voices[i].voice.pb.addr.format,
-                    pair(s_voices[i].voice.pb.src.ratioHi,
-                         s_voices[i].voice.pb.src.ratioLo),
-                    s_voices[i].voice.pb.ve.currentVolume);
-                logged_running_voice = GX_TRUE;
-            }
-            mix_voice(&s_voices[i], mix);
+    for (i = 0; i < frame->count; ++i) {
+        const MixVoice* params = &frame->voice[i];
+        MixerVoice* voice = &s_mixer[params->index];
+        MixReport* report = &s_reports[params->index];
+        if (params->sync & SYNC_ADDR) {
+            voice->previous_sample = voice->current_sample = 0;
+            voice->current_address = params->current_address;
+            voice->loop_address = params->loop_address;
+            voice->end_address = params->end_address;
+            voice->ended = GX_FALSE;
         }
+        if (params->sync & SYNC_LOOP) voice->loop_address = params->loop_address;
+        if (params->sync & SYNC_END) voice->end_address = params->end_address;
+        if (params->sync & SYNC_CUR) {
+            voice->current_address = params->current_address;
+            voice->ended = GX_FALSE;
+        }
+        if (params->sync & (SYNC_ADDR | SYNC_SRC)) voice->fraction = params->fraction;
+        if (params->sync & SYNC_ADPCM) {
+            voice->predictor_scale = params->predictor_scale;
+            voice->yn1 = params->yn1;
+            voice->yn2 = params->yn2;
+        }
+        if (params->sync & SYNC_VOL) voice->volume = params->volume;
+        if (params->sync & SYNC_STATE) voice->ended = GX_FALSE;
+        if (params->state != 0 && !voice->ended) mix_voice(voice, params, mix);
+
+        __atomic_add_fetch(&report->seq, 1u, __ATOMIC_ACQ_REL);
+        report->frame = frame->index;
+        report->address = voice->current_address;
+        report->volume = (u16) voice->volume;
+        report->ended = voice->ended;
+        __atomic_add_fetch(&report->seq, 1u, __ATOMIC_ACQ_REL);
     }
     for (i = 0; i < VITA_AX_FRAME * 2u; ++i) {
         float value = mix[i] * 32767.0f;
         output[i] = value > 32767.0f ? 32767 :
                     value < -32768.0f ? -32768 : (s16) value;
     }
+}
+
+/* Game thread: take what the mixer reported, unless the game wrote that
+ * field again after the frame the report is from. */
+static void apply_reports(void)
+{
+    u32 i;
+    for (i = 0; i < VITA_AX_VOICES; ++i) {
+        VitaVoice* voice = &s_voices[i];
+        const MixReport* report = &s_reports[i];
+        u32 seq, frame, address;
+        u16 volume;
+        u8 ended;
+        if (!voice->used) continue;
+        seq = __atomic_load_n(&report->seq, __ATOMIC_ACQUIRE);
+        if (seq & 1u) continue; // being written, next time
+        frame = report->frame;
+        address = report->address;
+        volume = report->volume;
+        ended = report->ended;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE); // the reads above stay above
+        if (__atomic_load_n(&report->seq, __ATOMIC_ACQUIRE) != seq || frame == 0)
+            continue;
+        if (frame >= voice->addr_frame)
+            set_pair(&voice->voice.pb.addr.currentAddressHi,
+                     &voice->voice.pb.addr.currentAddressLo, address);
+        if (frame >= voice->vol_frame) voice->voice.pb.ve.currentVolume = volume;
+        if (ended && frame >= voice->state_frame) voice->voice.pb.state = 0;
+    }
+}
+
+/* Game thread: run one AX frame of the synth and copy the voices out. */
+static void build_frame(MixFrame* frame)
+{
+    static GXBool logged_running_voice;
+    u32 i;
+    apply_reports();
+    if (s_ax_callback != NULL) s_ax_callback();
+    frame->index = s_mix_next++;
+    frame->count = 0;
+    for (i = 0; i < VITA_AX_VOICES; ++i) {
+        VitaVoice* voice = &s_voices[i];
+        const AXPB* pb = &voice->voice.pb;
+        MixVoice* out;
+        u32 k;
+        if (!voice->used && voice->sync == 0) continue;
+        if (voice->used && pb->state != 0 && !logged_running_voice) {
+            melee_vita_log_info(
+                "[AUDIO] first AX voice: format=%u ratio=%u volume=%u",
+                pb->addr.format, pair(pb->src.ratioHi, pb->src.ratioLo),
+                pb->ve.currentVolume);
+            logged_running_voice = GX_TRUE;
+        }
+        out = &frame->voice[frame->count++];
+        out->index = (u8) i;
+        out->sync = (u8) voice->sync;
+        out->state = voice->used ? pb->state : 0;
+        out->format = pb->addr.format;
+        out->loop_flag = pb->addr.loopFlag;
+        for (k = 0; k < 8; ++k) {
+            out->coef[k][0] = pb->adpcm.a[k][0];
+            out->coef[k][1] = pb->adpcm.a[k][1];
+        }
+        out->loop_pred_scale = pb->adpcmLoop.loop_pred_scale;
+        out->loop_yn1 = pb->adpcmLoop.loop_yn1;
+        out->loop_yn2 = pb->adpcmLoop.loop_yn2;
+        out->ratio = pair(pb->src.ratioHi, pb->src.ratioLo);
+        out->delta = pb->ve.currentDelta;
+        out->left = pb->mix.vL;
+        out->right = pb->mix.vR;
+        out->volume = pb->ve.currentVolume;
+        out->loop_address = voice->loop_address;
+        out->end_address = voice->end_address;
+        out->current_address = voice->current_address;
+        out->fraction = voice->fraction;
+        out->predictor_scale = voice->predictor_scale;
+        out->yn1 = voice->yn1;
+        out->yn2 = voice->yn2;
+        voice->sync = 0;
+    }
+}
+
+#ifndef TARGET_PS5
+static int audio_mix_thread(SceSize args, void* argp)
+{
+    static s16 ax_frame[VITA_AX_FRAME * 2] __attribute__((aligned(64)));
+    (void) args;
+    (void) argp;
+    while (__atomic_load_n(&s_mix_running, __ATOMIC_ACQUIRE)) {
+        const u32 read = s_mix_read;
+        u32 write, i;
+        if (read == __atomic_load_n(&s_mix_write, __ATOMIC_ACQUIRE)) {
+            sceKernelWaitSema(s_mix_sema, 1, NULL);
+            continue;
+        }
+        mix_frame(&s_mix_frames[read % VITA_MIX_FRAMES], ax_frame);
+        write = __atomic_load_n(&s_ring_write, __ATOMIC_ACQUIRE);
+        for (i = 0; i < VITA_AX_FRAME; ++i) {
+            const u32 slot = (write + i) % VITA_RING_FRAMES;
+            s_ring[slot * 2u] = ax_frame[i * 2u];
+            s_ring[slot * 2u + 1u] = ax_frame[i * 2u + 1u];
+        }
+        __atomic_add_fetch(&s_ring_write, VITA_AX_FRAME, __ATOMIC_RELEASE);
+        __atomic_store_n(&s_mix_read, read + 1u, __ATOMIC_RELEASE);
+    }
+    return 0;
+}
+#endif
+
+/* Without the mixer thread: synth and mix in one go, as before. */
+static void render_audio_frame(s16* output)
+{
+    static MixFrame frame;
+    build_frame(&frame);
+    mix_frame(&frame, output);
 }
 
 u8* aurora_aram_base(void) { return s_aram; }
@@ -360,11 +571,38 @@ void AXInit(void)
                 sceKernelStartThread(s_audio_thread, 0, NULL);
             melee_vita_log_info("[AUDIO] output thread=%d", s_audio_thread);
         }
+#ifndef TARGET_PS5
+        /* Mixer: cores 1-2, below the render and GX submit threads, so it
+         * only takes time they don't use. The ring has ~250 ms of slack.
+         * PS5 keeps mixing on the game thread. */
+        if (s_audio_thread >= 0 && s_mix_thread < 0) {
+            s_mix_frames = malloc(VITA_MIX_FRAMES * sizeof(MixFrame));
+            s_mix_sema = sceKernelCreateSema("melee audio mix", 0, 0, 0x7fffffff, NULL);
+            if (s_mix_frames != NULL && s_mix_sema >= 0) {
+                s_mix_running = 1;
+                s_mix_thread = sceKernelCreateThread(
+                    "melee audio mix", audio_mix_thread, 0x10000100 + 4, 0x10000, 0,
+                    SCE_KERNEL_CPU_MASK_USER_1 | SCE_KERNEL_CPU_MASK_USER_2, NULL);
+                if (s_mix_thread >= 0 && sceKernelStartThread(s_mix_thread, 0, NULL) < 0) {
+                    sceKernelDeleteThread(s_mix_thread);
+                    s_mix_thread = -1;
+                }
+            }
+            melee_vita_log_info("[AUDIO] mixer thread=%d", s_mix_thread);
+        }
+#endif
     }
 }
 
 void AXQuit(void)
 {
+    if (s_mix_thread >= 0) {
+        __atomic_store_n(&s_mix_running, 0, __ATOMIC_RELEASE);
+        sceKernelSignalSema(s_mix_sema, 1);
+        sceKernelWaitThreadEnd(s_mix_thread, NULL, NULL);
+        sceKernelDeleteThread(s_mix_thread);
+        s_mix_thread = -1;
+    }
     if (s_audio_thread >= 0) {
         __atomic_store_n(&s_audio_thread_running, 0, __ATOMIC_RELEASE);
         sceKernelWaitThreadEnd(s_audio_thread, NULL, NULL);
@@ -375,6 +613,17 @@ void AXQuit(void)
         sceAudioOutReleasePort(s_audio_port);
         s_audio_port = -1;
     }
+}
+
+/* A setter changed something the mixer needs; the address, volume and
+ * state writes also make older mixer reports for them stale. */
+static void touch(AXVPB* p, u16 sync)
+{
+    VitaVoice* voice = (VitaVoice*) p;
+    voice->sync |= sync;
+    if (sync & (SYNC_ADDR | SYNC_CUR)) voice->addr_frame = s_mix_next;
+    if (sync & SYNC_VOL) voice->vol_frame = s_mix_next;
+    if (sync & (SYNC_ADDR | SYNC_CUR | SYNC_STATE)) voice->state_frame = s_mix_next;
 }
 
 AXVPB* AXAcquireVoice(u32 priority, void (*callback)(void*), u32 user_context)
@@ -401,6 +650,7 @@ AXVPB* AXAcquireVoice(u32 priority, void (*callback)(void*), u32 user_context)
     selected->voice.priority = (int) priority;
     selected->voice.callback = callback;
     selected->voice.userContext = user_context;
+    touch(&selected->voice, SYNC_NEW);
     return &selected->voice;
 }
 
@@ -409,6 +659,7 @@ void AXFreeVoice(AXVPB* voice)
     if (voice == NULL) return;
     ((VitaVoice*) voice)->used = GX_FALSE;
     voice->pb.state = 0;
+    touch(voice, SYNC_STATE);
 }
 
 void AXRegisterCallback(void (*callback)(void)) { s_ax_callback = callback; }
@@ -417,12 +668,12 @@ void AXRegisterAuxACallback(void (*callback)(void*, void*), void* context)
 void AXRegisterAuxBCallback(void (*callback)(void*, void*), void* context)
 { s_aux_b_callback = callback; s_aux_b_context = context; }
 void AXSetVoicePriority(AXVPB* p, u32 v) { if (p) p->priority = (int) v; }
-void AXSetVoiceState(AXVPB* p, u16 v) { if (p) p->pb.state = v; }
+void AXSetVoiceState(AXVPB* p, u16 v) { if (p) { p->pb.state = v; touch(p, SYNC_STATE); } }
 void AXSetVoiceMix(AXVPB* p, AXPBMIX* v) { if (p && v) p->pb.mix = *v; }
 void AXSetVoiceItdOn(AXVPB* p) { if (p) p->pb.itd.flag = 1; }
 void AXSetVoiceItdTarget(AXVPB* p, u16 l, u16 r)
 { if (p) { p->pb.itd.targetShiftL = l; p->pb.itd.targetShiftR = r; } }
-void AXSetVoiceVe(AXVPB* p, AXPBVE* v) { if (p && v) p->pb.ve = *v; }
+void AXSetVoiceVe(AXVPB* p, AXPBVE* v) { if (p && v) { p->pb.ve = *v; touch(p, SYNC_VOL); } }
 void AXSetVoiceVeDelta(AXVPB* p, s16 v) { if (p) p->pb.ve.currentDelta = v; }
 void AXSetVoiceAdpcm(AXVPB* p, AXPBADPCM* value)
 {
@@ -440,6 +691,7 @@ void AXSetVoiceAdpcm(AXVPB* p, AXPBADPCM* value)
     voice->predictor_scale = p->pb.adpcm.pred_scale;
     voice->yn1 = (s16) p->pb.adpcm.yn1;
     voice->yn2 = (s16) p->pb.adpcm.yn2;
+    touch(p, SYNC_ADPCM);
 }
 void AXSetVoiceAdpcmLoop(AXVPB* p, AXPBADPCMLOOP* value)
 {
@@ -454,6 +706,7 @@ void AXSetVoiceSrc(AXVPB* p, AXPBSRC* value)
     if (p == NULL || value == NULL) return;
     p->pb.src = *value;
     voice->fraction = value->currentAddressFrac;
+    touch(p, SYNC_SRC);
 }
 void AXSetVoiceSrcRatio(AXVPB* p, float ratio)
 { if (p) { u32 fixed = (u32) (ratio * 65536.0f); p->pb.src.ratioHi = fixed >> 16; p->pb.src.ratioLo = fixed; } }
@@ -477,17 +730,16 @@ void AXSetVoiceAddr(AXVPB* p, AXPBADDR* value)
     voice->current_address = pair(p->pb.addr.currentAddressHi,
                                   p->pb.addr.currentAddressLo);
     voice->fraction = 0;
-    voice->previous_sample = 0;
-    voice->current_sample = 0;
+    touch(p, SYNC_ADDR);
 }
 
 void AXSetVoiceLoop(AXVPB* p, u16 value) { if (p) p->pb.addr.loopFlag = value; }
 void AXSetVoiceLoopAddr(AXVPB* p, u32 value)
-{ if (p) { ((VitaVoice*) p)->loop_address = value; set_pair(&p->pb.addr.loopAddressHi, &p->pb.addr.loopAddressLo, value); } }
+{ if (p) { ((VitaVoice*) p)->loop_address = value; set_pair(&p->pb.addr.loopAddressHi, &p->pb.addr.loopAddressLo, value); touch(p, SYNC_LOOP); } }
 void AXSetVoiceEndAddr(AXVPB* p, u32 value)
-{ if (p) { ((VitaVoice*) p)->end_address = value; set_pair(&p->pb.addr.endAddressHi, &p->pb.addr.endAddressLo, value); } }
+{ if (p) { ((VitaVoice*) p)->end_address = value; set_pair(&p->pb.addr.endAddressHi, &p->pb.addr.endAddressLo, value); touch(p, SYNC_END); } }
 void AXSetVoiceCurrentAddr(AXVPB* p, u32 value)
-{ if (p) { ((VitaVoice*) p)->current_address = value; set_pair(&p->pb.addr.currentAddressHi, &p->pb.addr.currentAddressLo, value); } }
+{ if (p) { ((VitaVoice*) p)->current_address = value; set_pair(&p->pb.addr.currentAddressHi, &p->pb.addr.currentAddressLo, value); touch(p, SYNC_CUR); } }
 
 void melee_vita_audio_poll(void)
 {
@@ -499,10 +751,34 @@ void melee_vita_audio_poll(void)
     (void) output;
     (void) ax_frame_offset;
     (void) sample;
-    if (s_audio_port >= 0 && s_audio_thread >= 0) {
-        /* Render whole AX frames until the output thread has ~100 ms queued.
-         * AX's clock advances exactly once per 160 rendered samples, so music
-         * tempo stays correct regardless of the game's frame rate. */
+    if (s_audio_port >= 0 && s_audio_thread >= 0 && s_mix_thread >= 0) {
+        /* Hand the mixer whole AX frames until ~250 ms is queued between
+         * frames waiting and the output ring. AX's clock advances exactly
+         * once per frame, so music tempo doesn't depend on the frame rate. */
+        u32 rendered = 0;
+        const u64 mix_start = sceKernelGetProcessTimeWide();
+        static u32 last_underruns;
+        for (;;) {
+            const u32 queued = s_mix_write - __atomic_load_n(&s_mix_read, __ATOMIC_ACQUIRE);
+            if (queued >= VITA_MIX_FRAMES || rendered >= VITA_RING_MAX_RENDER ||
+                ring_fill() + (queued + 1u) * VITA_AX_FRAME > VITA_RING_TARGET)
+                break;
+            build_frame(&s_mix_frames[s_mix_write % VITA_MIX_FRAMES]);
+            __atomic_store_n(&s_mix_write, s_mix_write + 1u, __ATOMIC_RELEASE);
+            sceKernelSignalSema(s_mix_sema, 1);
+            ++rendered;
+        }
+        apply_reports(); // finished voices show up for the game's own logic too
+        {
+            extern void melee_vita_prof_add(int zone, u64 us);
+            melee_vita_prof_add(10 /* audio_mix */, sceKernelGetProcessTimeWide() - mix_start);
+        }
+        if (s_audio_underruns != last_underruns && (s_audio_underruns % 50u) == 1u) {
+            melee_vita_log_info("[AUDIO] underruns=%u", s_audio_underruns);
+        }
+        last_underruns = s_audio_underruns;
+    } else if (s_audio_port >= 0 && s_audio_thread >= 0) {
+        /* No mixer thread: mix here, as before. */
         u32 rendered = 0;
         const u64 mix_start = sceKernelGetProcessTimeWide();
         static u32 last_underruns;

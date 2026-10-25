@@ -756,6 +756,26 @@ void grIzumi_801CCEA0(HSD_GObj* gobj, int renderpass)
     HSD_GObj* src_gobj;
     HSD_CObj* cobj;
 
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+    {
+        /* Vita: the reflection ends in a copy to an 80x60 texture, and copies
+         * only happen every "live screens" frames (gx.c). Skip the whole
+         * mirrored redraw (stage, fighters, effects) on the frames in
+         * between; the water keeps showing the last copy, as before. */
+        extern u32 g_melee_vita_copy_interval;
+        extern int g_melee_vita_potato_reflection;
+        extern u32 g_melee_vita_match_count;
+        static u32 calls, drawn_match;
+        // potato: with only the stage in it the reflection hardly changes,
+        // so draw it once per match
+        if (g_melee_vita_potato_reflection == 2 && drawn_match == g_melee_vita_match_count)
+            return;
+        drawn_match = g_melee_vita_match_count;
+        if (g_melee_vita_potato_reflection != 2 && g_melee_vita_copy_interval > 1 &&
+            calls++ % g_melee_vita_copy_interval != 0)
+            return;
+    }
+#endif
     if (refl->image != NULL) {
         cobj = GET_COBJ(gobj);
         ftDrawCommon_80081140();
@@ -787,6 +807,18 @@ void grIzumi_801CCEA0(HSD_GObj* gobj, int renderpass)
             gobj->gxlink_prios = 0x25;
             HSD_GObj_80390ED0(gobj, 3);
             Camera_80031074(0);
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+            {
+                // potato mode (graphics settings): the water only reflects
+                // the stage, not fighters, items or effects
+                extern int g_melee_vita_potato_reflection;
+                if (g_melee_vita_potato_reflection) {
+                    HSD_FogSet(0);
+                    HSD_CObjEndCurrent();
+                    goto copy;
+                }
+            }
+#endif
             gobj->gxlink_prios = 0x70;
             HSD_GObj_80390ED0(gobj, 7);
             HSD_FogSet(0);
@@ -794,6 +826,9 @@ void grIzumi_801CCEA0(HSD_GObj* gobj, int renderpass)
             HSD_GObj_80390ED0(gobj, 7);
             HSD_CObjEndCurrent();
         }
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+    copy:
+#endif
         lb_800122C8(refl->image, 0, 0, 1);
 #ifdef TARGET_PC
         /* Built from the projection actually submitted: the reflection was

@@ -69,7 +69,20 @@ void grDisplay_801C5B90(HSD_JObj* jobj, Mtx vmtx, u32 flags, u32 rendermode)
     }
 }
 
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+/* Potato mode (graphics settings) skips some decorative stage parts here
+ * (gfx_settings.c). */
+static void grDisplay_801C5DB0_impl(HSD_GObj* gobj, int code);
 void grDisplay_801C5DB0(HSD_GObj* gobj, int code)
+{
+    extern int melee_vita_stage_part_hidden(int part);
+    if (melee_vita_stage_part_hidden((int) GET_GROUND(gobj)->map_id)) return;
+    grDisplay_801C5DB0_impl(gobj, code);
+}
+static void grDisplay_801C5DB0_impl(HSD_GObj* gobj, int code)
+#else
+void grDisplay_801C5DB0(HSD_GObj* gobj, int code)
+#endif
 {
     Ground* gp;
     HSD_GObj* camgobj;

@@ -300,6 +300,7 @@ $platformSources = @(
     'platforms/vita/game/card.c',
     'platforms/vita/game/compat.c',
     'platforms/vita/game/dvd.c',
+    'platforms/vita/game/gfx_settings.c',
     'platforms/vita/game/gx.c',
     'platforms/vita/game/gx_bump.c',
     'platforms/vita/game/gx_render.c',
@@ -315,6 +316,7 @@ $platformSources = @(
     'platforms/vita/game/pc_stubs.c',
     'platforms/vita/game/jpeg_hw.c',
     'platforms/vita/game/profiler_live.c',
+    'platforms/vita/game/settings_app.c',
     'platforms/vita/game/thp.c',
     'platforms/vita/game/vi.c',
     'platforms/vita/game/widescreen.c'
@@ -443,7 +445,8 @@ $vpk = Join-Path $build 'SmashMeleevita.vpk'
 $link = @(
     '-fno-short-enums', '-Wl,-q', '-Wl,-z,nocopyreloc',
     '-Wl,--defsym=__sce_headroom=0x1000', '-Wl,--gc-sections',
-    '-Wl,--wrap=sceGxmBeginScene', '-Wl,--wrap=sceGxmCreateRenderTarget'
+    '-Wl,--wrap=sceGxmBeginScene', '-Wl,--wrap=sceGxmCreateRenderTarget',
+    '-Wl,--wrap=sceDisplayWaitVblankStart'
 ) + $platformObjects + @(
     '-Wl,--start-group', $gameArchive, '-Wl,--end-group'
 )
@@ -471,7 +474,7 @@ if ($EnableLiveProfiler) {
 $link += @(
     '-lSceCtrl_stub', '-lSceDisplay_stub', '-lSceAudio_stub', '-lSceJpeg_stub', '-lSceKernelThreadMgr_stub',
     '-lvita2d', '-lSceGxm_stub', '-lSceDisplay_stub', '-lSceAppMgr_stub',
-    '-lSceTouch_stub',
+    '-lSceTouch_stub', '-lScePower_stub', '-lScePgf_stub',
     '-lSceCommonDialog_stub', '-lm', '-lSceProcessmgr_stub',
     '-lSceSysmem_stub', '-lSceLibKernel_stub', '-lSceKernelModulemgr_stub', '-lSceSysmodule_stub',
     '-lvitashark', '-lSceShaccCgExt', '-ltaihen_stub', '-lSceShaccCg_stub_weak',
@@ -502,6 +505,7 @@ $vpkArguments = @(
     '-a', "$(Join-Path $livearea 'pic0.png')=sce_sys/pic0.png",
     '-a', "$(Join-Path $livearea 'bg.png')=sce_sys/livearea/contents/bg.png",
     '-a', "$(Join-Path $livearea 'startup.png')=sce_sys/livearea/contents/startup.png",
+    '-a', "$(Join-Path $livearea 'settings.png')=sce_sys/livearea/contents/settings.png",
     '-a', "$(Join-Path $livearea 'template.xml')=sce_sys/livearea/contents/template.xml",
     '-a', "$(Join-Path $PSScriptRoot 'homebrew_update.ini')=sce_sys/homebrew_update.ini",
     '-a', "$(Join-Path $PSScriptRoot 'shadercache/warm5.bin')=shadercache/warm5.bin"

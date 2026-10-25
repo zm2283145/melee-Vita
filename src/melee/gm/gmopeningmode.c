@@ -26,6 +26,13 @@
 #include <melee/vi/vi1201v2.h>
 #include <sysdolphin/baselib/random.h>
 
+#if defined(TARGET_VITA) && !defined(TARGET_PS5) && defined(MELEE_VITA_BENCHMARK)
+#include "bench.h"
+#include "gmscene.h"
+#include <sysdolphin/baselib/gobj.h>
+#include <sysdolphin/baselib/gobjproc.h>
+#endif
+
 struct gm_random_history {
     u8 pad0[2];
     u8 character_usage[0x1A];
@@ -434,6 +441,20 @@ void gm_SetupTitleDemo(void)
     gm_801BF684(gm_801641CC((u8) count));
     gm_GetRandomHistory()->stage_usage[count] += 1;
     gm_801BF6A8(HSD_Randi(4));
+#if defined(TARGET_VITA) && !defined(TARGET_PS5) && defined(MELEE_VITA_BENCHMARK)
+    // benchmark: same four fighters every time, stage from the bench list
+    if (melee_vita_bench_active()) {
+        static const s32 bench_fighters[4] = { CKind_Fox, CKind_Falco, CKind_Mars,
+                                               CKind_Captain };
+        for (i = 0; i < 4; i++) {
+            // 1v1 runs leave slots 3 and 4 empty
+            gm_801BF634(i, i < melee_vita_bench_players() ? bench_fighters[i] : ChKind_None);
+            gm_801BF65C(i, 0);
+        }
+        gm_801BF684(melee_vita_bench_stage());
+        gm_801BF6A8(1); // stock match, players get 99 stocks below
+    }
+#endif
 }
 
 void gm_PreloadTitleDemo(void)
@@ -476,6 +497,29 @@ void gm_PreloadTitleDemo(void)
 
 extern const f32 gm_804DAC88;
 
+#if defined(TARGET_VITA) && !defined(TARGET_PS5) && defined(MELEE_VITA_BENCHMARK)
+// Replaces the demo's own match proc (gm_80183218): no close-up camera, no
+// CPU level changes, ends the match when the benchmark is done with the
+// stage. START cancels the whole run.
+static void bench_match_proc(HSD_GObj* unused)
+{
+    int cancel = (gm_GetButtonsTriggered(PAD_MAX_CONTROLLERS) & HSD_PAD_START) != 0;
+    if (melee_vita_bench_match_tick(gm_801A4BA8(), cancel)) {
+        lbAudioAx_80024C84();
+        lbAudioAx_80023694();
+        gm_801A4B60();
+        // back to the title, which starts the next stage right away
+        gm_SetPendingGameMode(GM_TITLE);
+        gm_SetNewGameModePending();
+    }
+}
+
+static void bench_match_start(void)
+{
+    HSD_GObj_SetupProc(GObj_Create(0xF, 0x11, 0), bench_match_proc, 0x15);
+}
+#endif
+
 void onEnterVs(GameModeState* arg0)
 {
     StartMeleeData* md;
@@ -514,6 +558,17 @@ void onEnterVs(GameModeState* arg0)
             md->players[i].stocks = 99;
         }
     }
+#if defined(TARGET_VITA) && !defined(TARGET_PS5) && defined(MELEE_VITA_BENCHMARK)
+    if (melee_vita_bench_active()) {
+        md->rules.on_match_start = bench_match_start;
+        for (i = melee_vita_bench_players(); i < 4; i++) {
+            md->players[i].ckind = ChKind_None;
+            md->players[i].slot_type = Gm_PKind_NA;
+        }
+        md->rules.item_freq = -1; // items off
+        *HSD_RandSeedPtr = melee_vita_bench_seed();
+    }
+#endif
 }
 
 /// @todo .sdata2 order hack

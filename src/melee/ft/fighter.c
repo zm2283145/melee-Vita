@@ -1772,6 +1772,111 @@ void Fighter_UnkIncrementCounters_8006ABEC(Fighter_GObj* gobj)
         *stickY = y;                                                          \
     } while (0)
 
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+#include "ftucf.h"
+
+/* UCF 0.84, see ftucf.h. Each port's raw stick over the last 4 frames
+ * ("UCF Pad Buffer"), and how many frames the stick has sat on the lower
+ * rim since a fast flick down (used by the shield drop). */
+int g_melee_vita_ucf;
+static struct {
+    s8 x[4], y[4];
+    u8 head;
+    u8 down_rim;
+} ucf_pad[4];
+
+// |v| on an 80-unit scale, the way the UCF codes round it, plus 2
+static int ucf_units(float v)
+{
+    return (int) (ABS(v) * 80.0F - 0.0001F) + 2;
+}
+
+static bool ucf_on_rim(Fighter* fp)
+{
+    int x = ucf_units(fp->input.lstick[0].x);
+    int y = ucf_units(fp->input.lstick[0].y);
+    return x * x + y * y > 80 * 80;
+}
+
+void ftUcf_RecordStick(Fighter* fp)
+{
+    PadLibData* lib = &HSD_PadLibData;
+    int port = fp->x618_player_id;
+    PADStatus* raw;
+    u8 rim = 0;
+    if (port >= 4) return;
+    // the raw status this frame's inputs came from
+    raw = &lib->queue[lib->qread != 0 ? lib->qread - 1 : lib->qnum - 1].stat[port];
+    ucf_pad[port].head = (ucf_pad[port].head + 1) & 3;
+    ucf_pad[port].x[ucf_pad[port].head] = raw->stickX;
+    ucf_pad[port].y[ucf_pad[port].head] = raw->stickY;
+    if (fp->input.lstick[0].y <= -0.609375F && ucf_on_rim(fp)) {
+        if (ucf_pad[port].down_rim != 0) {
+            rim = ucf_pad[port].down_rim + 1;
+        } else if (fp->active_timer.lstick.y <= 1) {
+            // got there fast: more than 44 units down in 2 frames
+            int dy = ucf_pad[port].y[ucf_pad[port].head] -
+                     ucf_pad[port].y[(ucf_pad[port].head - 2) & 3];
+            rim = dy * dy > 44 * 44;
+        }
+    }
+    ucf_pad[port].down_rim = rim;
+}
+
+/* Dashback: on frame 2 of a tilt turn, a stick that's now past the dash
+ * threshold in the new direction and moved more than 75 units in the last
+ * 2 frames dashes back instead. Vanilla only allows 1 frame for that. */
+void ftUcf_Dashback(Fighter* fp)
+{
+    int port = fp->x618_player_id;
+    int dx;
+    HSD_GObj* nana;
+    if (fp->is_sub_fighter || port >= 4) return;
+    if (fp->cur_anim_frame != 2.0F) return;
+    if (fp->facing_dir * fp->input.lstick[0].x <
+        p_ftCommonData->dash_smash_stick_threshold)
+    {
+        return;
+    }
+    if (fp->active_timer.lstick.x > 1) return;
+    dx = ucf_pad[port].x[ucf_pad[port].head] -
+         ucf_pad[port].x[(ucf_pad[port].head - 2) & 3];
+    if (dx * dx <= 75 * 75) return;
+    fp->mv.co.turn.has_turned = true;
+    fp->mv.co.turn.just_turned = true;
+    // Nana copies Popo's inputs from a log: make her dashback too
+    nana = Player_GetEntityAtIndex(fp->player_id, 1);
+    if (nana != NULL) {
+        Fighter* nfp = GET_FIGHTER(nana);
+        nfp->cpu.x444->facing_dir = fp->facing_dir;
+        nfp->cpu.x444->lstick.x = fp->facing_dir < 0.0F ? -128 : 127;
+    }
+}
+
+/* Shield drop: a spot dodge from the left stick held on the rim above -0.8,
+ * over a platform you can drop through, doesn't happen, so the shield drop
+ * check after it gets a chance. Vanilla spot dodges from -0.7. */
+bool ftUcf_SkipSpotDodge(Fighter* fp)
+{
+    return fp->input.cstick[0].y > p_ftCommonData->x314 &&
+           fp->active_timer.lstick.x >= p_ftCommonData->x320 &&
+           fp->input.lstick[0].y > -0.8F &&
+           fp->coll_data.floor.index != -1 &&
+           (fp->coll_data.floor.flags & LINE_FLAG_PLATFORM) &&
+           ucf_on_rim(fp);
+}
+
+/* Shield drop from shield: also counts once the stick has held the lower
+ * rim for 2+ frames after a fast flick down ("Shield Drop Extended"). */
+bool ftUcf_ShieldDrop(Fighter* fp)
+{
+    int port = fp->x618_player_id;
+    return port < 4 && ucf_pad[port].down_rim > 1 &&
+           fp->active_timer.lstick.y < p_ftCommonData->x468 &&
+           mpColl_IsOnPlatform(&fp->coll_data);
+}
+#endif
+
 static void Fighter_Spaghetti_8006AD10_Inner1(Fighter* fp)
 {
     s32 temp0_loc_1;
@@ -2050,6 +2155,12 @@ void Fighter_Spaghetti_8006AD10(Fighter_GObj* gobj)
                 fp->activity_timer.lstick.y = 0;
                 fp->activity_timer.lstick.x = 0;
             }
+
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+            if (g_melee_vita_ucf && !ftCo_IsCpuControlled(fp)) {
+                ftUcf_RecordStick(fp);
+            }
+#endif
 
             // Fighter_ClampSpecificValue
             fp->active_duration.trigger++;

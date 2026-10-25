@@ -21,6 +21,7 @@
 #include <melee/ft/kinds/ftYoshi/ftyoshi.h>
 #include <melee/ft/kinds/ftYoshi/ftyoshiguard.h>
 #include <melee/ft/types.h>
+#include <melee/ft/ftucf.h>
 
 /* 0992A8 */ static void ftCo_800992A8(Fighter_GObj* gobj, FtMotionId msid,
                                        bool);
@@ -211,6 +212,9 @@ bool ftCo_80099794(Fighter_GObj* gobj)
 {
     Fighter* fp = gobj->user_data;
     if (fp->input.held_buttons[0] & HSD_PAD_LR && inlineB0(fp)) {
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+        if (g_melee_vita_ucf && ftUcf_SkipSpotDodge(fp)) return false;
+#endif
         ftCo_80099894(gobj);
         return true;
     }
@@ -221,6 +225,9 @@ bool ftCo_8009980C(Fighter_GObj* gobj)
 {
     Fighter* fp = gobj->user_data;
     if (inlineB0(fp) || ftCo_800DF8E8(fp)) {
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+        if (g_melee_vita_ucf && ftUcf_SkipSpotDodge(fp)) return false;
+#endif
         ftCo_80099894(gobj);
         return true;
     }

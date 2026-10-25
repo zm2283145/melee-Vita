@@ -280,6 +280,13 @@ void gm_Scene_Title_OnFrame(void)
      * title screen instead of timing out into it. */
     if (frame_count > 600) frame_count = 0;
 #endif
+#if defined(TARGET_VITA) && !defined(TARGET_PS5) && defined(MELEE_VITA_BENCHMARK)
+    {
+        // benchmark: go straight into the next demo match
+        extern int melee_vita_bench_active(void);
+        if (melee_vita_bench_active()) frame_count = 601;
+    }
+#endif
     if (frame_count > 600) {
         tmp = gm_GetCurrentSceneExitData();
         *tmp = 0;

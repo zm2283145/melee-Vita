@@ -1379,6 +1379,9 @@ static u32 s_prof_vertices;
 
 static u64 s_prof_decode_us, s_prof_fill_us;
 static u32 s_prof_draws;
+/* Never reset, read by the benchmark: GPU display list draws, CPU-decoded
+ * draws, display list cache builds, rebuilds, CPU fallbacks. */
+u32 g_melee_vita_gx_counts[5];
 
 #ifndef MELEE_VITA_RELEASE
 void melee_vita_prof_get_geometry(u32* draws, u32* vertices)
@@ -1446,6 +1449,51 @@ static void expand_points(const GxrXform* xform, const VitaDecodedVertex* vertic
     }
 }
 
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+#define GX_BATCH 1
+#endif
+
+#ifdef GX_BATCH
+/* Particles are drawn one 4-vertex quad at a time (psdisp.c) and each one
+ * was its own draw call, ~35 us apiece on Vita (Battlefield's background
+ * alone was ~3 ms a frame). Vertices on this path are already transformed,
+ * so back-to-back draws with byte-identical GxrDraw state can share one
+ * draw. Anything else that records GPU work calls gx_batch_flush() first
+ * (gxs_alloc, gxs_drain, melee_vita_rq_push_direct), so the order of
+ * everything on screen stays the same. */
+#define BATCH_MAX_V 2048u
+#define BATCH_MAX_I 3072u
+static GxrVertex s_batch_v[BATCH_MAX_V];
+static u16 s_batch_i[BATCH_MAX_I];
+static u32 s_batch_nv, s_batch_ni;
+static GxrDraw s_batch_draw;
+static int s_batch_flushing;
+
+void gx_batch_flush(void)
+{
+    GxrVertex* v;
+    u16* idx;
+    if (s_batch_ni == 0 || s_batch_flushing) return;
+    s_batch_flushing = 1;
+    v = gxr_alloc_vertices(s_batch_nv);
+    idx = gxr_alloc_indices(s_batch_ni);
+    if (v != NULL && idx != NULL) {
+        memcpy(v, s_batch_v, s_batch_nv * sizeof(GxrVertex));
+        memcpy(idx, s_batch_i, s_batch_ni * sizeof(u16));
+        if (!gxr_draw(&s_batch_draw, v, idx, s_batch_ni)) {
+            static u32 logged;
+            if (logged++ < 4u) melee_vita_log_info("[GX] merged draw failed (%u indices)", s_batch_ni);
+        }
+        ++s_prof_draws;
+        ++g_melee_vita_gx_counts[1];
+    }
+    s_batch_nv = s_batch_ni = 0;
+    s_batch_flushing = 0;
+}
+#else
+void gx_batch_flush(void) {}
+#endif
+
 static bool submit_gxr(GXPrimitive primitive,
                        const VitaDecodedVertex* vertices, u32 count,
                        bool draw_ready)
@@ -1472,8 +1520,31 @@ static bool submit_gxr(GXPrimitive primitive,
     else return false;
     if (needed == 0) return true;
     if (count > 0xffffu) return false;
+#ifdef GX_BATCH
+    // lines keep their own draws (line width); draw_ready callers filled the
+    // state themselves
+    bool batch = !draw_ready && primitive != GX_LINES && primitive != GX_LINESTRIP &&
+                 vertex_count <= BATCH_MAX_V && needed <= BATCH_MAX_I;
+    if (batch) {
+        // the state decides whether this joins the pending batch
+        fill_gxr_draw(draw);
+        draw->primitive = GXR_PRIM_TRIANGLES;
+        draw->line_width = 1.0f;
+        if (s_batch_ni != 0 &&
+            (memcmp(draw, &s_batch_draw, sizeof(*draw)) != 0 ||
+             s_batch_nv + vertex_count > BATCH_MAX_V || s_batch_ni + needed > BATCH_MAX_I))
+            gx_batch_flush();
+        out = &s_batch_v[s_batch_nv];
+        idx = &s_batch_i[s_batch_ni];
+    } else {
+        gx_batch_flush();
+        out = gxr_alloc_vertices(vertex_count);
+        idx = gxr_alloc_indices(needed);
+    }
+#else
     out = gxr_alloc_vertices(vertex_count);
     idx = gxr_alloc_indices(needed);
+#endif
     if (out == NULL || idx == NULL) return false;
 
     /* Transform each source vertex once straight into GPU-visible pool
@@ -1537,6 +1608,16 @@ static bool submit_gxr(GXPrimitive primitive,
     s_prof_vertex_us += GX_PROF_NOW() - prof_start;
     s_prof_vertices += count;
     if (output == 0) return true;
+#ifdef GX_BATCH
+    if (batch) {
+        // indices were built from 0; move them past what's already queued
+        if (s_batch_ni == 0) memcpy(&s_batch_draw, draw, sizeof(*draw));
+        for (i = 0; i < output; ++i) idx[i] = (u16) (idx[i] + s_batch_nv);
+        s_batch_nv += vertex_count;
+        s_batch_ni += output;
+        return true;
+    }
+#endif
 
     if (primitive == GX_LINES || primitive == GX_LINESTRIP) {
         draw->primitive = GXR_PRIM_LINES;
@@ -1556,6 +1637,7 @@ static bool submit_gxr(GXPrimitive primitive,
         if (!draw_ready)
             s_prof_draw_us += GX_PROF_NOW() - draw_start;
         ++s_prof_draws;
+        ++g_melee_vita_gx_counts[1]; // drawn from CPU-decoded vertices
         return ok;
     }
 }
@@ -3233,6 +3315,7 @@ static bool draw_bump_display_list_gpu(
             draw, &key, &uniforms, e->vertices, e->indices,
             e->tri_count, cull);
         ++s_prof_draws;
+        ++g_melee_vita_gx_counts[0];
         {
             const u64 elapsed = GX_PROF_NOW() - started;
             s_prof_draw_us += elapsed;
@@ -3311,7 +3394,7 @@ static bool draw_display_list_gpu(
                 free(e);
                 --s_dl_stats.entries;
                 e = NULL;
-                ++s_dl_stats.rebuilds;
+                ++s_dl_stats.rebuilds; ++g_melee_vita_gx_counts[3];
             }
         }
         s_dl_stats.hash_us += GX_PROF_NOW() - t0;
@@ -3324,14 +3407,14 @@ static bool draw_display_list_gpu(
         s_prof_decode_us += GX_PROF_NOW() - t0;
         melee_vita_prof_add(VPZ_DL_BUILD, GX_PROF_NOW() - t0);
         if (e == NULL) {
-            ++s_dl_stats.fallbacks;
+            ++s_dl_stats.fallbacks; ++g_melee_vita_gx_counts[4];
             s_dl_fallback_reason = 5u;
             return false;
         }
         e->validated_frame = s_array_epoch;
         e->next = s_dl_cache[bucket];
         s_dl_cache[bucket] = e;
-        ++s_dl_stats.builds;
+        ++s_dl_stats.builds; ++g_melee_vita_gx_counts[2];
     } else {
         ++s_dl_stats.hits;
     }
@@ -3360,12 +3443,14 @@ static bool draw_display_list_gpu(
                 draw->line_width = 1.0f;
                 ok = gxr_draw_gpu(draw, &key, &uniforms, e->vertices, e->indices, e->tri_count, cull) && ok;
                 ++s_prof_draws;
+                ++g_melee_vita_gx_counts[0];
             }
             if (e->line_count) {
                 draw->primitive = GXR_PRIM_LINES;
                 draw->line_width = (s_gx.line_width / 6.0f) * (544.0f / 480.0f);
                 ok = gxr_draw_gpu(draw, &key, &uniforms, e->vertices, e->indices + e->tri_count, e->line_count, GXR_CULL_NONE) && ok;
                 ++s_prof_draws;
+                ++g_melee_vita_gx_counts[0];
             }
             if (e->point_count) {
                 const u32 chunks =
@@ -3394,6 +3479,7 @@ static bool draw_display_list_gpu(
                         if (point_ok) {
                             s_prof_vertices += count;
                             ++s_prof_draws;
+                            ++g_melee_vita_gx_counts[0];
                         }
                         ok = point_ok && ok;
                     }
@@ -4109,6 +4195,11 @@ void GXCopyTex(void* destination, GXBool clear)
  * frame (the Cloaking Device's refraction grab): it must never be skipped by
  * the reduced refresh rate used for live screens. */
 int g_melee_vita_copy_every_frame;
+/* Graphics settings (gfx_settings.c) can change these at boot. PS5 keeps
+ * the defaults. */
+u32 g_melee_vita_copy_interval = MELEE_VITA_COPY_INTERVAL;
+u32 g_melee_vita_particle_limit = 512u;
+int g_melee_vita_skip_stage_particles; // per-stage cutback, set at match start
 
 static void copy_tex_impl(void* destination, GXBool clear)
 {
@@ -4176,7 +4267,7 @@ static void copy_tex_impl(void* destination, GXBool clear)
         if (!clear && !target_created && !g_melee_vita_copy_every_frame &&
             i < 8u &&
             s_gx.copied_frames - recent[slot].frame <
-                MELEE_VITA_COPY_INTERVAL)
+                g_melee_vita_copy_interval)
             return;
         recent[slot].key = destination;
         recent[slot].frame = s_gx.copied_frames;

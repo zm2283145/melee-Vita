@@ -7,7 +7,10 @@
 #include <stddef.h>
 
 bool pc_is_free_camera_enabled(void) { return false; }
-bool pc_is_unlock_all_enabled(void) { return false; }
+// Vita: "Unlock everything" in the graphics settings sets this at boot. The
+// game only asks (characters, stages); nothing is written to the save.
+int g_melee_vita_unlock_all;
+bool pc_is_unlock_all_enabled(void) { return g_melee_vita_unlock_all != 0; }
 bool pc_is_frozen_stadium_enabled(void) { return false; }
 int pc_get_hud_mode(void) { return 0; }
 

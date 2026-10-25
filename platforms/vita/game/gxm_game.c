@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* GXM-backed frame sink used by the original game's GX compatibility layer. */
 #include "gxm_game.h"
+#include "gfx_settings.h"
+#include "bench.h"
 #include "copy_texture_lifetime.h"
 #include "texture_swizzle.h"
 #include "heap.h"
@@ -11,6 +13,7 @@
 #include "../vita_log.h"
 
 #include <dolphin/gx/GXEnum.h>
+#include <psp2/display.h>
 #include <psp2/gxm.h>
 #include <vita2d.h>
 #include <psp2/kernel/processmgr.h>
@@ -107,6 +110,38 @@ static u32 s_render_width = MELEE_VITA_DISPLAY_WIDTH;
 static u32 s_render_height = MELEE_VITA_DISPLAY_HEIGHT;
 
 #define VITA_MAIN_SCENES_PER_FRAME 8u
+
+/* Benchmark: when the render thread started each frame, read back by the
+ * display callback once the GPU has finished that frame (frames reach the
+ * display queue in order). */
+static volatile u64 s_rt_start[8];
+static volatile u32 s_rt_head, s_rt_tail;
+volatile u32 g_melee_vita_rt_busy_us;  // render thread time for the last frame
+volatile u32 g_melee_vita_gpu_done_us; // render start -> GPU done, last frame
+
+/* vita2d's display callback calls sceDisplayWaitVblankStart right after
+ * queueing each flip (vblank wait is always on, see melee_vita_gxm_init).
+ * - 30 fps lock: wait 2 vblanks so every frame stays up for 2 refreshes
+ * - vsync on: wait 1
+ * - vsync off: don't wait, same as before
+ * It also tells the benchmark when each flip happened. (vi.c calls the real
+ * one directly.) */
+int __real_sceDisplayWaitVblankStart(void);
+int __wrap_sceDisplayWaitVblankStart(void)
+{
+    // the LiveArea settings screen draws with vita2d before the game starts
+    if (!s_initialized) return __real_sceDisplayWaitVblankStart();
+    // GXM calls the display callback once the GPU has finished the frame
+    if (s_rt_tail != __atomic_load_n(&s_rt_head, __ATOMIC_ACQUIRE)) {
+        g_melee_vita_gpu_done_us =
+            (u32) (sceKernelGetProcessTimeWide() - s_rt_start[s_rt_tail & 7u]);
+        s_rt_tail++;
+    }
+    melee_vita_bench_flip((u32) sceDisplayGetVcount(), g_melee_vita_fps30_active ? 2u : 1u);
+    if (g_melee_vita_fps30_active) return sceDisplayWaitVblankStartMulti(2);
+    if (g_gfx.vsync) return __real_sceDisplayWaitVblankStart();
+    return 0;
+}
 
 int __real_sceGxmCreateRenderTarget(
     const SceGxmRenderTargetParams* params,
@@ -830,12 +865,14 @@ static void rt_begin_scene_impl(u32 clear_color, int clear)
     }
     s_rt_resume_scene = !clear;
     s_rt_main_begin = 1;
-    if (s_rendering_internal) {
-        vita2d_pool_reset();
+    /* Only a new frame resets vita2d's vertex pool. A scene resumed after
+     * a copy can't: the GPU may not have drawn the first half of the frame
+     * yet, and its rectangles would pick up the new vertices. */
+    if (clear) vita2d_pool_reset();
+    if (s_rendering_internal)
         vita2d_start_drawing_advanced(s_active_internal_target, 0u);
-    } else {
-        vita2d_start_drawing();
-    }
+    else
+        vita2d_start_drawing_advanced(NULL, 0u);
     s_rt_main_begin = 0;
     s_rt_resume_scene = 0;
     ++g_melee_vita_gxm_state_epoch;
@@ -890,6 +927,8 @@ static int render_thread(SceSize args, void* argp)
         if (s_rq_quit) break;
         frame = s_exec_frame;
         t0 = sceKernelGetProcessTimeWide();
+        s_rt_start[s_rt_head & 7u] = t0;
+        __atomic_add_fetch(&s_rt_head, 1u, __ATOMIC_RELEASE);
         s_rt_split_frame = rq_frame_splits(frame);
         rt_begin_scene(frame->clear_color, 1);
         while (offset < frame->size) {
@@ -898,7 +937,11 @@ static int render_thread(SceSize args, void* argp)
             command->exec(frame->cmds + offset);
             offset += command->size;
         }
-        melee_vita_prof_add(VPZ_RT_EXEC, sceKernelGetProcessTimeWide() - t0);
+        {
+            const u64 busy = sceKernelGetProcessTimeWide() - t0;
+            melee_vita_prof_add(VPZ_RT_EXEC, busy);
+            g_melee_vita_rt_busy_us = (u32) busy;
+        }
         sceKernelSignalSema(s_rq_done, 1);
     }
     sceKernelSignalSema(s_rq_done, 1);
@@ -958,6 +1001,11 @@ void* melee_vita_rq_push_direct(MeleeVitaRqExec exec, u32 payload_size)
     const u32 needed = frame->size + sizeof(RqCommand) + aligned;
     RqCommand* command;
     if (!s_initialized) return NULL;
+    // without the submit worker the game thread records here directly
+    if (!gxs_active()) {
+        extern void gx_batch_flush(void);
+        gx_batch_flush();
+    }
     if (needed > frame->capacity) {
         u32 capacity = frame->capacity ? frame->capacity : 1u << 20;
         u8* grown;
@@ -1004,73 +1052,19 @@ u32 melee_vita_gxm_render_width(void) { return s_render_width; }
 u32 melee_vita_gxm_render_height(void) { return s_render_height; }
 
 #ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
-#define VITA_RESOLUTION_CONFIG_PATH "ux0:data/melee/resolution-settings.bin"
-#define VITA_RESOLUTION_CONFIG_TEMP_PATH \
-    "ux0:data/melee/resolution-settings.tmp"
-#define VITA_RESOLUTION_CONFIG_MAGIC 0x31525356u
-#define VITA_RESOLUTION_CONFIG_VERSION 1u
-
-typedef struct MeleeVitaResolutionConfig {
-    u32 magic;
-    u32 version;
-    s32 menu_option;
-    s32 gameplay_option;
-} MeleeVitaResolutionConfig;
-
-static void resolution_config_load(void)
-{
-    MeleeVitaResolutionConfig config;
-    FILE* file = fopen(VITA_RESOLUTION_CONFIG_PATH, "rb");
-    bool valid;
-    if (file == NULL)
-        return;
-    valid = fread(&config, sizeof(config), 1u, file) == 1u &&
-            fgetc(file) == EOF &&
-            config.magic == VITA_RESOLUTION_CONFIG_MAGIC &&
-            config.version == VITA_RESOLUTION_CONFIG_VERSION &&
-            config.menu_option >= MELEE_VITA_RESOLUTION_NATIVE &&
-            config.menu_option < MELEE_VITA_RESOLUTION_OPTION_COUNT &&
-            config.gameplay_option >= MELEE_VITA_RESOLUTION_NATIVE &&
-            config.gameplay_option < MELEE_VITA_RESOLUTION_OPTION_COUNT;
-    fclose(file);
-    if (!valid) {
-        melee_vita_log_info(
-            "[GXM] ignored malformed resolution settings; using build defaults");
-        return;
-    }
-    g_melee_vita_menu_resolution_option = config.menu_option;
-    g_melee_vita_gameplay_resolution_option = config.gameplay_option;
-}
-
+// the in-game Vita Options panel saves into graphics.txt too now
 static void resolution_config_save(void)
 {
-    const MeleeVitaResolutionConfig config = {
-        VITA_RESOLUTION_CONFIG_MAGIC,
-        VITA_RESOLUTION_CONFIG_VERSION,
-        g_melee_vita_menu_resolution_option,
-        g_melee_vita_gameplay_resolution_option,
-    };
-    FILE* file = fopen(VITA_RESOLUTION_CONFIG_TEMP_PATH, "wb");
-    bool valid = file != NULL;
-    if (valid)
-        valid = fwrite(&config, sizeof(config), 1u, file) == 1u;
-    if (file != NULL && fclose(file) != 0)
-        valid = false;
-    if (valid) {
-        remove(VITA_RESOLUTION_CONFIG_PATH);
-        valid = rename(
-                    VITA_RESOLUTION_CONFIG_TEMP_PATH,
-                    VITA_RESOLUTION_CONFIG_PATH) == 0;
-    }
-    if (!valid) {
-        remove(VITA_RESOLUTION_CONFIG_TEMP_PATH);
+    g_gfx.game_res = g_melee_vita_gameplay_resolution_option;
+    gfx_settings_changed(); // off-preset values make it Custom
+    if (!gfx_settings_save())
         melee_vita_log_info("[GXM] failed to persist resolution settings");
-    }
 }
 
 bool melee_vita_gxm_apply_resolution_options(void)
 {
-    const int requested_menu = g_melee_vita_menu_resolution_option;
+    // menus always render at native res: they're cheap and the text stays sharp
+    const int requested_menu = MELEE_VITA_RESOLUTION_NATIVE;
     const int requested_gameplay =
         g_melee_vita_gameplay_resolution_option;
     u32 menu_width;
@@ -1098,6 +1092,7 @@ bool melee_vita_gxm_apply_resolution_options(void)
         return false;
     }
     s_menu_resolution_option = requested_menu;
+    g_melee_vita_menu_resolution_option = requested_menu;
     s_gameplay_resolution_option = requested_gameplay;
     resolution_config_save();
     melee_vita_log_info(
@@ -1107,20 +1102,31 @@ bool melee_vita_gxm_apply_resolution_options(void)
 }
 #endif
 
+/* Per-match gameplay resolution (potato Fountain of Dreams). -1 goes back to
+ * the setting. Called when a match starts or ends, so waiting for the render
+ * thread here costs nothing anyone sees. */
+void melee_vita_gxm_match_gameplay_res(int option)
+{
+    if (!s_initialized) return;
+    if (option < 0) option = g_gfx.game_res;
+    if (option == s_gameplay_resolution_option) return;
+    rq_wait_idle();
+    vita2d_wait_rendering_done();
+    if (!resolution_target_create(option)) return;
+    s_gameplay_resolution_option = option;
+}
+
 int melee_vita_gxm_init(void)
 {
     int result;
     if (s_initialized) return 0;
     result = vita2d_init_advanced(8u * 1024u * 1024u);
     if (result == 0) return -1;
-    vita2d_set_vblank_wait(0);
+    vita2d_set_vblank_wait(1); // the wrapper above decides how long to wait
     vita2d_set_clear_color(RGBA8(0, 0, 0, 255));
-#ifdef MELEE_VITA_RUNTIME_RESOLUTION_MENU
-    resolution_config_load();
-    s_menu_resolution_option = g_melee_vita_menu_resolution_option;
-    s_gameplay_resolution_option =
-        g_melee_vita_gameplay_resolution_option;
-#endif
+    // main() loaded graphics.txt already
+    s_menu_resolution_option = MELEE_VITA_RESOLUTION_NATIVE; // see apply_resolution_options()
+    s_gameplay_resolution_option = g_gfx.game_res;
     if (!resolution_target_create(s_menu_resolution_option))
         s_menu_resolution_option = MELEE_VITA_RESOLUTION_NATIVE;
     if (!resolution_target_create(s_gameplay_resolution_option))
@@ -1929,6 +1935,19 @@ typedef struct RqPresent {
     u16* indices;
 } RqPresent;
 
+// fps counter and benchmark text go on top of the 960x544 scene, not the
+// scaled one
+static void draw_fps_overlay(void)
+{
+    if (!g_gfx.show_fps && !melee_vita_bench_wants_overlay()) return;
+    ++g_melee_vita_gxm_state_epoch;
+    sceGxmSetCullMode(vita2d_get_context(), SCE_GXM_CULL_NONE);
+    rt_default_depth();
+    vita2d_set_blend_mode_add(0);
+    gfx_fps_draw();
+    melee_vita_bench_draw();
+}
+
 static void exec_present_impl(const void* payload);
 static void exec_present(const void* payload)
 {
@@ -1949,6 +1968,8 @@ static void exec_present_impl(const void* payload)
         vita2d_draw_rectangle(0.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
         vita2d_draw_rectangle(960.0f - p->bar - 1.0f, 0.0f, p->bar + 1.0f, 544.0f, RGBA8(0, 0, 0, 255));
     }
+    if (!(s_rendering_internal && s_active_internal_target != NULL))
+        draw_fps_overlay();
     {
         const u64 end_start = sceKernelGetProcessTimeWide();
         vita2d_end_drawing();
@@ -1962,7 +1983,11 @@ static void exec_present_impl(const void* payload)
         s_active_resolution_option = MELEE_VITA_RESOLUTION_NATIVE;
         s_render_width = MELEE_VITA_DISPLAY_WIDTH;
         s_render_height = MELEE_VITA_DISPLAY_HEIGHT;
-        vita2d_start_drawing();
+        /* No pool reset here either (see rt_begin_scene_impl): the scaled
+         * scene may still be queued. When a screen copy split the frame,
+         * the last part's first rectangle is the left 4:3 bar, and it turned
+         * into this full-screen black one: black frames in 4:3. */
+        vita2d_start_drawing_advanced(NULL, 0u);
         ++g_melee_vita_gxm_state_epoch;
         sceGxmSetCullMode(vita2d_get_context(), SCE_GXM_CULL_NONE);
         rt_set_viewport(
@@ -1980,6 +2005,7 @@ static void exec_present_impl(const void* payload)
                 melee_vita_log_info(
                     "[GXM] internal EFB presentation draw unavailable");
         }
+        draw_fps_overlay();
         vita2d_end_drawing();
     }
 #ifdef MELEE_VITA_UPDATER
@@ -2006,6 +2032,8 @@ static void exec_present_impl(const void* payload)
     }
 }
 
+static u32 s_drain_us; // last frame's wait for the GX submit worker
+
 void melee_vita_gxm_present(u32 clear_color)
 {
     extern int melee_vita_widescreen_active(void);
@@ -2018,8 +2046,13 @@ void melee_vita_gxm_present(u32 clear_color)
     RqPresent* p;
     u32 native_reasons;
     if (!s_initialized) return;
+    gfx_fps_tick();
     /* Every queued draw must be in this frame before it is handed over. */
-    gxs_drain();
+    {
+        const u64 drain_start = sceKernelGetProcessTimeWide();
+        gxs_drain();
+        s_drain_us = (u32) (sceKernelGetProcessTimeWide() - drain_start);
+    }
     recorded = &s_frames[s_record];
     p = melee_vita_rq_push_direct(exec_present, sizeof(RqPresent));
     if (p != NULL) {
@@ -2093,8 +2126,11 @@ void melee_vita_gxm_present(u32 clear_color)
         /* Hand the recorded frame to the render thread once it has finished
          * the previous one; this wait is the only game/render sync point. */
         const u64 t0 = sceKernelGetProcessTimeWide();
+        u64 waited;
         sceKernelWaitSema(s_rq_done, 1, NULL);
-        melee_vita_prof_add(VPZ_SWAP, sceKernelGetProcessTimeWide() - t0);
+        waited = sceKernelGetProcessTimeWide() - t0;
+        melee_vita_prof_add(VPZ_SWAP, waited);
+        melee_vita_bench_frame((u32) waited, s_drain_us);
     }
     s_exec_frame = &s_frames[s_record];
     sceKernelSignalSema(s_rq_work, 1);

@@ -29,6 +29,8 @@ param(
     [switch]$EnableScaledGxCopyFrames,
     [switch]$EnableRuntimeResolutionMenu,
     [switch]$EnableLiveProfiler,
+    # Settings screen gets a Run Benchmark row (game/bench.c)
+    [switch]$EnableBenchmark,
     [string]$ProfilerLibrary,
     [ValidatePattern('^[0-9]{1,3}(\.[0-9]{1,3}){3}$')]
     [string]$ProfilerHost = '10.1.1.146',
@@ -281,6 +283,7 @@ $gameArchive = & (Join-Path $PSScriptRoot 'build-game.ps1') `
     -EnableDirectSnag:$EnableDirectSnag `
     -EnableRenderTrace:$EnableRenderTrace `
     -EnableRuntimeResolutionMenu:$EnableRuntimeResolutionMenu `
+    -EnableBenchmark:$EnableBenchmark `
     -VitaReleaseVersion $version.release `
     -VitaBuildNumber $VitaBuildNumber |
     Select-Object -Last 1
@@ -300,6 +303,7 @@ $platformSources = @(
     'platforms/vita/game/card.c',
     'platforms/vita/game/compat.c',
     'platforms/vita/game/dvd.c',
+    'platforms/vita/game/gfx_settings.c',
     'platforms/vita/game/gx.c',
     'platforms/vita/game/gx_bump.c',
     'platforms/vita/game/gx_render.c',
@@ -315,10 +319,14 @@ $platformSources = @(
     'platforms/vita/game/pc_stubs.c',
     'platforms/vita/game/jpeg_hw.c',
     'platforms/vita/game/profiler_live.c',
+    'platforms/vita/game/settings_app.c',
     'platforms/vita/game/thp.c',
     'platforms/vita/game/vi.c',
     'platforms/vita/game/widescreen.c'
 )
+if ($EnableBenchmark) {
+    $platformSources += 'platforms/vita/game/bench.c'
+}
 if ($EnableUpdater) {
     $platformSources += @(
         'platforms/vita/updater/homebrew_update_client.c',
@@ -357,6 +365,9 @@ if ($Configuration -eq 'Debug') {
 }
 if ($EnableRenderTrace) {
     $common += '-DMELEE_VITA_RENDER_TRACE=1'
+}
+if ($EnableBenchmark) {
+    $common += '-DMELEE_VITA_BENCHMARK=1'
 }
 if ($EnableShaderCacheSeal) {
     $common += '-DMELEE_VITA_SHADER_CACHE_SEAL=1'
@@ -443,7 +454,8 @@ $vpk = Join-Path $build 'SmashMeleevita.vpk'
 $link = @(
     '-fno-short-enums', '-Wl,-q', '-Wl,-z,nocopyreloc',
     '-Wl,--defsym=__sce_headroom=0x1000', '-Wl,--gc-sections',
-    '-Wl,--wrap=sceGxmBeginScene', '-Wl,--wrap=sceGxmCreateRenderTarget'
+    '-Wl,--wrap=sceGxmBeginScene', '-Wl,--wrap=sceGxmCreateRenderTarget',
+    '-Wl,--wrap=sceDisplayWaitVblankStart'
 ) + $platformObjects + @(
     '-Wl,--start-group', $gameArchive, '-Wl,--end-group'
 )
@@ -471,7 +483,7 @@ if ($EnableLiveProfiler) {
 $link += @(
     '-lSceCtrl_stub', '-lSceDisplay_stub', '-lSceAudio_stub', '-lSceJpeg_stub', '-lSceKernelThreadMgr_stub',
     '-lvita2d', '-lSceGxm_stub', '-lSceDisplay_stub', '-lSceAppMgr_stub',
-    '-lSceTouch_stub',
+    '-lSceTouch_stub', '-lScePower_stub', '-lScePgf_stub',
     '-lSceCommonDialog_stub', '-lm', '-lSceProcessmgr_stub',
     '-lSceSysmem_stub', '-lSceLibKernel_stub', '-lSceKernelModulemgr_stub', '-lSceSysmodule_stub',
     '-lvitashark', '-lSceShaccCgExt', '-ltaihen_stub', '-lSceShaccCg_stub_weak',
@@ -502,6 +514,7 @@ $vpkArguments = @(
     '-a', "$(Join-Path $livearea 'pic0.png')=sce_sys/pic0.png",
     '-a', "$(Join-Path $livearea 'bg.png')=sce_sys/livearea/contents/bg.png",
     '-a', "$(Join-Path $livearea 'startup.png')=sce_sys/livearea/contents/startup.png",
+    '-a', "$(Join-Path $livearea 'settings.png')=sce_sys/livearea/contents/settings.png",
     '-a', "$(Join-Path $livearea 'template.xml')=sce_sys/livearea/contents/template.xml",
     '-a', "$(Join-Path $PSScriptRoot 'homebrew_update.ini')=sce_sys/homebrew_update.ini",
     '-a', "$(Join-Path $PSScriptRoot 'shadercache/warm5.bin')=shadercache/warm5.bin"

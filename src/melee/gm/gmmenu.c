@@ -63,5 +63,13 @@ void gm_Mode_AllstarGOver_OnLoad(void)
 
 void gm_Mode_Opening_OnLoad(void)
 {
+#if defined(TARGET_VITA) && !defined(TARGET_PS5) && defined(MELEE_VITA_BENCHMARK)
+    // benchmark: skip the opening movie (state 0) and go to the title
+    extern int melee_vita_bench_active(void);
+    if (melee_vita_bench_active() && gm_801BF718() == 0) {
+        gm_SetGameModeStateId(2);
+        return;
+    }
+#endif
     gm_SetGameModeStateId(gm_801BF718());
 }

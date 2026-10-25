@@ -11,6 +11,7 @@ param(
     [switch]$EnableDirectSnag,
     [switch]$EnableRenderTrace,
     [switch]$EnableRuntimeResolutionMenu,
+    [switch]$EnableBenchmark,
     [string]$VitaReleaseVersion,
     [string]$VitaBuildNumber = $env:MELEE_VITA_BUILD_NUMBER
 )
@@ -48,6 +49,7 @@ if ($EnableModernDebugMenu) { $variantParts += 'ModernDebugMenu' }
 if ($EnableDirectSnag) { $variantParts += 'DirectSnag' }
 if ($EnableRenderTrace) { $variantParts += 'RenderTrace' }
 if ($EnableRuntimeResolutionMenu) { $variantParts += 'RuntimeResolution' }
+if ($EnableBenchmark) { $variantParts += 'Benchmark' }
 $variantParts += "Vita$($VitaReleaseVersion -replace '\.', '_')"
 $variantParts += "Build$($VitaBuildNumber -replace '\.', '_')"
 $variant = $variantParts -join '-'
@@ -117,6 +119,9 @@ if ($EnableRenderTrace) {
 }
 if ($EnableRuntimeResolutionMenu) {
     $common += '-DMELEE_VITA_RUNTIME_RESOLUTION_MENU=1'
+}
+if ($EnableBenchmark) {
+    $common += '-DMELEE_VITA_BENCHMARK=1'
 }
 $common += '-DMELEE_VITA_GPU_BUMP_DL=1'
 Write-Host "Melee Vita game C compiler flags: $($common -join ' ')"

@@ -21,6 +21,7 @@
 #include <melee/ft/ftanim.h>
 #include <melee/ft/ftcommon.h>
 #include <melee/ft/types.h>
+#include <melee/ft/ftucf.h>
 #include <melee/mp/mpcoll.h>
 
 bool ftCo_80099F1C(Fighter_GObj* gobj)
@@ -54,7 +55,11 @@ bool ftCo_8009A080(Fighter_GObj* gobj)
 {
     u8 _[8];
     Fighter* fp = gobj->user_data;
-    if (fp->input.held_buttons[0] & HSD_PAD_LR && ftCo_80099F1C(gobj)) {
+    bool drop = ftCo_80099F1C(gobj);
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+    if (g_melee_vita_ucf && !drop) drop = ftUcf_ShieldDrop(fp);
+#endif
+    if (fp->input.held_buttons[0] & HSD_PAD_LR && drop) {
         ftCo_8009A228(gobj);
         return true;
     }

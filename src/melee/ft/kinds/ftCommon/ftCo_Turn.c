@@ -24,6 +24,7 @@
 #include <melee/ft/ft_0892.h>
 #include <melee/ft/inlines.h>
 #include <melee/ft/types.h>
+#include <melee/ft/ftucf.h>
 
 bool ftCo_800C97A8(Fighter_GObj* gobj)
 {
@@ -103,6 +104,10 @@ void ftCo_Turn_IASA(Fighter_GObj* gobj)
     }
     if (!fp->mv.co.turn.has_turned) {
         fp->facing_dir = -fp->facing_dir;
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+        // UCF: a tilt turn that should have been a dashback turns now
+        if (g_melee_vita_ucf) ftUcf_Dashback(fp);
+#endif
     }
 
     RETURN_IF(ftCo_SpecialS_CheckInput(gobj));

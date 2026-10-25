@@ -1903,7 +1903,8 @@ void psDispParticles(u32 target_link, u32 sw)
              * avoids changing which living particles are shown each frame. */
             u32 display_stride = 1;
             {
-                u32 const display_limit = 512u;
+                extern u32 g_melee_vita_particle_limit;
+                u32 const display_limit = g_melee_vita_particle_limit;
                 u32 count = 0;
                 for (HSD_Particle* scan = pp; scan != NULL; scan = scan->next) {
                     if (sw == 1 && !(scan->kind & TexEdge)) break;
@@ -1937,6 +1938,17 @@ void psDispParticles(u32 target_link, u32 sw)
                     break;
                 }
 #ifdef TARGET_VITA
+                {
+                    /* Stage cutback (Vita graphics settings): skip the
+                     * stage's own particles. Stages load them into bank 0x1E
+                     * (or 0x40); fighter and item effects use other banks. */
+                    extern int g_melee_vita_skip_stage_particles;
+                    if (g_melee_vita_skip_stage_particles &&
+                        (pp->bank == 0x1E || pp->bank == 0x40)) {
+                        pp = pp->next;
+                        continue;
+                    }
+                }
                 if (display_stride > 1u) {
                     u32 hash = (u32) ((uintptr_t) pp >> 4);
                     hash ^= hash >> 16;

@@ -35,6 +35,9 @@ static SceUID s_thread = -1;
 static SceUID s_game_thread = -1;
 static int s_running;
 
+// gx.c: merged particle draws must go out before anything queued after them
+extern void gx_batch_flush(void);
+
 static inline u32 load_acquire(volatile u32* p)
 {
     return __atomic_load_n(p, __ATOMIC_ACQUIRE);
@@ -121,6 +124,7 @@ void* gxs_alloc(GxsRun run, u32 payload_size)
     u32 need, offset;
     GxsHeader* header;
     if (!s_running) return NULL;
+    gx_batch_flush();
     gxs_publish();
     need = (u32) ((sizeof(GxsHeader) + payload_size + GXS_ALIGN - 1u) &
                   ~(GXS_ALIGN - 1u));
@@ -147,6 +151,7 @@ void gxs_drain(void)
 {
     if (!s_running) return;
     if (sceKernelGetThreadId() != s_game_thread) return;
+    gx_batch_flush();
     gxs_publish();
     if (load_acquire(&s_read) == s_write) return;
     {

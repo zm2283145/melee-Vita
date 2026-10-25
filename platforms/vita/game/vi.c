@@ -11,6 +11,15 @@
 #include <psp2/display.h>
 #include <psp2/kernel/processmgr.h>
 
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+/* gxm_game.c wraps sceDisplayWaitVblankStart for the 30 fps lock; VI always
+ * wants a single vblank. */
+int __real_sceDisplayWaitVblankStart(void);
+#define vi_wait_vblank __real_sceDisplayWaitVblankStart
+#else
+#define vi_wait_vblank sceDisplayWaitVblankStart
+#endif
+
 static u32 s_retrace_count;
 static VIRetraceCallback s_pre_callback;
 static VIRetraceCallback s_post_callback;
@@ -53,7 +62,7 @@ void VIWaitForRetrace(void)
          * block for vblank when the frame finished early; a late frame would
          * otherwise lose most of another refresh (25 ms becomes 33 ms). */
         static u64 last_retrace_us;
-        if (wait_start - last_retrace_us < 16000u) sceDisplayWaitVblankStart();
+        if (wait_start - last_retrace_us < 16000u) vi_wait_vblank();
         last_retrace_us = sceKernelGetProcessTimeWide();
     }
     g_melee_vita_vi_wait_us += sceKernelGetProcessTimeWide() - wait_start;

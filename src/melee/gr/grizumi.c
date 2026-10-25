@@ -756,6 +756,19 @@ void grIzumi_801CCEA0(HSD_GObj* gobj, int renderpass)
     HSD_GObj* src_gobj;
     HSD_CObj* cobj;
 
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+    {
+        /* Vita: the reflection ends in a copy to an 80x60 texture, and copies
+         * only happen every "live screens" frames (gx.c). Skip the whole
+         * mirrored redraw (stage, fighters, effects) on the frames in
+         * between; the water keeps showing the last copy, as before. */
+        extern u32 g_melee_vita_copy_interval;
+        static u32 calls;
+        if (g_melee_vita_copy_interval > 1 &&
+            calls++ % g_melee_vita_copy_interval != 0)
+            return;
+    }
+#endif
     if (refl->image != NULL) {
         cobj = GET_COBJ(gobj);
         ftDrawCommon_80081140();

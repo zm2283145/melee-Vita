@@ -830,12 +830,14 @@ static void rt_begin_scene_impl(u32 clear_color, int clear)
     }
     s_rt_resume_scene = !clear;
     s_rt_main_begin = 1;
-    if (s_rendering_internal) {
-        vita2d_pool_reset();
+    /* Only a new frame resets vita2d's vertex pool. A scene resumed after
+     * a copy can't: the GPU may not have drawn the first half of the frame
+     * yet, and its rectangles would pick up the new vertices. */
+    if (clear) vita2d_pool_reset();
+    if (s_rendering_internal)
         vita2d_start_drawing_advanced(s_active_internal_target, 0u);
-    } else {
-        vita2d_start_drawing();
-    }
+    else
+        vita2d_start_drawing_advanced(NULL, 0u);
     s_rt_main_begin = 0;
     s_rt_resume_scene = 0;
     ++g_melee_vita_gxm_state_epoch;
@@ -958,6 +960,11 @@ void* melee_vita_rq_push_direct(MeleeVitaRqExec exec, u32 payload_size)
     const u32 needed = frame->size + sizeof(RqCommand) + aligned;
     RqCommand* command;
     if (!s_initialized) return NULL;
+    // without the submit worker the game thread records here directly
+    if (!gxs_active()) {
+        extern void gx_batch_flush(void);
+        gx_batch_flush();
+    }
     if (needed > frame->capacity) {
         u32 capacity = frame->capacity ? frame->capacity : 1u << 20;
         u8* grown;
@@ -1962,7 +1969,11 @@ static void exec_present_impl(const void* payload)
         s_active_resolution_option = MELEE_VITA_RESOLUTION_NATIVE;
         s_render_width = MELEE_VITA_DISPLAY_WIDTH;
         s_render_height = MELEE_VITA_DISPLAY_HEIGHT;
-        vita2d_start_drawing();
+        /* No pool reset here either (see rt_begin_scene_impl): the scaled
+         * scene may still be queued. When a screen copy split the frame,
+         * the last part's first rectangle is the left 4:3 bar, and it turned
+         * into this full-screen black one: black frames in 4:3. */
+        vita2d_start_drawing_advanced(NULL, 0u);
         ++g_melee_vita_gxm_state_epoch;
         sceGxmSetCullMode(vita2d_get_context(), SCE_GXM_CULL_NONE);
         rt_set_viewport(

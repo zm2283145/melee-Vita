@@ -1903,7 +1903,8 @@ void psDispParticles(u32 target_link, u32 sw)
              * avoids changing which living particles are shown each frame. */
             u32 display_stride = 1;
             {
-                u32 const display_limit = 512u;
+                extern u32 g_melee_vita_particle_limit;
+                u32 const display_limit = g_melee_vita_particle_limit;
                 u32 count = 0;
                 for (HSD_Particle* scan = pp; scan != NULL; scan = scan->next) {
                     if (sw == 1 && !(scan->kind & TexEdge)) break;

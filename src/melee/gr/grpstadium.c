@@ -1250,6 +1250,19 @@ void fn_801D2ED0(HSD_GObj* gobj, int unused)
     HSD_GObj* vision_gobj;
     PAD_STACK(4);
 
+#if defined(TARGET_VITA) && !defined(TARGET_PS5)
+    {
+        /* Vita: this text window ends in a copy to a texture, and copies
+         * only happen every "live screens" frames (gx.c). Skip the drawing
+         * on the frames in between too; the jumbotron keeps showing the
+         * last copy, same as the rest of its feed. Was ~1.3 ms a frame. */
+        extern u32 g_melee_vita_copy_interval;
+        static u32 calls;
+        if (g_melee_vita_copy_interval > 1 &&
+            calls++ % g_melee_vita_copy_interval != 0)
+            return;
+    }
+#endif
     cobj = GET_COBJ(gobj);
     wrapper = GET_WRAPPER(gobj);
     if (HSD_CObjSetCurrent(cobj) != 0) {

@@ -177,15 +177,15 @@ void it_802F063C(Item_GObj* gobj, Item_GObj* arg1)
         translate.z = 0.0f;
         translate.y =
             sqrtf_store(
-                ((pos_0.x - pos_2.x) * (pos_0.x - pos_2.x)) +
-                    ((pos_0.y - pos_2.y) * (pos_0.y - pos_2.y)) +
+                (MU_P((pos_0.x - pos_2.x) * (pos_0.x - pos_2.x))) +
+                    (MU_P((pos_0.y - pos_2.y) * (pos_0.y - pos_2.y))) +
                     ((z_diff = pos_0.z - pos_2.z) * (pos_0.z - pos_2.z)),
                 &sqrt_0) *
-            -(sqrtf_store(((pos_0.x - pos_1.x) * (pos_0.x - pos_1.x)) +
-                              ((pos_0.y - pos_1.y) * (pos_0.y - pos_1.y)),
+            -(sqrtf_store((MU_P((pos_0.x - pos_1.x) * (pos_0.x - pos_1.x))) +
+                              (MU_P((pos_0.y - pos_1.y) * (pos_0.y - pos_1.y))),
                           &sqrt_1) /
-              sqrtf_store(((pos_0.x - pos_2.x) * (pos_0.x - pos_2.x)) +
-                              ((pos_0.y - pos_2.y) * (pos_0.y - pos_2.y)),
+              sqrtf_store((MU_P((pos_0.x - pos_2.x) * (pos_0.x - pos_2.x))) +
+                              (MU_P((pos_0.y - pos_2.y) * (pos_0.y - pos_2.y))),
                           &sqrt_2));
         HSD_JObjSetTranslate(ip->xBBC_dynamicBoneTable->bones[2], &translate);
 

@@ -21,27 +21,47 @@
 #define DVD_REQUEST_CAPACITY DVD_COMPLETION_CAPACITY
 #define DVD_THREAD_PRIORITY 0x10000100
 #define DVD_THREAD_STACK (64u * 1024u)
-/* Giga Bowser color costumes are bundled with the VPK and copied to data.
- * The normal costume still comes from the user's ISO. */
+/* Files read from the memory card in place of the disc's copy.
+ * Giga Bowser color costumes are bundled with the VPK and copied to data.
+ * The normal costume still comes from the user's ISO.
+ * Slippi's menu files are made from the user's own disc on a PC
+ * (tools/slippi/slippi_files.py).  When they are missing, the disc's
+ * vanilla files load as before. */
 #define VITA_DVD_OVERLAY_BASE 0x80000000u
 #define VITA_DVD_OVERLAY_SHIFT 24u
 #define VITA_DVD_OVERLAY_OFFSET_MASK 0x00FFFFFFu
+#ifdef MELEE_VITA_SLIPPI
+#define VITA_DVD_OVERLAY_COUNT 10u
+#else
 #define VITA_DVD_OVERLAY_COUNT 5u
+#endif
 #define VITA_DVD_COSTUME_DIR "ux0:data/melee/costumes/"
+#define VITA_DVD_SLIPPI_DIR "ux0:data/melee/slippi/files/"
 
 typedef struct {
     const char* name;
+    const char* directory;
+    BOOL bundled; /* copied from app0:/costumes/ when missing */
     FILE* sync_file;
     SceUID async_file;
     u32 length;
 } VitaDvdOverlay;
 
 static VitaDvdOverlay s_overlays[VITA_DVD_OVERLAY_COUNT] = {
-    { "PlGkRe.dat", NULL, -1, 0 },
-    { "PlGkBu.dat", NULL, -1, 0 },
-    { "PlGkBk.dat", NULL, -1, 0 },
-    { "PlGkYe.dat", NULL, -1, 0 },
-    { "PlGkWh.dat", NULL, -1, 0 },
+    { "PlGkRe.dat", VITA_DVD_COSTUME_DIR, TRUE, NULL, -1, 0 },
+    { "PlGkBu.dat", VITA_DVD_COSTUME_DIR, TRUE, NULL, -1, 0 },
+    { "PlGkBk.dat", VITA_DVD_COSTUME_DIR, TRUE, NULL, -1, 0 },
+    { "PlGkYe.dat", VITA_DVD_COSTUME_DIR, TRUE, NULL, -1, 0 },
+    { "PlGkWh.dat", VITA_DVD_COSTUME_DIR, TRUE, NULL, -1, 0 },
+#ifdef MELEE_VITA_SLIPPI
+    /* Slippi Direct's menus: Online Play, its descriptions, the stage
+     * select, character select text and name entry. */
+    { "MnMaAll.usd", VITA_DVD_SLIPPI_DIR, FALSE, NULL, -1, 0 },
+    { "SdMenu.usd", VITA_DVD_SLIPPI_DIR, FALSE, NULL, -1, 0 },
+    { "MnSlMap.usd", VITA_DVD_SLIPPI_DIR, FALSE, NULL, -1, 0 },
+    { "SdSlChr.usd", VITA_DVD_SLIPPI_DIR, FALSE, NULL, -1, 0 },
+    { "MnExtAll.usd", VITA_DVD_SLIPPI_DIR, FALSE, NULL, -1, 0 },
+#endif
 };
 
 typedef struct {
@@ -616,7 +636,7 @@ static void install_costume_if_missing(const char* name)
     sceIoRemove(temp_path);
 }
 
-static s32 find_costume_overlay(const char* path)
+static s32 find_overlay(const char* path)
 {
     const char* basename = strrchr(path, '/');
     u32 i;
@@ -632,8 +652,8 @@ static s32 find_costume_overlay(const char* path)
         if (!name_equal(overlay->name, basename, strlen(basename))) continue;
         if (overlay->sync_file != NULL) return (s32) (s_fst_count + i);
         snprintf(full_path, sizeof(full_path), "%s%s",
-                 VITA_DVD_COSTUME_DIR, overlay->name);
-        install_costume_if_missing(overlay->name);
+                 overlay->directory, overlay->name);
+        if (overlay->bundled) install_costume_if_missing(overlay->name);
         overlay->sync_file = fopen(full_path, "rb");
         if (overlay->sync_file == NULL) return -1;
         if (fseek(overlay->sync_file, 0, SEEK_END) != 0 ||
@@ -663,7 +683,7 @@ s32 DVDConvertPathToEntrynum(const char* path)
     const char* cursor;
     if (!s_initialized || path == NULL) return -1;
     {
-        s32 overlay = find_costume_overlay(path);
+        s32 overlay = find_overlay(path);
         if (overlay >= 0) return overlay;
     }
     current = path[0] == '/' ? 0 : s_current_dir;

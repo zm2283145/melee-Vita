@@ -35,7 +35,7 @@ void C_VECNormalize(const Vec* src, Vec* unit) {
   assert(src && "VECNormalize():  NULL VecPtr 'src' ");
   assert(unit && "VECNormalize():  NULL VecPtr 'unit' ");
 
-  mag = (src->z * src->z) + ((src->x * src->x) + (src->y * src->y));
+  mag = (MU_P(src->z * src->z)) + ((MU_P(src->x * src->x)) + (MU_P(src->y * src->y)));
   assert(0.0f != mag && "VECNormalize():  zero magnitude vector ");
 
   mag = 1.0f/ sqrtf(mag);
@@ -65,7 +65,7 @@ f32 C_VECSquareMag(const Vec* v) {
 
   assert(v && "VECMag():  NULL VecPtr 'v' ");
 
-  sqmag = v->z * v->z + ((v->x * v->x) + (v->y * v->y));
+  sqmag = MU_P(v->z * v->z) + ((MU_P(v->x * v->x)) + (MU_P(v->y * v->y)));
   return sqmag;
 }
 

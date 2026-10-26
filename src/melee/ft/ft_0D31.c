@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_rules.h>
 #include "ft_0D31.h"
 
 #include "fighter.h"
@@ -858,6 +859,9 @@ void ftCo_DeadUpFall_Anim(Fighter_GObj* gobj)
             fp->self_vel.z = data->x55C;
             fp->mv.co.unk_deadup.x40 = data->x530;
             fp->mv.co.unk_deadup.x44 = 3;
+            if (mp_slippi_rule(MP_SR_DEAD_UP_FALL)) {
+                mp_slippi_dead_up_init(fp, data->x550, data->x55C);
+            }
             return;
         case 3:
             ftCommon_8007E2FC(gobj);
@@ -902,8 +906,12 @@ void ftCo_DeadUpFall_Phys(Fighter_GObj* gobj)
                       fp->mv.co.unk_deadup.x4C);
         break;
     case 3:
-        ftCommon_Fall(fp, ca->x554, ca->x558);
-        lbVector_Add(&fp->mv.co.unk_deadup.x5C, &fp->self_vel);
+        if (mp_slippi_rule(MP_SR_DEAD_UP_FALL)) {
+            mp_slippi_dead_up_fall(fp, ca->x554, ca->x558);
+        } else {
+            ftCommon_Fall(fp, ca->x554, ca->x558);
+            lbVector_Add(&fp->mv.co.unk_deadup.x5C, &fp->self_vel);
+        }
         if (fp->x2222_b6) {
             if (!ftAnim_80070FD0(fp)) {
                 break;

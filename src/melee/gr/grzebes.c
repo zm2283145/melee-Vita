@@ -902,7 +902,7 @@ void grZebes_801D99E0(HSD_GObj* gobj)
 
             diff = ABS(gp->u.zebes5.xD4 - gp->u.zebes5.xD8);
 
-            discriminant = (yakumono_param->x98 * yakumono_param->x98) -
+            discriminant = (MU_P(yakumono_param->x98 * yakumono_param->x98)) -
                            (4.0f * diff) / yakumono_param->x9C;
             if (discriminant < 0.0f) {
                 gp->u.zebes5.xCC = 999.0f;

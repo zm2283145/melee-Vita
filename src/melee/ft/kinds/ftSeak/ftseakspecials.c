@@ -69,8 +69,8 @@ void ftSk_SpecialS_80110490(Fighter* fp)
 
     fp->mv.sk.specials.x18 = v6;
 
-    v8 = sqrtf(fp->input.lstick[0].x * fp->input.lstick[0].x +
-               fp->input.lstick[0].y * fp->input.lstick[0].y);
+    v8 = sqrtf(MU_P(fp->input.lstick[0].x * fp->input.lstick[0].x) +
+               MU_P(fp->input.lstick[0].y * fp->input.lstick[0].y));
 
     if (v8 > 1) {
         v8 = 1;

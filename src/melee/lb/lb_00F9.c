@@ -665,9 +665,9 @@ void lb_8001044C(DynamicsDesc* desc, void* colliders_raw, int num_colliders,
                             collider->position.z - cur->desc.lb_unk0.unk_2C.z;
 
                         {
-                            f32 coll_dist = sqrtf(coll_dir.z * coll_dir.z +
-                                                  (coll_dir.x * coll_dir.x +
-                                                   coll_dir.y * coll_dir.y));
+                            f32 coll_dist = sqrtf(MU_P(coll_dir.z * coll_dir.z) +
+                                                  (MU_P(coll_dir.x * coll_dir.x) +
+                                                   MU_P(coll_dir.y * coll_dir.y)));
 
                             if (coll_dist > collider->radius &&
                                 lbColl_80005C44(
@@ -814,8 +814,8 @@ void lb_8001044C(DynamicsDesc* desc, void* colliders_raw, int num_colliders,
                                     groundHeight(cur, &floor_point2);
                                 f32 horiz_dist =
                                     sqrtf(-(height_diff * height_diff -
-                                            cur->desc.lb_unk0.unk_48 *
-                                                cur->desc.lb_unk0.unk_48));
+                                            MU_P(cur->desc.lb_unk0.unk_48 *
+                                                cur->desc.lb_unk0.unk_48)));
                                 f32 ground_angle =
                                     ABS(atan2f(horiz_dist, height_diff));
                                 PSVECCrossProduct(&gnd_norm2, &link_dir,

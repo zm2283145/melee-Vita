@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_rules.h>
 #include "ftCo_0A01.h"
 
 #include <Runtime/platform.h>
@@ -6206,6 +6207,8 @@ static bool ftCo_800ADE48(Fighter* fp)
         } else if (!fp->x221A_b3) {
             switch_cmd = 0;
         } else {
+            /* The console reads the caller's r31 here: a pointer. */
+            switch_cmd = 1;
             data2->xF9_b0 = false;
             if (0.1f * data2->level > HSD_Randf()) {
                 data2->xFA_b1 = true;
@@ -7518,7 +7521,7 @@ bool ftCo_800B0E98(Fighter* fp0, Fighter* fp1)
         {
             float x = fp0->cur_pos.x - fp1->cur_pos.x,
                   y = fp1->cur_pos.y - fp0->cur_pos.y;
-            if (SQ(x) + SQ(y) < SQ(25.0)) {
+            if (SQ(x) + SQ(y) < MU_P(SQ(25.0))) {
                 return true;
             }
         }
@@ -7545,7 +7548,7 @@ static inline bool ftCo_800B101C_inline0(Fighter* fp, Fighter* other)
     } else {
         float dx = fp->cur_pos.x - other->cur_pos.x;
         float dy = other->cur_pos.y - fp->cur_pos.y;
-        if (SQ(dx) + SQ(dy) > SQ(25.0)) {
+        if (SQ(dx) + SQ(dy) > MU_P(SQ(25.0))) {
             return true;
         } else if (ftCo_800B0CA8(fp, other)) {
             return false;

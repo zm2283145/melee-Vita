@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_rules.h>
 #include "ftdynamics.h"
 
 
@@ -443,6 +444,7 @@ void ftCo_8009DD94(Fighter_GObj* gobj, bool arg1)
             dyn++;
         }
     }
+    mp_slippi_dynamics_fix(fp);
 }
 
 void ftCo_8009E0A8(Fighter_GObj* gobj)

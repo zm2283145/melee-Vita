@@ -1,3 +1,5 @@
+#include <melee/slippi/slippi_rules.h>
+#include <sysdolphin/baselib/random.h>
 #include "grlast.h"
 
 #include <math.h>
@@ -367,7 +369,15 @@ static void grLast_8021AAB0(Ground_GObj* gobj)
 {
     Ground* gp = GET_GROUND(gobj);
     if (!gp->u.map.xC4_b1 && !gp->u.map.xC4_b0) {
-        grLast_8021B2E8(gobj);
+        if (mp_slippi_rules_enabled && mp_slippi_rules_frozen_fd()) {
+            /* Slippi 3.14: the call is a nop. */
+        } else if (mp_slippi_rule(MP_SR_FD_BG)) {
+            u32 seed = *HSD_RandSeedPtr;
+            grLast_8021B2E8(gobj);
+            *HSD_RandSeedPtr = seed;
+        } else {
+            grLast_8021B2E8(gobj);
+        }
         if (gp->u.map.xC4_b26) {
             int tmp = grLast_8021B5C4(gobj);
             if (tmp != 0) {

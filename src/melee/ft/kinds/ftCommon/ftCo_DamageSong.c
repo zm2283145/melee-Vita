@@ -23,8 +23,8 @@ static float inlineA0(Fighter* fp, bool arg1)
         ((p_ftCommonData->x628 *
           (p_ftCommonData->x62C - Player_GetHandicap(fp->player_id))) +
          p_ftCommonData->x624 +
-         p_ftCommonData->x630 *
-             (p_ftCommonData->x634 - ((Player_80033BB8(fp->player_id)) + 1)));
+         MU_P(p_ftCommonData->x630 *
+             (p_ftCommonData->x634 - ((Player_80033BB8(fp->player_id)) + 1))));
     if (arg1) {
         result *= p_ftCommonData->x644;
     }

@@ -166,8 +166,8 @@ static inline void camera_sdata2_order(void)
 
 static inline float vec_len(Vec3* offset)
 {
-    return sqrtf((offset->x * offset->x) + (offset->y * offset->y) +
-                 (offset->z * offset->z));
+    return sqrtf(MU_P(offset->x * offset->x) + MU_P(offset->y * offset->y) +
+                 MU_P(offset->z * offset->z));
 }
 
 void Camera_Init(int n_subjects)
@@ -2105,8 +2105,8 @@ void Camera_8002C1A8(void)
 
 static inline float eye_offset_len(Vec3* offset)
 {
-    return sqrtf((offset->z * offset->z) +
-                 (offset->x * offset->x + offset->y * offset->y));
+    return sqrtf((MU_P(offset->z * offset->z)) +
+                 (MU_P(offset->x * offset->x) + MU_P(offset->y * offset->y)));
 }
 
 void Camera_8002C5B4(Camera_x2D0* arg0)
@@ -2202,7 +2202,7 @@ void Camera_8002C5B4(Camera_x2D0* arg0)
     len = eye_offset_len(eye_offset);
 
     xz_dist =
-        sqrtf(eye_offset->x * eye_offset->x + *eye_offset_z * *eye_offset_z);
+        sqrtf(MU_P(eye_offset->x * eye_offset->x) + *eye_offset_z * *eye_offset_z);
 
     if (!pc_is_free_camera_enabled()) {
         PSVECCrossProduct(eye_offset, &cam->pause_up, &cross1);

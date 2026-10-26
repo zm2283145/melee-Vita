@@ -301,7 +301,7 @@ void ftKb_SpecialN_800F5DE8(Fighter_GObj* gobj)
     pos.x += da->specialn_x_offset_inhaled * fp->facing_dir;
     pos.y += da->specialn_y_offset_inhaled;
     if (it_802F23AC(fp->target_item_gobj, &pos) <
-        da->specialn_inhale_velocity * da->specialn_inhale_velocity)
+        MU_P(da->specialn_inhale_velocity * da->specialn_inhale_velocity))
     {
         it_802F2810(fp->target_item_gobj);
         if (fp->ground_or_air == GA_Air) {
@@ -322,7 +322,7 @@ void ftKb_SpecialN_800F5EA8(Fighter_GObj* gobj)
     pos.x += da->specialn_x_offset_inhaled * fp->facing_dir;
     pos.y += da->specialn_y_offset_inhaled;
     if (ftCo_800BD19C(fp->victim_gobj, &pos) <
-        da->specialn_inhale_velocity * da->specialn_inhale_velocity)
+        MU_P(da->specialn_inhale_velocity * da->specialn_inhale_velocity))
     {
         ftCo_800BD620(fp->victim_gobj);
         if (fp->ground_or_air == GA_Air) {

@@ -1,4 +1,8 @@
+#include <melee/slippi/slippi_rules.h>
+#include <string.h>
 #include "fighter.h"
+#include <melee/slippi/slippi_replay.h>
+#include <melee/slippi/slippi_ucf.h>
 
 #include <math.h>
 #include <placeholder.h>
@@ -867,6 +871,9 @@ Fighter_GObj* Fighter_Create(struct plAllocInfo* input)
      * contents. For example, Luigi's @c x222C_cycloneCharge.
      */
     fp = HSD_ObjAlloc(&fighter_alloc_data);
+    if (mp_slippi_rule(MP_SR_INIT_PLAYER)) {
+        memset(fp, 0, sizeof(Fighter));
+    }
     fp->dat_attrs_backup = HSD_ObjAlloc(&fighter_dat_attrs_alloc_data);
     GObj_InitUserData(gobj, 4U, &Fighter_Unload_8006DABC, fp);
     ftData_8008572C(input->internal_id);
@@ -1611,7 +1618,9 @@ void Fighter_8006A360(Fighter_GObj* gobj)
 
         if (!fp->is_sub_fighter && Camera_80031144() == 1.0f) {
             if (fp->dmg.x1830_percent < p_ftCommonData->x7B0) {
-                if (ifMagnify_802FC998(fp->player_id) &&
+                if ((mp_slippi_rule(MP_SR_OFFSCREEN)
+                         ? mp_slippi_offscreen_zone(fp)
+                         : ifMagnify_802FC998(fp->player_id)) &&
                     (Player_GetMoreFlagsBit3(fp->player_id) != 0))
                 {
                     fp->dmg.x1910++;
@@ -1916,6 +1925,7 @@ void Fighter_Spaghetti_8006AD10(Fighter_GObj* gobj)
                 }
             }
 
+            mp_slippi_replay_input(fp);
             Fighter_Spaghetti_8006AD10_Inner1(fp);
 
             // Fighter_ClampSpecificValue
@@ -2052,6 +2062,7 @@ void Fighter_Spaghetti_8006AD10(Fighter_GObj* gobj)
             }
 
             // Fighter_ClampSpecificValue
+            mp_ucf_input(fp);
             fp->active_duration.trigger++;
             if (fp->active_duration.trigger > 254) {
                 fp->active_duration.trigger = 254;
@@ -2216,12 +2227,12 @@ void Fighter_procUpdate(Fighter_GObj* gobj)
                     {
                         p_kb_vel->x = p_kb_vel->y = 0;
                     } else {
-                        p_kb_vel->x -=
-                            p_ftCommonData->x204_knockbackFrameDecay *
-                            cosf(kb_angle);
-                        p_kb_vel->y -=
-                            p_ftCommonData->x204_knockbackFrameDecay *
-                            sinf(kb_angle);
+                        p_kb_vel->x = mu_fnmsubs(
+                            p_ftCommonData->x204_knockbackFrameDecay,
+                            cosf(kb_angle), p_kb_vel->x);
+                        p_kb_vel->y = mu_fnmsubs(
+                            p_ftCommonData->x204_knockbackFrameDecay,
+                            sinf(kb_angle), p_kb_vel->y);
                     }
                 }
 
@@ -2270,12 +2281,12 @@ void Fighter_procUpdate(Fighter_GObj* gobj)
                     // p_stc_ftcommon->x3e8_shield_kb_frameDecay)/atkShieldKB_len
                     // float atkShieldKBAngle = atan2_80022C30(pAtkShieldKB->y,
                     // pAtkShieldKB->x);
-                    pAtkShieldKB->x -=
-                        p_ftCommonData->x3E8_shieldKnockbackFrameDecay *
-                        cosf(atkShieldKBAngle);
-                    pAtkShieldKB->y -=
-                        p_ftCommonData->x3E8_shieldKnockbackFrameDecay *
-                        sinf(atkShieldKBAngle);
+                    pAtkShieldKB->x = mu_fnmsubs(
+                        p_ftCommonData->x3E8_shieldKnockbackFrameDecay,
+                        cosf(atkShieldKBAngle), pAtkShieldKB->x);
+                    pAtkShieldKB->y = mu_fnmsubs(
+                        p_ftCommonData->x3E8_shieldKnockbackFrameDecay,
+                        sinf(atkShieldKBAngle), pAtkShieldKB->y);
                 }
                 fp->xF4_ground_attacker_shield_kb_vel = 0;
             } else {
@@ -3086,6 +3097,7 @@ void Fighter_UnkCallCameraCallback_8006D9EC(Fighter_GObj* gobj)
             fp->cam_cb(gobj);
         }
     }
+    mp_slippi_replay_post_frame(fp);
 }
 
 void Fighter_8006DA4C(Fighter_GObj* gobj)

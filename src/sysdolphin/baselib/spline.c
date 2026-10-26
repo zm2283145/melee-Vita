@@ -22,9 +22,12 @@ f32 splGetHelmite(f32 fterm, f32 time, f32 p0, f32 p1, f32 d0, f32 d1)
     _2t3_T3 = 2.0f * t3_T2 * fterm;
     _3t2_T2 = 3.0f * _1_T2 * t2;
 
-    return (d1 * (t3_T2 - t2_T)) + ((d0 * (time + ((t3_T2 - t2_T) - t2_T))) +
-                                    ((p0 * (1.0f + (_2t3_T3 - _3t2_T2))) +
-                                     (p1 * (-_2t3_T3 + _3t2_T2))));
+    {
+        f32 value = p1 * (-_2t3_T3 + _3t2_T2);
+        value = mu_fmadds(p0, 1.0f + (_2t3_T3 - _3t2_T2), value);
+        value = mu_fmadds(d0, time + ((t3_T2 - t2_T) - t2_T), value);
+        return mu_fmadds(d1, t3_T2 - t2_T, value);
+    }
 }
 
 static inline void splGetCardinalPoint(Vec3* p, Vec3* cp, f32 tension, f32 u)

@@ -488,8 +488,8 @@ void ftPk_SpecialHi_80126C0C(HSD_GObj* gobj)
     ftPikachuAttributes* pika_attr = fp->dat_attrs;
 
     // distance formula
-    float stick_mag = sqrtf(fp->input.lstick[0].x * fp->input.lstick[0].x +
-                            fp->input.lstick[0].y * fp->input.lstick[0].y);
+    float stick_mag = sqrtf(MU_P(fp->input.lstick[0].x * fp->input.lstick[0].x) +
+                            MU_P(fp->input.lstick[0].y * fp->input.lstick[0].y));
 
     // cap stick magnitude to MAX_STICK_MAG
     if (stick_mag > MAX_STICK_MAG) {
@@ -562,8 +562,8 @@ void ftPk_SpecialHi_80126E1C(HSD_GObj* gobj)
 
     // distance formula
     float temp_stick_mag =
-        sqrtf((fp->input.lstick[0].x * fp->input.lstick[0].x) +
-              (fp->input.lstick[0].y * fp->input.lstick[0].y));
+        sqrtf((MU_P(fp->input.lstick[0].x * fp->input.lstick[0].x)) +
+              (MU_P(fp->input.lstick[0].y * fp->input.lstick[0].y)));
 
     final_stick_mag = temp_stick_mag;
 
@@ -646,8 +646,8 @@ bool ftPk_SpecialHi_80127064(HSD_GObj* gobj)
     ftPikachuAttributes* pika_attr = fp->dat_attrs;
 
     // distance formula
-    float stick_mag = sqrtf((fp->input.lstick[0].x * fp->input.lstick[0].x) +
-                            (fp->input.lstick[0].y * fp->input.lstick[0].y));
+    float stick_mag = sqrtf((MU_P(fp->input.lstick[0].x * fp->input.lstick[0].x)) +
+                            (MU_P(fp->input.lstick[0].y * fp->input.lstick[0].y)));
 
     // if stick_mag is less than the threshold, push the max stick magnitude
     // onto the stack and return 0

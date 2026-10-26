@@ -243,7 +243,7 @@ void itSamusmissile_UnkMotion0_Phys(Item_GObj* gobj)
         inlineA0(gobj, &vec);
         itSamusmissile_SetRotationX(gobj);
     } else {
-        if (VEC2_SQ_LEN(ip->x40_vel) > SQ(sa0->x14)) {
+        if (VEC2_SQ_LEN(ip->x40_vel) > MU_P(SQ(sa0->x14))) {
             ip->x40_vel.x *= sa0->x10;
             ip->x40_vel.y *= sa0->x10;
         }

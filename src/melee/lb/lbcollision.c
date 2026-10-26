@@ -1271,8 +1271,8 @@ bool lbColl_80006E58(Vec3* hit_start, Vec3* hit_end, Vec3* hurt_start,
                         (hit_delta.x * offset.x + midpoint.y * offset.y);
     }
     hurt_len_sq = axis.y * axis.y;
-    hurt_len_sq = axis.x * axis.x + hurt_len_sq;
-    hurt_len_sq = axis.z * axis.z + hurt_len_sq;
+    hurt_len_sq = mu_fmadds(axis.x, axis.x, hurt_len_sq);
+    hurt_len_sq = mu_fmadds(axis.z, axis.z, hurt_len_sq);
     closest_denom = (hit_len_sq * hurt_len_sq) - (segment_dot * segment_dot);
     (void) hit_len_sq;
     if (approximatelyZero(hurt_len_sq)) {
@@ -1512,8 +1512,8 @@ void lbColl_800077A0(Vec3* a, MtxPtr arg1, Vec3* b, Vec3* c, Vec3* d, Vec3* e,
         diff_ba.y = b->y - a->y;
         diff_ba.z = b->z - a->z;
 
-        dot_diff_cb = diff_cb.x * diff_cb.x + diff_cb.y * diff_cb.y +
-                      diff_cb.z * diff_cb.z;
+        dot_diff_cb = MU_P(diff_cb.x * diff_cb.x) + MU_P(diff_cb.y * diff_cb.y) +
+                      MU_P(diff_cb.z * diff_cb.z);
 
         if (approximatelyZero(dot_diff_cb)) {
             scl = 0.0f;

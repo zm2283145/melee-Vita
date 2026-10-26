@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_rules.h>
 #include "grpstadium.h"
 
 #include <sysdolphin/baselib/forward.h>
@@ -903,7 +904,9 @@ void grStadium_801D2344(Ground_GObj* g)
         temp_r3_8->flag = 0;
         if (gp->u.display.xDC == NULL ||
             Player_GetEntity(gp->u.display.xEE) == NULL ||
-            Player_8003219C(gp->u.display.xEE) || !grStadium_801D32D0(gobj))
+            Player_8003219C(gp->u.display.xEE) ||
+            !mp_slippi_ps_monitor_ok(gp->u.display.xEE,
+                                     grStadium_801D32D0(gobj)))
         {
             grStadium_801D2A60(gobj);
         }
@@ -1225,6 +1228,7 @@ HSD_GObj* grStadium_801D2D78(void)
     GObj_InitUserData(temp_r3, 3, HSD_Free, wrapper);
     memzero(&wrapper->desc, sizeof(wrapper->desc));
     lb_800121FC(&wrapper->desc, 0x280, 0x196, 4, 0x7D3);
+    mp_slippi_clear_image(&wrapper->desc);
     wrapper->flag = true;
     return temp_r3;
 }
@@ -1238,6 +1242,7 @@ HSD_GObj* grStadium_801D2E24(void)
     GObj_InitUserData(gobj, 3, HSD_Free, wrapper);
     memzero(&wrapper->desc, sizeof(HSD_ImageDesc));
     lb_800121FC(&wrapper->desc, 0x7C, 0x50, 4, 0x7D4);
+    mp_slippi_clear_image(&wrapper->desc);
     wrapper->flag = false;
     return gobj;
 }
@@ -2035,7 +2040,8 @@ void grStadium_801D4548(Ground_GObj* gobj)
 
     temp_r31 = GET_GROUND(gobj);
     temp_f31 = Ground_801C0498();
-    if (gm_8018841C() != 0) {
+    if (gm_8018841C() != 0 || (mp_slippi_rule(MP_SR_PS_FROZEN) &&
+                               mp_slippi_rules_frozen_stadium())) {
         return;
     }
 
@@ -2099,14 +2105,23 @@ void grStadium_801D4548(Ground_GObj* gobj)
             gp = GET_GROUND(map_gobj);
             HSD_ASSERT(0x99B, gp);
             gp->u.stadium.xC4_b1 = true;
-            lbFile_80016580(datfiles[var_r29], gp->u.stadium.xCC,
-                            &gp->u.stadium.xC8, fn_801D4220, NULL);
+            if (mp_slippi_rule(MP_SR_PS_LOAD)) {
+                gp->u.stadium.xC8 = lbFileGetSize(datfiles[var_r29]);
+                lbFile_8001668C(datfiles[var_r29], gp->u.stadium.xCC,
+                                &gp->u.stadium.xC8);
+                gp->u.stadium.xD0 = grDatFiles_801C6478(
+                    gp->u.stadium.xCC, gp->u.stadium.xC8);
+            } else {
+                lbFile_80016580(datfiles[var_r29], gp->u.stadium.xCC,
+                                &gp->u.stadium.xC8, fn_801D4220, NULL);
+            }
             temp_r31->u.stadium.xDC = 1;
             return;
         }
         break;
     case 1:
-        if (grStadium_801D42B8()) {
+        if (mp_slippi_rule(MP_SR_PS_LOAD) ? mp_slippi_ps_archive_valid()
+                                          : grStadium_801D42B8()) {
             temp_r31->u.stadium.xDC = 2;
             return;
         }

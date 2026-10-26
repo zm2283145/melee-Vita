@@ -920,7 +920,7 @@ void it_802775F0(Item_GObj* item_gobj, Vec3* arg1)
 
     temp_sqrt = 0.0f;
     if (item->spin_spd != temp_sqrt) {
-        temp_sqrt = sqrtf_accurate_sp18(SQ(arg1->x) + SQ(arg1->y));
+        temp_sqrt = sqrtf_accurate_sp18(MU_P(SQ(arg1->x)) + MU_P(SQ(arg1->y)));
         item->xD3C_spinSpeed = 0.85f * (temp_sqrt / item->xC1C.bottom);
         if ((arg1->x < 0.0f ? -1 : 1) != (item->facing_dir < 0.0f ? -1 : 1)) {
             item->xD3C_spinSpeed = -item->xD3C_spinSpeed;
@@ -995,7 +995,7 @@ static inline float sqrtf_accurate_local(float x)
 
 static inline float return_sqrt_value(Vec3* v)
 {
-    return sqrtf_accurate_local(product_xy(v, v));
+    return sqrtf_accurate_local(MU_P(v->x * v->x) + MU_P(v->y * v->y));
 }
 
 bool it_8027781C(Item_GObj* item_gobj)

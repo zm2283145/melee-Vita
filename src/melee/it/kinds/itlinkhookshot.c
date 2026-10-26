@@ -883,6 +883,26 @@ float it_802A3C98(Vec3* arg0, Vec3* arg1, Vec3* arg2)
     arg2->z *= inv;
     return len;
 }
+/* Slippi determinism: the inlined copy the console uses in this file. */
+static inline float mp_it_802A3C98_inl(Vec3* arg0, Vec3* arg1, Vec3* arg2)
+{
+    f32 inv;
+    f32 len;
+    arg2->x = arg0->x - arg1->x;
+    arg2->y = arg0->y - arg1->y;
+    arg2->z = arg0->z - arg1->z;
+    len = sqrtf(arg2->x * arg2->x + arg2->y * arg2->y + arg2->z * arg2->z);
+    if (len == (f64) 0.0F) {
+        inv = (f64) 0.0F;
+    } else {
+        inv = (f64) 1.0F / len;
+    }
+    arg2->x *= inv;
+    arg2->y *= inv;
+    arg2->z *= inv;
+    return len;
+}
+#define it_802A3C98(a0, a1, a2) mp_it_802A3C98_inl(a0, a1, a2)
 
 s32 it_802A3D90(ItemLink* item_link)
 {

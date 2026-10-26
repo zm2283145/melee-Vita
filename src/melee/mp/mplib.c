@@ -1046,7 +1046,7 @@ int mpLineGetNext(int line_id)
             CollVtx* v1 = &groundCollVtx[groundCollLine[line_id].x0->v1_idx];
             CollVtx* v0 = &groundCollVtx[groundCollLine[result].x0->v0_idx];
 
-            if (SQ(v1->pos.x - v0->pos.x) + SQ(v1->pos.y - v0->pos.y) < 4.0) {
+            if (MU_P(SQ(v1->pos.x - v0->pos.x)) + MU_P(SQ(v1->pos.y - v0->pos.y)) < 4.0) {
                 return ret;
             }
         }
@@ -1067,7 +1067,7 @@ int mpLineGetPrev(int line_id)
             CollVtx* v0 = &groundCollVtx[groundCollLine[line_id].x0->v0_idx];
             CollVtx* v1 = &groundCollVtx[groundCollLine[result].x0->v1_idx];
 
-            if (SQ(v0->pos.x - v1->pos.x) + SQ(v0->pos.y - v1->pos.y) < 4.0) {
+            if (MU_P(SQ(v0->pos.x - v1->pos.x)) + MU_P(SQ(v0->pos.y - v1->pos.y)) < 4.0) {
                 return ret;
             }
         }
@@ -1598,7 +1598,7 @@ void mpLib_8004ED5C(int line_id, float* x0_out, float* y0_out, float* x1_out,
     y1_f3 = groundCollVtx[i1].pos.y;
 
     if (mpLineGetPrev(line_id) != -1) {
-        distance = sqrtf(SQ(x0_f0 - x1_f2) + SQ(y0_f1 - y1_f3));
+        distance = sqrtf(MU_P(SQ(x0_f0 - x1_f2)) + MU_P(SQ(y0_f1 - y1_f3)));
         if (distance > 0.001F) {
             x0_f0 += (x0_f0 - x1_f2) / distance;
             y0_f1 += (y0_f1 - y1_f3) / distance;
@@ -1608,7 +1608,7 @@ void mpLib_8004ED5C(int line_id, float* x0_out, float* y0_out, float* x1_out,
 
     if (mpLineGetNext(line_id) != -1) {
         if (!calculated_distance) {
-            distance = sqrtf(SQ(x0_f0 - x1_f2) + SQ(y0_f1 - y1_f3));
+            distance = sqrtf(MU_P(SQ(x0_f0 - x1_f2)) + MU_P(SQ(y0_f1 - y1_f3)));
         }
         if (distance > 0.001F) {
             x1_f2 += (x1_f2 - x0_f0) / distance;
@@ -1699,7 +1699,7 @@ bool mpCheckFloor(float ax, float ay, float bx, float by, float y_offset,
                 if (mpLineIntersection(x0_sp48, y0_sp44, x1_sp40, y1_sp3C, ax,
                                        ay, bx, by, &px_sp54, &py_sp50))
                 {
-                    dist2 = SQ(px_sp54 - ax) + SQ(py_sp50 - ay);
+                    dist2 = MU_P(SQ(px_sp54 - ax)) + MU_P(SQ(py_sp50 - ay));
                     if (min_dist2_f30 > dist2) {
                         min_dist2_f30 = dist2;
                         if (vec_out != NULL) {
@@ -1727,7 +1727,7 @@ bool mpCheckFloor(float ax, float ay, float bx, float by, float y_offset,
                     mpLineIntersectionH(&px_sp54, &py_sp50, x0_sp48, y0_sp44,
                                         x1_sp40, ax, ay, bx, by))
                 {
-                    dist2 = SQ(px_sp54 - ax) + SQ(py_sp50 - ay);
+                    dist2 = MU_P(SQ(px_sp54 - ax)) + MU_P(SQ(py_sp50 - ay));
                     if (min_dist2_f30 > dist2) {
                         min_dist2_f30 = dist2;
                         if (vec_out != NULL) {
@@ -1859,8 +1859,8 @@ bool mpCheckFloorRemap(float ax, float ay, float bx, float by, float y_offset,
                     if (mpLineIntersection(x0, y0, x1, y1, ax, ay, bx, by,
                                            &int_x, &int_y))
                     {
-                        dx2 = SQ(int_x - old_x);
-                        dy2 = SQ(int_y - old_y);
+                        dx2 = MU_P(SQ(int_x - old_x));
+                        dy2 = MU_P(SQ(int_y - old_y));
                         dist2 = dx2 + dy2;
 
                         if (dx * (int_x - old_x) + dy * (int_y - old_y) < 0.0F)
@@ -1894,8 +1894,8 @@ bool mpCheckFloorRemap(float ax, float ay, float bx, float by, float y_offset,
                            mpLineIntersectionH(&int_x, &int_y, x0, y0, x1, ax,
                                                ay, bx, by))
                 {
-                    dx2 = SQ(int_x - old_x);
-                    dy2 = SQ(int_y - old_y);
+                    dx2 = MU_P(SQ(int_x - old_x));
+                    dy2 = MU_P(SQ(int_y - old_y));
                     dist2 = dx2 + dy2;
 
                     if (dx * (int_x - old_x) + dy * (int_y - old_y) < 0.0F) {
@@ -2003,7 +2003,7 @@ bool mpCheckCeiling(float ax, float ay, float bx, float by, Vec3* vec_out,
                 if (mpLineIntersection(x0, y0, x1, y1, ax, ay, bx, by, &int_x,
                                        &int_y))
                 {
-                    dist2 = SQ(int_x - ax) + SQ(int_y - ay);
+                    dist2 = MU_P(SQ(int_x - ax)) + MU_P(SQ(int_y - ay));
                     if (min_dist2 > dist2) {
                         min_dist2 = dist2;
 
@@ -2035,7 +2035,7 @@ bool mpCheckCeiling(float ax, float ay, float bx, float by, Vec3* vec_out,
                 if (ay <= by && mpLineIntersectionH(&int_x, &int_y, x0, y0, x1,
                                                     ax, ay, bx, by))
                 {
-                    dist2 = SQ(int_x - ax) + SQ(int_y - ay);
+                    dist2 = MU_P(SQ(int_x - ax)) + MU_P(SQ(int_y - ay));
                     if (min_dist2 > dist2) {
                         min_dist2 = dist2;
 
@@ -2158,8 +2158,8 @@ bool mpCheckCeilingRemap(float ax, float ay, float bx, float by, Vec3* vec_out,
                     if (mpLineIntersection(sp44, sp40, sp3C, sp38, ax, ay, bx,
                                            by, &sp58, &sp54))
                     {
-                        dx2 = SQ(sp58 - f29);
-                        dy2 = SQ(sp54 - f28);
+                        dx2 = MU_P(SQ(sp58 - f29));
+                        dy2 = MU_P(SQ(sp54 - f28));
                         dist2 = dx2 + dy2;
                         if ((x_f23 * (sp58 - f29)) + (y_f22 * (sp54 - f28)) <
                             0.0F)
@@ -2198,8 +2198,8 @@ bool mpCheckCeilingRemap(float ax, float ay, float bx, float by, Vec3* vec_out,
                         mpLineIntersectionH(&sp58, &sp54, sp44, sp40, sp3C, ax,
                                             ay, bx, by))
                     {
-                        dx2 = SQ(sp58 - f29);
-                        dy2 = SQ(sp54 - f28);
+                        dx2 = MU_P(SQ(sp58 - f29));
+                        dy2 = MU_P(SQ(sp54 - f28));
                         dist2 = dx2 + dy2;
                         if ((x_f23 * (sp58 - f29)) + (y_f22 * (sp54 - f28)) <
                             0.0F)
@@ -2371,8 +2371,8 @@ bool mpCheckLeftWall(float ax, float ay, float bx, float by, Vec3* vec_out,
                     if (mpLineIntersection(x0, y0, x1, y1, ax, ay, bx, by,
                                            &int_x, &int_y))
                     {
-                        dx2 = SQ(int_x - ax);
-                        dy2 = SQ(int_y - ay);
+                        dx2 = MU_P(SQ(int_x - ax));
+                        dy2 = MU_P(SQ(int_y - ay));
                         dist2 = dx2 + dy2;
                         if (min_dist2 > dist2) {
                             min_dist2 = dist2;
@@ -2401,8 +2401,8 @@ bool mpCheckLeftWall(float ax, float ay, float bx, float by, Vec3* vec_out,
                         mpLineIntersectionV(&int_x, &int_y, x0, y0, y1, ax, ay,
                                             bx, by))
                     {
-                        dx2 = SQ(int_x - ax);
-                        dy2 = SQ(int_y - ay);
+                        dx2 = MU_P(SQ(int_x - ax));
+                        dy2 = MU_P(SQ(int_y - ay));
                         dist2 = dx2 + dy2;
                         if (min_dist2 > dist2) {
                             min_dist2 = dist2;
@@ -2524,8 +2524,8 @@ bool mpCheckLeftWallRemap(float ax, float ay, float bx, float by,
                     if (mpLineIntersection(x0, y0, x1, y1, ax, ay, bx, by,
                                            &int_x, &int_y))
                     {
-                        dx2 = SQ(int_x - old_x);
-                        dy2 = SQ(int_y - old_y);
+                        dx2 = MU_P(SQ(int_x - old_x));
+                        dy2 = MU_P(SQ(int_y - old_y));
                         dist2 = dx2 + dy2;
                         if ((dx * (int_x - old_x)) + (dy * (int_y - old_y)) <
                             0.0F)
@@ -2564,8 +2564,8 @@ bool mpCheckLeftWallRemap(float ax, float ay, float bx, float by,
                     if (ax <= bx && mpLineIntersectionV(&int_x, &int_y, x0, y0,
                                                         y1, ax, ay, bx, by))
                     {
-                        dx2 = SQ(int_x - old_x);
-                        dy2 = SQ(int_y - old_y);
+                        dx2 = MU_P(SQ(int_x - old_x));
+                        dy2 = MU_P(SQ(int_y - old_y));
                         dist2 = dx2 + dy2;
                         if ((dx * (int_x - old_x)) + (dy * (int_y - old_y)) <
                             0.0F)
@@ -2683,8 +2683,8 @@ bool mpCheckRightWall(float ax, float ay, float bx, float by, Vec3* vec_out,
                     if (mpLineIntersection(x0, y0, x1, y1, ax, ay, bx, by,
                                            &int_x, &int_y))
                     {
-                        dx2 = SQ(int_x - ax);
-                        dy2 = SQ(int_y - ay);
+                        dx2 = MU_P(SQ(int_x - ax));
+                        dy2 = MU_P(SQ(int_y - ay));
                         dist2 = dx2 + dy2;
                         if (min_dist2 > dist2) {
                             min_dist2 = dist2;
@@ -2712,8 +2712,8 @@ bool mpCheckRightWall(float ax, float ay, float bx, float by, Vec3* vec_out,
                     if (ax >= bx && mpLineIntersectionV(&int_x, &int_y, x0, y0,
                                                         y1, ax, ay, bx, by))
                     {
-                        dx2 = SQ(int_x - ax);
-                        dy2 = SQ(int_y - ay);
+                        dx2 = MU_P(SQ(int_x - ax));
+                        dy2 = MU_P(SQ(int_y - ay));
                         dist2 = dx2 + dy2;
                         if (min_dist2 > dist2) {
                             min_dist2 = dist2;
@@ -2836,8 +2836,8 @@ bool mpCheckRightWallRemap(float ax, float ay, float bx, float by,
                     if (mpLineIntersection(x0, y0, x1, y1, ax, ay, bx, by,
                                            &int_x, &int_y))
                     {
-                        dx2 = SQ(int_x - old_x);
-                        dy2 = SQ(int_y - old_y);
+                        dx2 = MU_P(SQ(int_x - old_x));
+                        dy2 = MU_P(SQ(int_y - old_y));
                         dist2 = dx2 + dy2;
                         if ((dx * (int_x - old_x)) + (dy * (int_y - old_y)) <
                             0.0F)
@@ -2876,8 +2876,8 @@ bool mpCheckRightWallRemap(float ax, float ay, float bx, float by,
                     if (ax >= bx && mpLineIntersectionV(&int_x, &int_y, x0, y0,
                                                         y1, ax, ay, bx, by))
                     {
-                        dx2 = SQ(int_x - old_x);
-                        dy2 = SQ(int_y - old_y);
+                        dx2 = MU_P(SQ(int_x - old_x));
+                        dy2 = MU_P(SQ(int_y - old_y));
                         dist2 = dx2 + dy2;
                         if ((dx * (int_x - old_x)) + (dy * (int_y - old_y)) <
                             0.0F)
@@ -3007,7 +3007,7 @@ bool mpLib_800511A4_RightWall(float ax, float ay, float bx, float by, float cx,
                         if (mpLineIntersection(cx, cy, dx, dy, x, y, x0, y0,
                                                &int_x, &int_y))
                         {
-                            dist2 = SQ(int_x - x1) + SQ(int_y - y1);
+                            dist2 = MU_P(SQ(int_x - x1)) + MU_P(SQ(int_y - y1));
                             if ((vdx * (int_x - x1)) + (vdy * (int_y - y1)) <
                                 0.0F)
                             {
@@ -3039,7 +3039,7 @@ bool mpLib_800511A4_RightWall(float ax, float ay, float bx, float by, float cx,
                         if (mpLineIntersection(cx, cy, dx, dy, x, y, x0, y0,
                                                &int_x, &int_y))
                         {
-                            dist2 = SQ(int_x - x1) + SQ(int_y - y1);
+                            dist2 = MU_P(SQ(int_x - x1)) + MU_P(SQ(int_y - y1));
                             if ((vdx * (int_x - x1)) + (vdy * (int_y - y1)) <
                                 0.0F)
                             {
@@ -3152,7 +3152,7 @@ bool mpLib_800515A0_LeftWall(float a0x, float a0y, float a1x, float a1y,
                         if (mpLineIntersection(b0x, b0y, b1x, b1y, x, y, x0,
                                                y0, &int_x, &int_y))
                         {
-                            dist2 = SQ(int_x - x1) + SQ(int_y - y1);
+                            dist2 = MU_P(SQ(int_x - x1)) + MU_P(SQ(int_y - y1));
                             if ((vdx * (int_x - x1)) + (vdy * (int_y - y1)) <
                                 0.0F)
                             {
@@ -3185,7 +3185,7 @@ bool mpLib_800515A0_LeftWall(float a0x, float a0y, float a1x, float a1y,
                         if (mpLineIntersection(b0x, b0y, b1x, b1y, x, y, x0,
                                                y0, &int_x, &int_y))
                         {
-                            dist2 = SQ(int_x - x1) + SQ(int_y - y1);
+                            dist2 = MU_P(SQ(int_x - x1)) + MU_P(SQ(int_y - y1));
                             if ((vdx * (int_x - x1)) + (vdy * (int_y - y1)) <
                                 0.0F)
                             {
@@ -3480,8 +3480,8 @@ bool mpCheckMultiple(float x0, float y0, float x1, float y1, Vec3* pos_out,
                               &temp_flags, &temp_normal, -1, joint_id_skip,
                               joint_id_only, NULL, NULL))
         {
-            dx = SQ(temp_pos.x - x0);
-            dy = SQ(temp_pos.y - y0);
+            dx = MU_P(SQ(temp_pos.x - x0));
+            dy = MU_P(SQ(temp_pos.y - y0));
             pos = temp_pos;
             normal = temp_normal;
             min_dist2 = dx + dy;
@@ -3493,8 +3493,8 @@ bool mpCheckMultiple(float x0, float y0, float x1, float y1, Vec3* pos_out,
                                 &temp_flags, &temp_normal, joint_id_skip,
                                 joint_id_only))
         {
-            dx = SQ(temp_pos.x - x0);
-            dy = SQ(temp_pos.y - y0);
+            dx = MU_P(SQ(temp_pos.x - x0));
+            dy = MU_P(SQ(temp_pos.y - y0));
             if (min_dist2 > dx + dy) {
                 min_dist2 = dx + dy;
                 pos = temp_pos;
@@ -3508,8 +3508,8 @@ bool mpCheckMultiple(float x0, float y0, float x1, float y1, Vec3* pos_out,
                                  &temp_flags, &temp_normal, joint_id_skip,
                                  joint_id_only))
         {
-            dx = SQ(temp_pos.x - x0);
-            dy = SQ(temp_pos.y - y0);
+            dx = MU_P(SQ(temp_pos.x - x0));
+            dy = MU_P(SQ(temp_pos.y - y0));
             if (min_dist2 > dx + dy) {
                 min_dist2 = dx + dy;
                 pos = temp_pos;
@@ -3523,8 +3523,8 @@ bool mpCheckMultiple(float x0, float y0, float x1, float y1, Vec3* pos_out,
                                   &temp_flags, &temp_normal, joint_id_skip,
                                   joint_id_only))
         {
-            dx = SQ(temp_pos.x - x0);
-            dy = SQ(temp_pos.y - y0);
+            dx = MU_P(SQ(temp_pos.x - x0));
+            dy = MU_P(SQ(temp_pos.y - y0));
             if (min_dist2 > dx + dy) {
                 min_dist2 = dx + dy;
                 pos = temp_pos;
@@ -3539,8 +3539,8 @@ bool mpCheckMultiple(float x0, float y0, float x1, float y1, Vec3* pos_out,
                          &temp_flags, &temp_normal, -1, joint_id_skip,
                          joint_id_only, NULL, NULL))
         {
-            dx = SQ(temp_pos.x - x0);
-            dy = SQ(temp_pos.y - y0);
+            dx = MU_P(SQ(temp_pos.x - x0));
+            dy = MU_P(SQ(temp_pos.y - y0));
             pos = temp_pos;
             normal = temp_normal;
             min_dist2 = dx + dy;
@@ -3552,8 +3552,8 @@ bool mpCheckMultiple(float x0, float y0, float x1, float y1, Vec3* pos_out,
                            &temp_flags, &temp_normal, joint_id_skip,
                            joint_id_only))
         {
-            dx = SQ(temp_pos.x - x0);
-            dy = SQ(temp_pos.y - y0);
+            dx = MU_P(SQ(temp_pos.x - x0));
+            dy = MU_P(SQ(temp_pos.y - y0));
             if (min_dist2 > dx + dy) {
                 min_dist2 = dx + dy;
                 pos = temp_pos;
@@ -3567,8 +3567,8 @@ bool mpCheckMultiple(float x0, float y0, float x1, float y1, Vec3* pos_out,
                             &temp_flags, &temp_normal, joint_id_skip,
                             joint_id_only))
         {
-            dx = SQ(temp_pos.x - x0);
-            dy = SQ(temp_pos.y - y0);
+            dx = MU_P(SQ(temp_pos.x - x0));
+            dy = MU_P(SQ(temp_pos.y - y0));
             if (min_dist2 > dx + dy) {
                 min_dist2 = dx + dy;
                 pos = temp_pos;
@@ -3582,8 +3582,8 @@ bool mpCheckMultiple(float x0, float y0, float x1, float y1, Vec3* pos_out,
                              &temp_flags, &temp_normal, joint_id_skip,
                              joint_id_only))
         {
-            dx = SQ(temp_pos.x - x0);
-            dy = SQ(temp_pos.y - y0);
+            dx = MU_P(SQ(temp_pos.x - x0));
+            dy = MU_P(SQ(temp_pos.y - y0));
             if (min_dist2 > dx + dy) {
                 min_dist2 = dx + dy;
                 pos = temp_pos;
@@ -3639,7 +3639,7 @@ static inline int mpLineGetNextCheckInline(MapLine* line, s16 result)
             CollVtx* v1 = &groundCollVtx[line->v1_idx];
             CollVtx* v0 = &groundCollVtx[groundCollLine[result].x0->v0_idx];
 
-            if (SQ(v1->pos.x - v0->pos.x) + SQ(v1->pos.y - v0->pos.y) < 4.0) {
+            if (MU_P(SQ(v1->pos.x - v0->pos.x)) + MU_P(SQ(v1->pos.y - v0->pos.y)) < 4.0) {
                 return result;
             }
         }
@@ -3657,7 +3657,7 @@ static inline int mpLineGetPrevCheckInline(MapLine* line, s16 result)
             CollVtx* v0 = &groundCollVtx[line->v0_idx];
             CollVtx* v1 = &groundCollVtx[groundCollLine[result].x0->v1_idx];
 
-            if (SQ(v0->pos.x - v1->pos.x) + SQ(v0->pos.y - v1->pos.y) < 4.0) {
+            if (MU_P(SQ(v0->pos.x - v1->pos.x)) + MU_P(SQ(v0->pos.y - v1->pos.y)) < 4.0) {
                 return result;
             }
         }
@@ -3676,7 +3676,7 @@ static inline int mpLineGetPrevCheckInlineVtx(MapLine* line, s16 result,
             CollVtx* v0 = &vtx[line->v0_idx];
             CollVtx* v1 = &vtx[groundCollLine[result].x0->v1_idx];
 
-            if (SQ(v0->pos.x - v1->pos.x) + SQ(v0->pos.y - v1->pos.y) < 4.0) {
+            if (MU_P(SQ(v0->pos.x - v1->pos.x)) + MU_P(SQ(v0->pos.y - v1->pos.y)) < 4.0) {
                 return result;
             }
         }
@@ -3696,7 +3696,7 @@ static inline int mpLineGetNextCheckInlineVtx(MapLine* line, s16 result,
             CollVtx* v1 = &vtx[line->v1_idx];
             CollVtx* v0 = &vtx[groundCollLine[result].x0->v0_idx];
 
-            if (SQ(v1->pos.x - v0->pos.x) + SQ(v1->pos.y - v0->pos.y) < 4.0) {
+            if (MU_P(SQ(v1->pos.x - v0->pos.x)) + MU_P(SQ(v1->pos.y - v0->pos.y)) < 4.0) {
                 return result;
             }
         }
@@ -3908,7 +3908,7 @@ static inline int mpLineGetNextInline(int line_id)
             CollVtx* v1 = &groundCollVtx[groundCollLine[line_id].x0->v1_idx];
             CollVtx* v0 = &groundCollVtx[groundCollLine[result].x0->v0_idx];
 
-            if (SQ(v1->pos.x - v0->pos.x) + SQ(v1->pos.y - v0->pos.y) < 4.0) {
+            if (MU_P(SQ(v1->pos.x - v0->pos.x)) + MU_P(SQ(v1->pos.y - v0->pos.y)) < 4.0) {
                 return result;
             }
         }
@@ -3929,7 +3929,7 @@ static inline int mpLineGetNextCachedInline(int line_id)
             CollVtx* v1 = &groundCollVtx[line->v1_idx];
             CollVtx* v0 = &groundCollVtx[groundCollLine[result].x0->v0_idx];
 
-            if (SQ(v1->pos.x - v0->pos.x) + SQ(v1->pos.y - v0->pos.y) < 4.0) {
+            if (MU_P(SQ(v1->pos.x - v0->pos.x)) + MU_P(SQ(v1->pos.y - v0->pos.y)) < 4.0) {
                 return result;
             }
         }
@@ -3947,7 +3947,7 @@ static inline int mpLineGetNextCheckResultFirst(int result, MapLine* line)
             CollVtx* v1 = &groundCollVtx[line->v1_idx];
             CollVtx* v0 = &groundCollVtx[groundCollLine[result].x0->v0_idx];
 
-            if (SQ(v1->pos.x - v0->pos.x) + SQ(v1->pos.y - v0->pos.y) < 4.0) {
+            if (MU_P(SQ(v1->pos.x - v0->pos.x)) + MU_P(SQ(v1->pos.y - v0->pos.y)) < 4.0) {
                 return result;
             }
         }
@@ -3999,7 +3999,7 @@ static inline int mpLineGetPrevInline(int line_id)
             CollVtx* v0 = &groundCollVtx[line->v0_idx];
             CollVtx* v1 = &groundCollVtx[groundCollLine[result].x0->v1_idx];
 
-            if (SQ(v0->pos.x - v1->pos.x) + SQ(v0->pos.y - v1->pos.y) < 4.0) {
+            if (MU_P(SQ(v0->pos.x - v1->pos.x)) + MU_P(SQ(v0->pos.y - v1->pos.y)) < 4.0) {
                 return result;
             }
         }
@@ -4017,7 +4017,7 @@ static inline int mpLineGetPrevCheckResultFirst(int result, MapLine* line)
             CollVtx* v0 = &groundCollVtx[line->v0_idx];
             CollVtx* v1 = &groundCollVtx[groundCollLine[result].x0->v1_idx];
 
-            if (SQ(v0->pos.x - v1->pos.x) + SQ(v0->pos.y - v1->pos.y) < 4.0) {
+            if (MU_P(SQ(v0->pos.x - v1->pos.x)) + MU_P(SQ(v0->pos.y - v1->pos.y)) < 4.0) {
                 return result;
             }
         }
@@ -4575,7 +4575,7 @@ static inline int mpLineGetNextFrom(MapLine* line, const u32* flags_base)
             CollVtx* v1 = &groundCollVtx[line->v1_idx];
             CollVtx* v0 = &groundCollVtx[groundCollLine[result].x0->v0_idx];
 
-            if (SQ(v1->pos.x - v0->pos.x) + SQ(v1->pos.y - v0->pos.y) < 4.0) {
+            if (MU_P(SQ(v1->pos.x - v0->pos.x)) + MU_P(SQ(v1->pos.y - v0->pos.y)) < 4.0) {
                 return result;
             }
         }
@@ -4595,7 +4595,7 @@ static inline int mpLineGetPrevFrom(MapLine* line, const u32* flags_base)
             CollVtx* v0 = &groundCollVtx[line->v0_idx];
             CollVtx* v1 = &groundCollVtx[groundCollLine[result].x0->v1_idx];
 
-            if (SQ(v0->pos.x - v1->pos.x) + SQ(v0->pos.y - v1->pos.y) < 4.0) {
+            if (MU_P(SQ(v0->pos.x - v1->pos.x)) + MU_P(SQ(v0->pos.y - v1->pos.y)) < 4.0) {
                 return result;
             }
         }
@@ -5275,8 +5275,8 @@ bool mpLib_80056C54(int line_id, Vec3* pos, int* line_id_out, Vec3* vec_out,
     if (var_f25 > 0.0F) {
         while (true) {
             mpLineGetV1Pos(line_id, &sp4C);
-            x_f2 = SQ(sp58.x - sp4C.x);
-            y_f0 = SQ(sp58.y - sp4C.y);
+            x_f2 = MU_P(SQ(sp58.x - sp4C.x));
+            y_f0 = MU_P(SQ(sp58.y - sp4C.y));
             dist_f28 = sqrtf_store(x_f2 + y_f0, &sqrt_tmp[0]);
             flags_r0 = mpLineGetKind(line_id);
             if (flags_r0 & 0xC) {
@@ -5310,8 +5310,8 @@ bool mpLib_80056C54(int line_id, Vec3* pos, int* line_id_out, Vec3* vec_out,
         var_f25 = -var_f25;
         while (true) {
             mpLineGetV0Pos(line_id, &sp4C);
-            x_f2 = SQ(sp58.x - sp4C.x);
-            y_f0 = SQ(sp58.y - sp4C.y);
+            x_f2 = MU_P(SQ(sp58.x - sp4C.x));
+            y_f0 = MU_P(SQ(sp58.y - sp4C.y));
             dist_f28 = sqrtf_store(x_f2 + y_f0, &sqrt_tmp[1]);
             flags_r0 = mpLineGetKind(line_id);
             if (flags_r0 & 0xC) {

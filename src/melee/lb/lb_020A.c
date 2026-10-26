@@ -130,9 +130,9 @@ void lbBgFlash_80020E38(HSD_JObj* jobj, Vec3* dir, f32 max_angle,
     f32 z_col_y;
     f32 z_col_x;
     f32 mag_sq;
-    f32 dx2 = dir->x * dir->x;
-    f32 dy2 = dir->y * dir->y;
-    dz2 = dir->z * dir->z;
+    f32 dx2 = MU_P(dir->x * dir->x);
+    f32 dy2 = MU_P(dir->y * dir->y);
+    dz2 = MU_P(dir->z * dir->z);
     (void) dz2;
     if (dx2 + dy2 + dz2 == 0.0f) {
         return;

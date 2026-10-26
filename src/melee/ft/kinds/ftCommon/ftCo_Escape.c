@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_ucf.h>
 #include "ftCo_Escape.h"
 
 #include <Runtime/platform.h>
@@ -211,6 +212,7 @@ bool ftCo_80099794(Fighter_GObj* gobj)
 {
     Fighter* fp = gobj->user_data;
     if (fp->input.held_buttons[0] & HSD_PAD_LR && inlineB0(fp)) {
+        if (mp_ucf_suppress_spotdodge(fp)) return false;
         ftCo_80099894(gobj);
         return true;
     }
@@ -221,6 +223,7 @@ bool ftCo_8009980C(Fighter_GObj* gobj)
 {
     Fighter* fp = gobj->user_data;
     if (inlineB0(fp) || ftCo_800DF8E8(fp)) {
+        if (mp_ucf_suppress_spotdodge(fp)) return false;
         ftCo_80099894(gobj);
         return true;
     }

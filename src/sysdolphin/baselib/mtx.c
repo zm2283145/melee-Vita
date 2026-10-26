@@ -223,13 +223,13 @@ void HSD_MtxGetRotation(Mtx m, Vec3* vec)
     f32 testVal_1;
     f32 val_01;
 
-    length0 = sqrtf(m[0][0] * m[0][0] + m[1][0] * m[1][0] + m[2][0] * m[2][0]);
+    length0 = sqrtf(MU_P(m[0][0] * m[0][0]) + MU_P(m[1][0] * m[1][0]) + MU_P(m[2][0] * m[2][0]));
     if (!(length0 < FLOAT_MIN)) {
         length1 =
-            sqrtf(m[0][1] * m[0][1] + m[1][1] * m[1][1] + m[2][1] * m[2][1]);
+            sqrtf(MU_P(m[0][1] * m[0][1]) + MU_P(m[1][1] * m[1][1]) + MU_P(m[2][1] * m[2][1]));
         if (!(length1 < FLOAT_MIN)) {
-            length2 = sqrtf(m[0][2] * m[0][2] + m[1][2] * m[1][2] +
-                            m[2][2] * m[2][2]);
+            length2 = sqrtf(MU_P(m[0][2] * m[0][2]) + MU_P(m[1][2] * m[1][2]) +
+                            MU_P(m[2][2] * m[2][2]));
             if (!(length2 < FLOAT_MIN)) {
                 testVal_1 = -m[2][0];
                 testVal_1 /= length0;

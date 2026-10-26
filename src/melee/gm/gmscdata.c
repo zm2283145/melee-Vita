@@ -380,6 +380,12 @@ static GameScene scenes[] = {
     },
 };
 
+#ifdef MELEE_VITA_SLIPPI
+/* Slippi Direct (src/melee/slippi/slippi_online_mode.c), in place of
+ * gm_Mode_HanyuCss_States. */
+extern GameModeState mp_slippi_online_states[];
+#endif
+
 static GameMode modes[] = {
     {
         true,
@@ -443,7 +449,11 @@ static GameMode modes[] = {
         NULL,
         NULL,
         NULL,
+#ifdef MELEE_VITA_SLIPPI
+        mp_slippi_online_states,
+#else
         gm_Mode_HanyuCss_States,
+#endif
     },
     {
         false,

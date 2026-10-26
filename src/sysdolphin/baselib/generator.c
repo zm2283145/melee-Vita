@@ -857,9 +857,9 @@ f32 hsd_8039DAD4(HSD_Generator* gen)
 
             /* Compute velocity from rect axes */
             {
-                f32 mag = gen->aux.rect.zx * gen->aux.rect.zx +
-                          gen->aux.rect.zy * gen->aux.rect.zy +
-                          gen->aux.rect.zz * gen->aux.rect.zz;
+                f32 mag = MU_P(gen->aux.rect.zx * gen->aux.rect.zx) +
+                          MU_P(gen->aux.rect.zy * gen->aux.rect.zy) +
+                          MU_P(gen->aux.rect.zz * gen->aux.rect.zz);
                 mag = sqrtf(mag);
                 {
                     f32 scale = elevation / mag;

@@ -104,7 +104,7 @@ void it_802E0734(Item_GObj* gobj)
 
     switch (ip->xDD4_itemVar.patapata.x40) {
     case 0: {
-        s32 x10sq = attrs->x10 * attrs->x10;
+        s32 x10sq = MU_P(attrs->x10 * attrs->x10);
         f32 xC = attrs->xC;
         ip->x40_vel.x = ip->facing_dir * DP(itPatapataDatAttrs, attrs->x0)->x4;
         ip->x40_vel.y = 0.0f;

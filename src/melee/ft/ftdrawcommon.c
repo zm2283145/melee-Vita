@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_rules.h>
 #include "ftdrawcommon.h"
 
 #include <Runtime/platform.h>
@@ -373,6 +374,13 @@ static inline void ftDrawCommon_80080E18_inline2(HSD_GObj* gobj, Fighter* old)
     Vec3* pos;
 
     MtxPtr matrix = HSD_CObjGetInvViewingMtxPtr(Camera_800310B8());
+    if (mp_slippi_rule(MP_SR_DEAD_UP_FALL)) {
+        Vec3 model_pos;
+        PSMTXMultVec(matrix, (Vec3*) &old->mv.co.walk.fast_anim_frame,
+                     &model_pos);
+        HSD_JObjSetTranslate(jobj, &model_pos);
+        return;
+    }
     /// @todo this seems to be using the wrong common attributes
     PSMTXMultVec(matrix, (Vec3*) &old->mv.co.walk.fast_anim_frame,
                  &fp->cur_pos);

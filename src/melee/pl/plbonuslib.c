@@ -933,8 +933,8 @@ void fn_8003F294(int slot, int index)
     {
         pl_StaleMoveTableExt_t* t2 = Player_GetStaleMoveTableIndexPtr2(slot);
         f32 mag =
-            sqrtf__Ff(t2->x0_staleMoveTable.xCDC * t2->x0_staleMoveTable.xCDC +
-                      t2->x0_staleMoveTable.xCE0 * t2->x0_staleMoveTable.xCE0);
+            sqrtf__Ff(MU_P(t2->x0_staleMoveTable.xCDC * t2->x0_staleMoveTable.xCDC) +
+                      MU_P(t2->x0_staleMoveTable.xCE0 * t2->x0_staleMoveTable.xCE0));
         f32 x8c = pl_804D6470->x8C;
         pl_80039238(slot, 0x44, 0L, pl_804D6470->x88, &table->xDC0, x8c, mag);
     }
@@ -1015,7 +1015,7 @@ void fn_8003F654(int slot, int index, Vec3* pos, Vec3* prevPos)
         b34_result = ft_80087B34(entity);
         b34 = b34_result;
         if (b34 == 1) {
-            dist = my_sqrtf(((prevPos->x - pos->x) * (prevPos->x - pos->x)) +
+            dist = my_sqrtf((MU_P((prevPos->x - pos->x) * (prevPos->x - pos->x))) +
                             ((prev_pos2->y - pos->y) * (prevPos->y - pos->y)));
             teammate_slot = ftLib_80087300(entity);
             table->xD80 += dist;

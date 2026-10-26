@@ -103,7 +103,7 @@ bool it_2F28_UnkMotion0_Anim(Item_GObj* item_gobj)
 void it_2F28_UnkMotion0_Phys(HSD_GObj* item_gobj)
 {
     Item* item = GET_ITEM(item_gobj);
-    f32 var_f4 = sqrtf(SQ(item->x40_vel.x) + SQ(item->x40_vel.y));
+    f32 var_f4 = sqrtf(MU_P(SQ(item->x40_vel.x)) + MU_P(SQ(item->x40_vel.y)));
     if (var_f4 > item->xDD4_itemVar.unk2.x0) {
         item->x40_vel.x =
             (item->x40_vel.x * (var_f4 - item->xDD4_itemVar.unk2.x0)) / var_f4;

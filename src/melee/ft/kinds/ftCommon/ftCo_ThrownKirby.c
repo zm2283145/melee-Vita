@@ -152,7 +152,7 @@ void ftCo_ThrownKirbyStar_IASA(Fighter_GObj* gobj) {}
 static inline void inlineA0(Fighter_GObj* gobj)
 {
     Fighter* fp = GET_FIGHTER(gobj);
-    float vel_mag = sqrtf(SQ(fp->self_vel.x) + SQ(fp->self_vel.y));
+    float vel_mag = sqrtf(MU_P(SQ(fp->self_vel.x)) + MU_P(SQ(fp->self_vel.y)));
     if (vel_mag > fp->mv.co.thrownkirby.x4) {
         fp->self_vel.x =
             (fp->self_vel.x * (vel_mag - fp->mv.co.thrownkirby.x4)) / vel_mag;

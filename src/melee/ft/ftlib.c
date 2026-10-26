@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_rules.h>
 #include "ftlib.h"
 #include <stdlib.h>
 
@@ -266,6 +267,9 @@ float ftLib_800864A8(Vec3* v, HSD_GObj* gobj)
             }
 
             ftLib_800866DC(cur, &vec);
+            if (mp_slippi_rule(MP_SR_WHISPY) && cur_fp->motion_id <= 0xB) {
+                continue;
+            }
             result += sgn(vec.x - v->x);
         }
     }

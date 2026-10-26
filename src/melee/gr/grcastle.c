@@ -1608,8 +1608,8 @@ s32 grCastle_801CFBD4(Ground_GObj* gobj, s32 arg1)
                     if (grCastle_801CDF54(&target_pos) != 0 &&
                         (lb_8000B1CC(jobj, NULL, &pos),
                          sqrtf__Ff(
-                             (pos.x - target_pos.x) * (pos.x - target_pos.x) +
-                             (pos.y - target_pos.y) * (pos.y - target_pos.y)) <
+                             MU_P((pos.x - target_pos.x) * (pos.x - target_pos.x)) +
+                             MU_P((pos.y - target_pos.y) * (pos.y - target_pos.y))) <
                              40.0f))
                     {
                         close = 1;

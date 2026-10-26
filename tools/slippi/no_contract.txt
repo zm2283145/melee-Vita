@@ -1,0 +1,50 @@
+# Functions where the GameCube compiler fused no multiply-add, so the
+# contraction plugin (tools/gcc_fp_contract) leaves them unfused too.
+# Format: <function> [f32] [f64]   (no kind = both), or <file>::<function>
+# for one file's static helper, where <file> is the path under src/ without .c.
+# Copied from the 3DS Slippi port (melee-3ds slippi-beta-v0.1.0,
+# native-3ds/tools/slippi/no_contract.txt), which keeps it with its
+# fused-op census against the retail game (docs/slippi/determinism.md there).
+# The 3DS names a file by object stem (upstream_melee_src_melee_lb_lbvector);
+# here that is melee/lb/lbvector.
+lbVector_Len f32  # melee/lb/lbvector.h, sqrtf argument
+lbVector_Len_xy f32  # melee/lb/lbvector.h, sqrtf argument
+HSD_MtxColMag f32  # sysdolphin/baselib/mtx.h, sqrtf argument
+C_MTXLookAt f32  # census: console fused none
+Camera_8002C5B4 f32  # census: console fused none
+Camera_8002F0E4 f32  # census: console fused none
+Camera_8002FEEC f32  # census: console fused none
+MTXLightFrustum f32  # census: console fused none
+MTXLightOrtho f32  # census: console fused none
+ftCo_DamageFlyRoll_Phys f32  # census: console fused none
+ftCo_DamageFly_Phys f32  # census: console fused none
+ftCo_Damage_Coll f32  # census: console fused none
+ftCo_Damage_OnEveryHitlag f32  # census: console fused none
+ftCo_Damage_SetMv8FromKbThreshold f32  # census: console fused none
+ft_80087B34 f32  # census: console fused none
+grKinokoRoute_80207C88 f32  # census: console fused none
+grPushOn_80218888 f32  # census: console fused none
+hsd_8039F05C f32  # census: console fused none
+itLinkboomerang_UnkMotion1_Phys f32  # census: console fused none
+itLinkboomerang_UnkMotion2_Phys f32  # census: console fused none
+itLinkboomerang_UnkMotion3_Phys f32  # census: console fused none
+itSamusbomb_UnkMotion2_Phys f32  # census: console fused none
+itSamusmissile_UnkMotion0_Phys f32  # census: console fused none
+it_8027737C f32  # census: console fused none
+it_80277544 f32  # census: console fused none
+it_802A20E8 f32  # census: console fused none
+it_802A3C98 f32  # census: console fused none
+it_802BFEC4 f32  # census: console fused none
+it_802D472C f32  # census: console fused none
+it_802F063C f32  # census: console fused none
+lbColl_80008FC8 f32  # census: console fused none
+lbColl_800096B4 f32  # census: console fused none
+mnInfoBonus_80252ADC f32  # census: console fused none
+mpColl_LoadECB_JObj f32  # census: console fused none
+melee/gr/groldkongo::grOldKongo_8020F888_inline f32  # census: console fused none
+melee/gr/grshrineroute::grShrineRoute_8020A21C f32  # census: console fused none
+melee/it/kinds/itdrmariopill::itDrmariopill_UnkMotion0_Coll f32  # census: console fused none
+melee/it/kinds/itluigifireball::calc_dist_2d_accurate f32  # census: console fused none
+melee/it/kinds/itmariofireball::calc_dist_2d_accurate f32  # census: console fused none
+sysdolphin/baselib/cobj::roll2upvec f32  # census: console fused none
+sysdolphin/baselib/controller::HSD_PadClampCheck3 f32  # census: console fused none

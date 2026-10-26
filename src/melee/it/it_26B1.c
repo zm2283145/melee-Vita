@@ -65,9 +65,9 @@ f32 it_8026B1D4(HSD_GObj* gobj, HitCapsule* itemHitboxUnk)
     f32 ret = itemHitboxUnk->damage;
     const Item* ip = gobj->user_data;
     if (ip->xDC8_word.flags.x14 != 0) {
-        f32 itemSpeed = my_sqrtf(ip->x40_vel.x * ip->x40_vel.x +
-                                 ip->x40_vel.y * ip->x40_vel.y +
-                                 ip->x40_vel.z * ip->x40_vel.z);
+        f32 itemSpeed = my_sqrtf(MU_P(ip->x40_vel.x * ip->x40_vel.x) +
+                                 MU_P(ip->x40_vel.y * ip->x40_vel.y) +
+                                 MU_P(ip->x40_vel.z * ip->x40_vel.z));
 
         ret += itemSpeed * it_804D6D28->x80_float[5];
         ret += it_804D6D28->x80_float[6];

@@ -1,4 +1,6 @@
 #include "gm_1A3F.h"
+#include <melee/slippi/slippi_replay.h>
+#include <melee/slippi/slippi_ucf.h>
 
 #include "gm_1A36.h"
 #include "gmmain_lib.h"
@@ -87,7 +89,16 @@ void preloadState(GameModeState* state)
         HSD_SisLib_803A6048(0xC000);
         break;
     case GS_CSS:
+#ifdef MELEE_VITA_SLIPPI
+        /* Slippi Direct's CSS text needs twice the room. */
+        if (state_machine.routing.curr_mode == GM_HANYU_CSS) {
+            HSD_SisLib_803A6048(0x4800);
+        } else {
+            HSD_SisLib_803A6048(0x2400);
+        }
+#else
         HSD_SisLib_803A6048(0x2400);
+#endif
         break;
     default:
         HSD_SisLib_803A6048(0x4800);
@@ -182,6 +193,10 @@ void gm_801A4014(GameMode* mode)
 #if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
     phase_started = OSGetTime();
 #endif
+    if (mode->kind == GM_DEBUG_VS && state->id == 1) {
+        mp_slippi_replay_prepare_scene();
+    }
+    mp_ucf_reset();
     preloadState(state);
 #if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
     preload_us = OSTicksToMicroseconds(OSGetTime() - phase_started);
@@ -272,6 +287,10 @@ void gm_801A4014(GameMode* mode)
             sm->routing.next_state_id = 0;
         } else {
             sm->routing.curr_state_id = nextState(mode->states);
+        }
+        if (mode->kind == GM_DEBUG_VS) {
+            /* The Slippi replay test skips the results screen. */
+            mp_slippi_replay_route(&sm->routing.curr_state_id);
         }
 #if defined(TARGET_VITA) && !defined(MELEE_VITA_RELEASE)
         state_exit_us = OSTicksToMicroseconds(OSGetTime() - phase_started);
@@ -494,6 +513,7 @@ void gm_801A4510(void)
     } else {
         state_machine.routing.curr_mode = GM_BOOT;
     }
+    mp_slippi_replay_boot_mode(&state_machine.routing.curr_mode);
     state_machine.routing.prev_mode = GM_COUNT;
 
     OSReport("[SCENE] initial mode is %u\n", state_machine.routing.curr_mode);

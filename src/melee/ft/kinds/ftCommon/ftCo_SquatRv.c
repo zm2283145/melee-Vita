@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_ucf.h>
 #include "ftCo_SquatRv.h"
 
 #include <Runtime/platform.h>
@@ -31,7 +32,7 @@
 bool ftCo_SquatRv_CheckInput(Fighter_GObj* gobj)
 {
     Fighter* fp = GET_FIGHTER(gobj);
-    if (fp->input.lstick[0].y > -p_ftCommonData->x94) {
+    if (fp->input.lstick[0].y > -mp_ucf_squat_threshold(fp)) {
         ftCo_SquatRv_Enter(gobj);
         return true;
     }

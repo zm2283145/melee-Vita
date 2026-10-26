@@ -184,6 +184,65 @@ f32 DrawASCII(int chr, float x, float y, GXColor* color)
     return lbl_804D6070;
 }
 
+#ifdef MELEE_VITA_SLIPPI
+/* The strokes of one debug font character, for code that draws the font
+ * without GX.  The same table and character mapping as DrawASCII: pairs of
+ * packed points (x in the high nibble, y in the low one, each step 0.11 of
+ * the cell), at most 0x29 bytes, ended by 0xFF.  NULL when the character has
+ * no strokes, which includes '.' and ':' (DrawASCII draws those as points). */
+const u8* HSD_DebugFontStrokes(int chr)
+{
+    s32 index;
+
+    if (chr >= '0' && chr <= '9') {
+        index = chr - '0';
+    } else if (chr >= 'A' && chr <= 'Z') {
+        index = chr - 'A' + 10;
+    } else if (chr >= 'a' && chr <= 'z') {
+        index = chr - 'a' + 10;
+    } else {
+        switch (chr) {
+        case '-':
+            index = 0x24;
+            break;
+        case '_':
+            index = 0x25;
+            break;
+        case '~':
+            index = 0x26;
+            break;
+        case '>':
+            index = 0x27;
+            break;
+        case '/':
+            index = 0x28;
+            break;
+        case '(':
+            index = 0x29;
+            break;
+        case ')':
+            index = 0x2A;
+            break;
+        case ',':
+            index = 0x2B;
+            break;
+        case '<':
+            index = 0x2C;
+            break;
+        case '+':
+            index = 0x2D;
+            break;
+        case '$':
+            index = 0x2E;
+            break;
+        default:
+            return NULL;
+        }
+    }
+    return &lbl_80408630[index * 13];
+}
+#endif
+
 static u8 lbl_804D6078 = 12;
 
 void hsd_80391A04(float scale_x, float scale_y, int line_width)

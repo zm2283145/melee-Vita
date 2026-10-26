@@ -96,6 +96,16 @@ void melee_vita_gxm_queue_overlay(struct vita2d_texture* texture,
                                   u32 width, u32 height);
 void melee_vita_gxm_queue_overlay_full_width(
     struct vita2d_texture* texture, u32 width, u32 height);
+#ifdef MELEE_VITA_SLIPPI
+/* Flat coloured shapes drawn over the finished frame at the display's own
+ * 960 x 544, after the game's drawing and any internal resolution pass, so
+ * they never touch the game's GX state.  Positions are in display pixels;
+ * u and v are unused.  The arrays must stay valid until this frame's
+ * present.  A frame that does not set them shows none. */
+void melee_vita_gxm_set_screen_overlay(
+    const MeleeVitaScreenVertex* triangles, u32 triangle_vertex_count,
+    const MeleeVitaScreenVertex* lines, u32 line_vertex_count);
+#endif
 void melee_vita_gxm_log_memory(const char* phase);
 
 #endif

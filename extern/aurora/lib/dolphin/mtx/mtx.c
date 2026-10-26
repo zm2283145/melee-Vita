@@ -297,7 +297,7 @@ void C_MTXQuat(Mtx m, const Quaternion* q) {
   assert(m && "MTXQuat():  NULL MtxPtr 'm' ");
   assert(q && "MTXQuat():  NULL QuaternionPtr 'q' ");
   assert(q->x || q->y || q->z || q->w && "MTXQuat():  zero-value quaternion ");
-  s = 2 / ((q->w * q->w) + ((q->z * q->z) + ((q->x * q->x) + (q->y * q->y))));
+  s = 2 / ((MU_P(q->w * q->w)) + ((MU_P(q->z * q->z)) + ((MU_P(q->x * q->x)) + (MU_P(q->y * q->y)))));
   xs = q->x * s;
   ys = q->y * s;
   zs = q->z * s;

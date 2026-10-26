@@ -622,7 +622,7 @@ void grOnett_801E43E0(Ground_GObj* gobj)
         }
         case 4:
             HSD_JObjAddRotationY(car_jobj->child,
-                                 0.017453292f * yakumono_param->x5C);
+                                 MU_P(0.017453292f * yakumono_param->x5C));
             grLib_801C9808(0x2C, 0, car_jobj2);
             HSD_JObjAddTranslationX(car_jobj, gp->u.onettcar.car_speed);
             if (HSD_JObjGetTranslationX(car_jobj) <= -642.0f) {

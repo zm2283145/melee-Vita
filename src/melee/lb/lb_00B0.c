@@ -529,15 +529,15 @@ void lb_8000C490(HSD_JObj* jobj1, HSD_JObj* jobj2, HSD_JObj* arg2, float arg8,
         EulerToQuat(&sp54, &quat2);
     }
 
-    sx = SQ(quat1.x + quat2.x);
-    sy = SQ(quat1.y + quat2.y);
-    sz = SQ(quat1.z + quat2.z);
-    sw = SQ(quat1.w + quat2.w);
+    sx = MU_P(SQ(quat1.x + quat2.x));
+    sy = MU_P(SQ(quat1.y + quat2.y));
+    sz = MU_P(SQ(quat1.z + quat2.z));
+    sw = MU_P(SQ(quat1.w + quat2.w));
 
-    dx = SQ(quat1.x - quat2.x);
-    dy = SQ(quat1.y - quat2.y);
-    dz = SQ(quat1.z - quat2.z);
-    dw = SQ(quat1.w - quat2.w);
+    dx = MU_P(SQ(quat1.x - quat2.x));
+    dy = MU_P(SQ(quat1.y - quat2.y));
+    dz = MU_P(SQ(quat1.z - quat2.z));
+    dw = MU_P(SQ(quat1.w - quat2.w));
 
     sum_square_sums = sx + sy + sz + sw;
     sum_square_diffs = dx + dy + dz + dw;
@@ -634,15 +634,15 @@ void lb_8000C868(HSD_Joint* arg0, HSD_JObj* arg1, HSD_JObj* arg2, float arg8,
         EulerToQuat(&spB4, (&sp94));
     }
 
-    sum.x = SQ(spA4.x + sp94.x);
-    sum.y = SQ(spA4.y + sp94.y);
-    sum.z = SQ(spA4.z + sp94.z);
-    sum.w = SQ(spA4.w + sp94.w);
+    sum.x = MU_P(SQ(spA4.x + sp94.x));
+    sum.y = MU_P(SQ(spA4.y + sp94.y));
+    sum.z = MU_P(SQ(spA4.z + sp94.z));
+    sum.w = MU_P(SQ(spA4.w + sp94.w));
 
-    dif.x = SQ(spA4.x - sp94.x);
-    dif.y = SQ(spA4.y - sp94.y);
-    dif.z = SQ(spA4.z - sp94.z);
-    dif.w = SQ(spA4.w - sp94.w);
+    dif.x = MU_P(SQ(spA4.x - sp94.x));
+    dif.y = MU_P(SQ(spA4.y - sp94.y));
+    dif.z = MU_P(SQ(spA4.z - sp94.z));
+    dif.w = MU_P(SQ(spA4.w - sp94.w));
 
     if (dif.x + dif.y + dif.z + dif.w > sum.x + sum.y + sum.z + sum.w) {
         sp94.x = -sp94.x;

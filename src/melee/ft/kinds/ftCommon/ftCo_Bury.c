@@ -247,7 +247,7 @@ void ftCo_800C0D0C(Fighter_GObj* gobj)
             ((p_ftCommonData->x5FC *
               (p_ftCommonData->x600 - Player_GetHandicap(fp->player_id))) +
              p_ftCommonData->x5F8 +
-             (p_ftCommonData->x604 *
+             MU_P(p_ftCommonData->x604 *
               (p_ftCommonData->x608 - (Player_80033BB8(fp->player_id) + 1)))));
     ftCommon_8007E2F4(fp, 0x1FF);
     fp->x221D_b5 = true;

@@ -587,7 +587,7 @@ bool itGshell_UnkMotion9_Coll(Item_GObj* gobj)
     if (ip->ground_or_air == GA_Ground) {
         it_80276CB8(gobj);
         jobj = HSD_JObjGetChild(jobj);
-        HSD_JObjAddRotationY(jobj, attrs->x20 * ABS(ip->x40_vel.x));
+        HSD_JObjAddRotationY(jobj, MU_P(attrs->x20 * ABS(ip->x40_vel.x))); /* unfused on the console */
     }
     return false;
 }

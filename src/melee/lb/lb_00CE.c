@@ -179,11 +179,11 @@ s32 lb_8000D148(f32 point0_x, f32 point0_y, f32 point1_x, f32 point1_y,
         f32 dist_squared_02;
         f32 dist_squared_12;
 
-        dist_squared_02 = (point0_x - point2_x) * (point0_x - point2_x) +
-                          (point0_y - point2_y) * (point0_y - point2_y);
+        dist_squared_02 = MU_P((point0_x - point2_x) * (point0_x - point2_x)) +
+                          MU_P((point0_y - point2_y) * (point0_y - point2_y));
         threshold_squared = threshold * threshold;
-        dist_squared_12 = (point1_x - point2_x) * (point1_x - point2_x) +
-                          (point1_y - point2_y) * (point1_y - point2_y);
+        dist_squared_12 = MU_P((point1_x - point2_x) * (point1_x - point2_x)) +
+                          MU_P((point1_y - point2_y) * (point1_y - point2_y));
         if (dist_squared_02 < threshold_squared) {
             if (dist_squared_12 > threshold_squared) {
                 return 1;

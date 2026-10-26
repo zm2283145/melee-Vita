@@ -1,4 +1,5 @@
 #include "mncharsel.h"
+#include <melee/slippi/slippi_online.h>
 
 #include <melee/ft/forward.h>
 #include <sysdolphin/baselib/forward.h>
@@ -3348,7 +3349,9 @@ void mnCharSel_CursorThink(HSD_GObj* gobj)
                         }
 
                         {
-                            if ((cursor->x4 != 3 ||
+                            /* Slippi Direct (DisableNametagBox): name
+                             * entry would rebuild the CSS texts. */
+                            if (!mp_slippi_css_online() && (cursor->x4 != 3 ||
                                  mnCharSel_804D6CB0->match_type != 1) &&
                                 mnCharSel_803F0DFC.doors[cursor->x4].p_kind ==
                                     0)
@@ -3908,7 +3911,11 @@ void fn_80262F44(HSD_GObj* gobj)
             }
         }
 
-        if (mnCharSel_804D6CF2 == 0 && (trigger & HSD_PAD_START)) {
+        /* Slippi Direct: START belongs to the session (enter a code,
+         * lock in, pick the stage). */
+        if (!mp_slippi_css_online() && mnCharSel_804D6CF2 == 0 &&
+            (trigger & HSD_PAD_START))
+        {
             if (mnCharSel_804D6CF7 != 0) {
                 mnCharSel_804D6CF6 = 1;
                 mnCharSel_804D6CF2 = 0xFF;
@@ -4410,7 +4417,11 @@ s32 mnCharSel_802640A0(void)
     s32 icon;
     u8 match_type = mnCharSel_804D6CB0->match_type;
 
-    if (match_type != 0) {
+    /* Slippi Direct: back from the stage pick the fighter is already
+     * chosen, so no "Choose your character!". */
+    if (match_type != 0 && mp_slippi_css_quiet()) {
+        /* Nothing to say. */
+    } else if (match_type != 0) {
         lbAudioAx_800237A8(mnCharSel_803F0A48.mode_info[match_type].enter_sfx,
                            0x7F, 0x40);
     } else {
@@ -5602,6 +5613,52 @@ void mnCharSel_Scene_OnEnter(void* arg0)
     mnCharSel_802640A0();
 }
 
+#ifdef MELEE_VITA_SLIPPI
+/* Slippi Direct (InitSheikSelector): the Zelda icon picks Sheik or Zelda.
+ * The online CSS plays Sheik, the vanilla CSS keeps Zelda. */
+void mp_slippi_css_sheik(int sheik)
+{
+    u8 want;
+    unsigned i;
+
+    if (sheik) {
+        want = CKind_Seak;
+    } else {
+        want = CKind_Zelda;
+    }
+    for (i = 0; i < sizeof(icons) / sizeof(icons[0]); i++) {
+        if (icons[i].char_kind != CKind_Zelda && icons[i].char_kind != CKind_Seak) {
+            continue;
+        }
+        if (icons[i].char_kind != want) {
+            icons[i].char_kind = want;
+            if (mnCharSel_804D6CB0 != NULL && mnCharSel_803F0DFC.doors[0].sel_icon == i) {
+                mnCharSel_804D6CB0->vs.start.players[(u8) mnCharSel_804D6CF0].ckind = want;
+                mnCharSel_8025DB34(0);
+            }
+        }
+        return;
+    }
+}
+
+/* Slippi Direct: the CSS title (joint 36) would show EVENT MATCH in this
+ * layout.  Slippi puts MELEE there from its own art, which this port
+ * doesn't have, so the title is hidden. */
+void mp_slippi_css_hide_title(void)
+{
+    HSD_JObj* jobj = NULL;
+
+    if (mnCharSel_804D6CC0 == NULL) {
+        return;
+    }
+    lb_80011E24(mnCharSel_804D6CC0, &jobj, 36, -1);
+    if (jobj != NULL) {
+        HSD_JObjSetFlagsAll(jobj, JOBJ_HIDDEN);
+    }
+}
+
+#endif
+
 void mnCharSel_Scene_OnFrame(void)
 {
     int num_slots;
@@ -5612,6 +5669,20 @@ void mnCharSel_Scene_OnFrame(void)
     PAD_STACK(8);
 
     mnCharSel_804D6CEC += 1;
+    if (mnCharSel_804D6CF6 == 0 && mp_slippi_css_online()) {
+        /* Slippi Direct (FetchMatchInfo, HandleInputsOnCSS): the session
+         * runs once per frame and leaves the CSS when both players are
+         * locked in, or for the stage pick. */
+        u8 port = (u8) mnCharSel_804D6CF0;
+        if (mp_slippi_css_frame(
+                mnCharSel_804D6CF7 != 0,
+                &mnCharSel_804D6CB0->vs.start.players[port],
+                &mnCharSel_804D6CB0->vs.start.players[(u8) mnCharSel_804D6CF1],
+                HSD_PadCopyStatus[port].trigger, HSD_PadCopyStatus[port].button))
+        {
+            mnCharSel_804D6CF6 = 1;
+        }
+    }
     if (mnCharSel_804D6CF6 <= 1) {
         cache = &lbDvd_GetPreloadCacheScene()->game_cache;
         if (mnCharSel_804D6CF5 == 1) {
@@ -5669,7 +5740,8 @@ void mnCharSel_Scene_OnFrame(void)
         }
         lbDvd_80018254();
     }
-    if (mn_8022F218() != 0) {
+    /* Slippi Direct (DisableLRSTART). */
+    if (!mp_slippi_css_online() && mn_8022F218() != 0) {
         sfxBack();
         lb_800145F4();
         mn_8022F138(1, 8);

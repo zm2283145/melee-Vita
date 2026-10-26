@@ -12,7 +12,7 @@
 
 static inline float lbVector_Len_xy_accurate(Vec3* vec)
 {
-    return sqrtf_accurate(vec->x * vec->x + vec->y * vec->y);
+    return sqrtf_accurate(MU_P(vec->x * vec->x) + MU_P(vec->y * vec->y));
 }
 
 float lbVector_Normalize(Vec3* vec)
@@ -32,7 +32,7 @@ float lbVector_Normalize(Vec3* vec)
 
 float lbVector_NormalizeXY(Vec3* a)
 {
-    float len = sqrtf_accurate(a->x * a->x + a->y * a->y);
+    float len = sqrtf_accurate(MU_P(a->x * a->x) + MU_P(a->y * a->y));
     float inv;
 
     if (len == 0.0f) {
@@ -161,7 +161,7 @@ void lbVector_RotateAboutUnitAxis(Vec3* v, Vec3* axis, float angle)
     // by using two initial rotations, then the new v is rotated about the
     // z-axis by angle, and finally the first two rotations are reversed.
 
-    float len_axis_yz = sqrtf(axis->y * axis->y + axis->z * axis->z);
+    float len_axis_yz = sqrtf(MU_P(axis->y * axis->y) + MU_P(axis->z * axis->z));
     float s = lbvector_sin(angle);
     float c = lbvector_cos(angle);
     float unit_axis_yz_y;
@@ -267,8 +267,8 @@ void lbVector_Mirror(Vec3* a, Vec3* unit_mirror_axis)
 /// a and b.
 float lbVector_CosAngle(Vec3* a, Vec3* b)
 {
-    return (a->x * b->x + a->y * b->y) / (sqrtf(a->x * a->x + a->y * a->y) *
-                                          sqrtf(b->x * b->x + b->y * b->y));
+    return (a->x * b->x + a->y * b->y) / (sqrtf(MU_P(a->x * a->x) + MU_P(a->y * a->y)) *
+                                          sqrtf(MU_P(b->x * b->x) + MU_P(b->y * b->y)));
 }
 
 /// 8000DDAC - linearly interpolates between a and b as f goes from 0 to 1,
@@ -501,6 +501,12 @@ void lbVector_CreateEulerMatrix(Mtx m, Quaternion* angles)
 /// direction u with the plane that contains c and is perpendicular to u. Write
 /// the result to d. If u is numerically too small, set d=a instead. Return the
 /// length of c-d.
+/* Slippi determinism: lbVector_Len with the console's fusion here. */
+static inline float mp_lbVector_LenFused(Vec3* vec)
+{
+    return sqrtf(vec->x * vec->x + vec->y * vec->y + vec->z * vec->z);
+}
+
 float lbVector_8000E838(Vec3* a, Vec3* b, Vec3* c, Vec3* d)
 {
     Vec3 b_a;
@@ -520,7 +526,7 @@ float lbVector_8000E838(Vec3* a, Vec3* b, Vec3* c, Vec3* d)
     }
     if (tooSmall) {
         *d = *a;
-        return lbVector_Len(&c_a);
+        return mp_lbVector_LenFused(&c_a);
     } else {
         Vec3 v3;
         float f1 =
@@ -530,6 +536,6 @@ float lbVector_8000E838(Vec3* a, Vec3* b, Vec3* c, Vec3* d)
         d->y = a->y + b_a.y * f1;
         d->z = a->z + b_a.z * f1;
         lbVector_Diff(c, d, &v3);
-        return lbVector_Len(&v3);
+        return mp_lbVector_LenFused(&v3);
     }
 }

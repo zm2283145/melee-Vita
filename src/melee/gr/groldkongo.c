@@ -538,10 +538,10 @@ bool grOldKongo_80210454(Ground_GObj* ground_gobj, Fighter_GObj* keep)
     Ground_801C4DA0(&pos_gnd, &unk);
     ftLib_80086644(keep, &pos_ft);
 
-    if (!((pos_gnd.x - pos_ft.x) * (pos_gnd.x - pos_ft.x) +
-              (pos_gnd.y - pos_ft.y) * (pos_gnd.y - pos_ft.y) +
-              (pos_gnd.z - pos_ft.z) * (pos_gnd.z - pos_ft.z) <
-          yakumono_param->rframe_barrel_in * yakumono_param->rframe_barrel_in))
+    if (!(MU_P((pos_gnd.x - pos_ft.x) * (pos_gnd.x - pos_ft.x)) +
+              MU_P((pos_gnd.y - pos_ft.y) * (pos_gnd.y - pos_ft.y)) +
+              MU_P((pos_gnd.z - pos_ft.z) * (pos_gnd.z - pos_ft.z)) <
+          MU_P(yakumono_param->rframe_barrel_in * yakumono_param->rframe_barrel_in)))
     {
         goto done;
     }

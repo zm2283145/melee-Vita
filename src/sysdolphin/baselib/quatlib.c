@@ -15,11 +15,11 @@ s32 MatToQuat(Mtx m, Quaternion* q)
     int k;
 
     lenCol[0] =
-        sqrtf(m[0][0] * m[0][0] + m[1][0] * m[1][0] + m[2][0] * m[2][0]);
+        sqrtf(MU_P(m[0][0] * m[0][0]) + MU_P(m[1][0] * m[1][0]) + MU_P(m[2][0] * m[2][0]));
     lenCol[1] =
-        sqrtf(m[0][1] * m[0][1] + m[1][1] * m[1][1] + m[2][1] * m[2][1]);
+        sqrtf(MU_P(m[0][1] * m[0][1]) + MU_P(m[1][1] * m[1][1]) + MU_P(m[2][1] * m[2][1]));
     lenCol[2] =
-        sqrtf(m[0][2] * m[0][2] + m[1][2] * m[1][2] + m[2][2] * m[2][2]);
+        sqrtf(MU_P(m[0][2] * m[0][2]) + MU_P(m[1][2] * m[1][2]) + MU_P(m[2][2] * m[2][2]));
 
     s = m[0][0] / lenCol[0] + m[1][1] / lenCol[1] + m[2][2] / lenCol[2];
 
@@ -60,7 +60,7 @@ s32 HSD_QuatLib_8037EB28(Mtx m, Vec3* euler)
 {
     f32 len;
 
-    len = sqrtf(m[0][0] * m[0][0] + m[1][0] * m[1][0]);
+    len = sqrtf(MU_P(m[0][0] * m[0][0]) + MU_P(m[1][0] * m[1][0]));
     if (len > 1e-05) {
         euler->x = atan2f(m[2][1], m[2][2]);
         euler->y = atan2f(-m[2][0], len);
@@ -102,7 +102,7 @@ s32 HSD_QuatLib_8037ECE0(Vec3* axis, Quaternion* q, f32 angle)
     f32 inv_len;
     f32 s;
 
-    len = sqrtf(axis->x * axis->x + axis->y * axis->y + axis->z * axis->z);
+    len = sqrtf(MU_P(axis->x * axis->x) + MU_P(axis->y * axis->y) + MU_P(axis->z * axis->z));
     if (fabsf(len) < 1.1754944E-38F) {
         return -1;
     }
@@ -177,7 +177,7 @@ s32 HSD_QuatLib_8037EF28(Quaternion* p, Quaternion* q, Quaternion* out, f32 t)
         out->w = p->z;
 
         if (t < 0.5F) {
-            sp = sinf((f32) (M_PI_2 * (1.0F - (2.0F * t))));
+            sp = sinf((f32) (M_PI_2 * (1.0F - MU_P(2.0F * t))));
             sq = sinf((f32) (M_PI_2 * (2.0F * t)));
             out->x = sp * p->x + sq * q->x;
             out->y = sp * p->y + sq * q->y;

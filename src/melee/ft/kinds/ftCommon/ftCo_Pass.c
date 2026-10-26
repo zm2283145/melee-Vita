@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_ucf.h>
 #include "ftCo_Pass.h"
 
 #include <Runtime/platform.h>
@@ -54,7 +55,8 @@ bool ftCo_8009A080(Fighter_GObj* gobj)
 {
     u8 _[8];
     Fighter* fp = gobj->user_data;
-    if (fp->input.held_buttons[0] & HSD_PAD_LR && ftCo_80099F1C(gobj)) {
+    if (fp->input.held_buttons[0] & HSD_PAD_LR && (ftCo_80099F1C(gobj) ||
+        (mp_ucf_drop_extended(fp) && fp->active_timer.lstick.y < p_ftCommonData->x468 && mpColl_IsOnPlatform(&fp->coll_data)))) {
         ftCo_8009A228(gobj);
         return true;
     }

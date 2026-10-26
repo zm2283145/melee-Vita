@@ -408,9 +408,9 @@ static inline void ftCo_SpawnEffect_x406(Fighter_GObj* gobj, Vec3* vec, f32 f)
 
 static inline f32 ftCo_Speed(Fighter* fp)
 {
-    return sqrtf((fp->self_vel.x * fp->self_vel.x) +
-                 (fp->self_vel.y * fp->self_vel.y) +
-                 (fp->self_vel.z * fp->self_vel.z));
+    return sqrtf((MU_P(fp->self_vel.x * fp->self_vel.x)) +
+                 (MU_P(fp->self_vel.y * fp->self_vel.y)) +
+                 (MU_P(fp->self_vel.z * fp->self_vel.z)));
 }
 
 void ftCo_DamageIce_Collide(Fighter_GObj* gobj, Vec3* normal, Vec3* vec)

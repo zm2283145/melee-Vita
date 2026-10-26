@@ -4,6 +4,7 @@
 #include "homebrew_update_client.h"
 #include "update_core.hpp"
 #include "update_vita.hpp"
+#include "../game/vita_net.h"
 
 #include <curl/curl.h>
 #include <vita2d.h>
@@ -93,7 +94,6 @@ DialogKind g_dialog_kind = DialogKind::None;
 std::string g_dialog_text;
 SceMsgDialogUserMessageParam g_user_message{};
 SceMsgDialogProgressBarParam g_progress_bar{};
-alignas(64) std::array<std::uint8_t, 1024 * 1024> g_network_memory{};
 
 class StateLock {
 public:
@@ -160,27 +160,14 @@ bool start_worker(void* (*entry)(void*)) {
 class NetworkSession {
 public:
     bool initialize(std::string& error) {
-        const int module_result = sceSysmoduleLoadModule(SCE_SYSMODULE_NET);
-        if (module_result < 0) {
-            error = error_code_text("Loading network module", module_result);
-            return false;
-        }
-        module_loaded_ = true;
-        SceNetInitParam init{};
-        init.memory = g_network_memory.data();
-        init.size = g_network_memory.size();
-        const int net_result = sceNetInit(&init);
+        /* Slippi Direct play may already be online, so share SceNet with it
+         * (vita_net.c) instead of starting and stopping it here. */
+        const int net_result = melee_vita_net_start();
         if (net_result < 0) {
             error = error_code_text("Initializing network", net_result);
             return false;
         }
-        net_initialized_ = true;
-        const int ctl_result = sceNetCtlInit();
-        if (ctl_result < 0) {
-            error = error_code_text("Initializing network control", ctl_result);
-            return false;
-        }
-        ctl_initialized_ = true;
+        net_started_ = true;
         int state = SCE_NETCTL_STATE_DISCONNECTED;
         if (sceNetCtlInetGetState(&state) < 0 ||
             state != SCE_NETCTL_STATE_CONNECTED)
@@ -202,21 +189,13 @@ public:
         if (curl_initialized_) {
             curl_global_cleanup();
         }
-        if (ctl_initialized_) {
-            sceNetCtlTerm();
-        }
-        if (net_initialized_) {
-            sceNetTerm();
-        }
-        if (module_loaded_) {
-            sceSysmoduleUnloadModule(SCE_SYSMODULE_NET);
+        if (net_started_) {
+            melee_vita_net_stop();
         }
     }
 
 private:
-    bool module_loaded_ = false;
-    bool net_initialized_ = false;
-    bool ctl_initialized_ = false;
+    bool net_started_ = false;
     bool curl_initialized_ = false;
     bool offline_ = false;
 };

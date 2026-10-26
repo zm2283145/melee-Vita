@@ -14,8 +14,8 @@
 float ftCo_800BD19C(Fighter_GObj* gobj, Vec3* pos)
 {
     Fighter* fp = gobj->user_data;
-    return SQ(fp->cur_pos.x - pos->x) + SQ(fp->cur_pos.y - pos->y) +
-           SQ(fp->cur_pos.z - pos->z);
+    return MU_P(SQ(fp->cur_pos.x - pos->x)) + MU_P(SQ(fp->cur_pos.y - pos->y)) +
+           MU_P(SQ(fp->cur_pos.z - pos->z));
 }
 
 static inline void inlineA0(Fighter_GObj* gobj)

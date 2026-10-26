@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_ucf.h>
 #include "ftCo_Guard.h"
 
 #include <math.h>
@@ -165,8 +166,8 @@ void ftCo_80091BC4(Fighter* fp)
     }
     fp->mv.co.guard.x8 = 10 + guard_deg;
 
-    stick_mag = sqrtf(fp->input.lstick[0].x * fp->input.lstick[0].x +
-                      fp->input.lstick[0].y * fp->input.lstick[0].y);
+    stick_mag = sqrtf(MU_P(fp->input.lstick[0].x * fp->input.lstick[0].x) +
+                      MU_P(fp->input.lstick[0].y * fp->input.lstick[0].y));
     if (stick_mag > 1) {
         stick_mag = 1;
     }
@@ -414,10 +415,10 @@ bool ftCo_800925A4(HSD_GObj* gobj)
                        p_ftCommonData->analog_shoulder_deadzone) /
                           (1 - p_ftCommonData->analog_shoulder_deadzone);
         }
-        fp->shield_health -= p_ftCommonData->x278 *
+        fp->shield_health -= MU_P(p_ftCommonData->x278 *
                              ((fp->lightshield_amount *
                                (p_ftCommonData->x2F0 - p_ftCommonData->x2EC)) +
-                              p_ftCommonData->x2EC);
+                              p_ftCommonData->x2EC));
         if (fp->shield_health < 0) {
             fp->shield_health = 0;
             fp->x221A_b7 = false;
@@ -721,7 +722,7 @@ void ftCo_80093240(Fighter_GObj* gobj)
         if ((fp->input.lstick[0].x < 0 ? -fp->input.lstick[0].x
                                        : fp->input.lstick[0].x) >=
                 p_ftCommonData->sdi_min_stick_mag &&
-            fp->active_timer.lstick.x < p_ftCommonData->sdi_stick_window)
+            (fp->active_timer.lstick.x < p_ftCommonData->sdi_stick_window || mp_ucf_shield_sdi(fp)))
         {
             float scl = p_ftCommonData->x4C0 * (fp->input.lstick[0].x *
                                                 p_ftCommonData->sdi_pos_scale);

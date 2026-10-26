@@ -3,6 +3,9 @@
 #include <dolphin/pad.h>
 
 #include "pad_vita.h"
+#ifdef MELEE_VITA_SLIPPI
+#include "../slippi/slippi_ui.h"
+#endif
 #include "../vita_log.h"
 
 #include <psp2/ctrl.h>
@@ -292,6 +295,11 @@ u32 PADRead(PADStatus* status)
     s_raw_buttons_triggered |= vita.buttons & ~s_raw_buttons;
     s_raw_buttons = vita.buttons;
     fill_status(&status[0], &vita, s_is_pstv && analog_read > 0 ? &analog : NULL);
+#ifdef MELEE_VITA_SLIPPI
+    /* Slippi Direct: the online CSS keyboard and lock-in take buttons
+     * away from the game (slippi/slippi_ui.c). */
+    melee_vita_slippi_pad_filter(&status[0]);
+#endif
 #ifdef TARGET_PS5
     /* Couch play: PS5 pads 2-4 (in login order) drive GC ports 2-4.  They
      * share the remapping; menus listen to the first pad's raw buttons. */

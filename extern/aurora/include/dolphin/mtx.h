@@ -378,6 +378,112 @@ MtxPtr MTXGetStackPtr(const MtxStack* sPtr);
 
 #define MTXFreeStack(sPtr) (OSFree((void*)(((MtxStackPtr)(sPtr))->stackBase)))
 
+#ifdef MELEE_VITA_EXACT_MATH
+/* Slippi Direct play needs GameCube-exact maths in the game code.  The
+ * retail game calls the paired-single versions of these 19 routines (its
+ * SDK header maps MTX* and VEC* to PS*), and their rounding differs from the
+ * C versions above.  platforms/vita/fp/ps_math.c has them rounded like the
+ * console, as mp_PS*.  Only the game archive builds with this define, so
+ * the renderer keeps the C versions. */
+void mp_PSMTXIdentity(Mtx m);
+void mp_PSMTXCopy(const Mtx src, Mtx dst);
+void mp_PSMTXConcat(const Mtx a, const Mtx b, Mtx ab);
+void mp_PSMTXTranspose(const Mtx src, Mtx xPose);
+u32 mp_PSMTXInverse(const Mtx src, Mtx inv);
+void mp_PSMTXRotTrig(Mtx m, char axis, f32 sinA, f32 cosA);
+void mp_PSMTXTrans(Mtx m, f32 xT, f32 yT, f32 zT);
+void mp_PSMTXScale(Mtx m, f32 xS, f32 yS, f32 zS);
+void mp_PSMTXMultVec(const Mtx m, const Vec* src, Vec* dst);
+void mp_PSMTXMultVecSR(const Mtx m, const Vec* src, Vec* dst);
+void mp_PSMTXRotAxisRad(Mtx m, const Vec* axis, f32 rad);
+void mp_PSMTXQuat(Mtx m, const Quaternion* q);
+void mp_PSVECAdd(const Vec* a, const Vec* b, Vec* ab);
+void mp_PSVECSubtract(const Vec* a, const Vec* b, Vec* a_b);
+void mp_PSVECScale(const Vec* src, Vec* dst, f32 scale);
+void mp_PSVECNormalize(const Vec* src, Vec* unit);
+f32 mp_PSVECMag(const Vec* v);
+f32 mp_PSVECDotProduct(const Vec* a, const Vec* b);
+void mp_PSVECCrossProduct(const Vec* a, const Vec* b, Vec* axb);
+
+#undef PSMTXIdentity
+#undef PSMTXCopy
+#undef PSMTXConcat
+#undef PSMTXTranspose
+#undef PSMTXInverse
+#undef PSMTXRotTrig
+#undef PSMTXTrans
+#undef PSMTXScale
+#undef PSMTXMultVec
+#undef PSMTXMultVecSR
+#undef PSMTXRotAxisRad
+#undef PSMTXQuat
+#undef PSVECAdd
+#undef PSVECSubtract
+#undef PSVECScale
+#undef PSVECNormalize
+#undef PSVECMag
+#undef PSVECDotProduct
+#undef PSVECCrossProduct
+#undef MTXIdentity
+#undef MTXCopy
+#undef MTXConcat
+#undef MTXTranspose
+#undef MTXInverse
+#undef MTXRotTrig
+#undef MTXTrans
+#undef MTXScale
+#undef MTXMultVec
+#undef MTXMultVecSR
+#undef MTXRotAxisRad
+#undef MTXQuat
+#undef VECAdd
+#undef VECSubtract
+#undef VECScale
+#undef VECNormalize
+#undef VECMag
+#undef VECDotProduct
+#undef VECCrossProduct
+
+#define PSMTXIdentity mp_PSMTXIdentity
+#define PSMTXCopy mp_PSMTXCopy
+#define PSMTXConcat mp_PSMTXConcat
+#define PSMTXTranspose mp_PSMTXTranspose
+#define PSMTXInverse mp_PSMTXInverse
+#define PSMTXRotTrig mp_PSMTXRotTrig
+#define PSMTXTrans mp_PSMTXTrans
+#define PSMTXScale mp_PSMTXScale
+#define PSMTXMultVec mp_PSMTXMultVec
+#define PSMTXMultVecSR mp_PSMTXMultVecSR
+#define PSMTXRotAxisRad mp_PSMTXRotAxisRad
+#define PSMTXQuat mp_PSMTXQuat
+#define PSVECAdd mp_PSVECAdd
+#define PSVECSubtract mp_PSVECSubtract
+#define PSVECScale mp_PSVECScale
+#define PSVECNormalize mp_PSVECNormalize
+#define PSVECMag mp_PSVECMag
+#define PSVECDotProduct mp_PSVECDotProduct
+#define PSVECCrossProduct mp_PSVECCrossProduct
+#define MTXIdentity mp_PSMTXIdentity
+#define MTXCopy mp_PSMTXCopy
+#define MTXConcat mp_PSMTXConcat
+#define MTXTranspose mp_PSMTXTranspose
+#define MTXInverse mp_PSMTXInverse
+#define MTXRotTrig mp_PSMTXRotTrig
+#define MTXTrans mp_PSMTXTrans
+#define MTXScale mp_PSMTXScale
+#define MTXMultVec mp_PSMTXMultVec
+#define MTXMultVecSR mp_PSMTXMultVecSR
+#define MTXRotAxisRad mp_PSMTXRotAxisRad
+#define MTXQuat mp_PSMTXQuat
+#define VECAdd mp_PSVECAdd
+#define VECSubtract mp_PSVECSubtract
+#define VECScale mp_PSVECScale
+#define VECNormalize mp_PSVECNormalize
+#define VECMag mp_PSVECMag
+#define VECDotProduct mp_PSVECDotProduct
+#define VECCrossProduct mp_PSVECCrossProduct
+#endif
+
 #ifdef __cplusplus
 }
 #endif

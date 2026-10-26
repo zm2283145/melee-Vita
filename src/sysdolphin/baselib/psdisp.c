@@ -1263,14 +1263,14 @@ static inline void psDispSubAPPSRTPoint(HSD_Particle* pp)
                 pp->appsrt->status = PS_APPSTATUS_STILL;
             }
             PSMTXConcat(vmtx, pp->appsrt->mmtx, pp->appsrt->smtx);
-            scale_x = pp->appsrt->smtx[0][0] * pp->appsrt->smtx[0][0] +
-                      pp->appsrt->smtx[1][0] * pp->appsrt->smtx[1][0] +
-                      pp->appsrt->smtx[2][0] * pp->appsrt->smtx[2][0];
+            scale_x = MU_P(pp->appsrt->smtx[0][0] * pp->appsrt->smtx[0][0]) +
+                      MU_P(pp->appsrt->smtx[1][0] * pp->appsrt->smtx[1][0]) +
+                      MU_P(pp->appsrt->smtx[2][0] * pp->appsrt->smtx[2][0]);
             scale_x = sqrtf(scale_x);
             pp->appsrt->x94 = scale_x;
-            scale_y = pp->appsrt->smtx[0][1] * pp->appsrt->smtx[0][1] +
-                      pp->appsrt->smtx[1][1] * pp->appsrt->smtx[1][1] +
-                      pp->appsrt->smtx[2][1] * pp->appsrt->smtx[2][1];
+            scale_y = MU_P(pp->appsrt->smtx[0][1] * pp->appsrt->smtx[0][1]) +
+                      MU_P(pp->appsrt->smtx[1][1] * pp->appsrt->smtx[1][1]) +
+                      MU_P(pp->appsrt->smtx[2][1] * pp->appsrt->smtx[2][1]);
             scale_y = sqrtf(scale_y);
             pp->appsrt->x98 = scale_y;
             if (pp->appsrt->xA2 != 0) {
@@ -1439,14 +1439,14 @@ static inline void psDispSubAppSRT(HSD_Particle* pp, u8* texform)
             pp->appsrt->status = PS_APPSTATUS_STILL;
         }
         PSMTXConcat(vmtx, pp->appsrt->mmtx, pp->appsrt->smtx);
-        scale_x = pp->appsrt->smtx[0][0] * pp->appsrt->smtx[0][0] +
-                  pp->appsrt->smtx[1][0] * pp->appsrt->smtx[1][0] +
-                  pp->appsrt->smtx[2][0] * pp->appsrt->smtx[2][0];
+        scale_x = MU_P(pp->appsrt->smtx[0][0] * pp->appsrt->smtx[0][0]) +
+                  MU_P(pp->appsrt->smtx[1][0] * pp->appsrt->smtx[1][0]) +
+                  MU_P(pp->appsrt->smtx[2][0] * pp->appsrt->smtx[2][0]);
         scale_x = sqrtf(scale_x);
         pp->appsrt->x94 = scale_x;
-        scale_y = pp->appsrt->smtx[0][1] * pp->appsrt->smtx[0][1] +
-                  pp->appsrt->smtx[1][1] * pp->appsrt->smtx[1][1] +
-                  pp->appsrt->smtx[2][1] * pp->appsrt->smtx[2][1];
+        scale_y = MU_P(pp->appsrt->smtx[0][1] * pp->appsrt->smtx[0][1]) +
+                  MU_P(pp->appsrt->smtx[1][1] * pp->appsrt->smtx[1][1]) +
+                  MU_P(pp->appsrt->smtx[2][1] * pp->appsrt->smtx[2][1]);
         scale_y = sqrtf(scale_y);
         pp->appsrt->x98 = scale_y;
         if (pp->appsrt->xA2 != 0) {

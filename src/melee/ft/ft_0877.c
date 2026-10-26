@@ -209,16 +209,16 @@ s32 ft_80087B34(HSD_GObj* gobj)
     Fighter* fp = GET_FIGHTER(gobj);
     float atk_shield_kb_x = fp->x98_atk_shield_kb.x;
     float fVar1 =
-        (fp->self_vel.x * fp->self_vel.x) + (fp->self_vel.y * fp->self_vel.y);
+        (MU_P(fp->self_vel.x * fp->self_vel.x)) + (MU_P(fp->self_vel.y * fp->self_vel.y));
     float* atk_shield_kb_y = &fp->x98_atk_shield_kb.y;
     float fVar2 = (atk_shield_kb_x * atk_shield_kb_x) +
-                  ((*atk_shield_kb_y) * (*atk_shield_kb_y));
+                  (MU_P((*atk_shield_kb_y) * (*atk_shield_kb_y)));
 
-    if (fVar1 > ((fp->x8c_kb_vel.x * fp->x8c_kb_vel.x) +
-                 (fp->x8c_kb_vel.y * fp->x8c_kb_vel.y)))
+    if (fVar1 > ((MU_P(fp->x8c_kb_vel.x * fp->x8c_kb_vel.x)) +
+                 (MU_P(fp->x8c_kb_vel.y * fp->x8c_kb_vel.y))))
     {
         if (fVar1 > ((atk_shield_kb_x * atk_shield_kb_x) +
-                     (fp->x98_atk_shield_kb.y * fp->x98_atk_shield_kb.y)))
+                     (MU_P(fp->x98_atk_shield_kb.y * fp->x98_atk_shield_kb.y))))
         {
             return 0;
         }
@@ -226,8 +226,8 @@ s32 ft_80087B34(HSD_GObj* gobj)
         return 2;
     }
 
-    if ((fp->x8c_kb_vel.x * fp->x8c_kb_vel.x) +
-            (fp->x8c_kb_vel.y * fp->x8c_kb_vel.y) >
+    if ((MU_P(fp->x8c_kb_vel.x * fp->x8c_kb_vel.x)) +
+            (MU_P(fp->x8c_kb_vel.y * fp->x8c_kb_vel.y)) >
         fVar2)
     {
         return 1;

@@ -70,8 +70,8 @@ void ftPp_SpecialS_80120E68(Fighter_GObj* gobj)
         fp->self_vel.x = -(3.0F * fp2->facing_dir - fp->self_vel.x);
         fp->self_vel.y += 5.0F;
         lbVector_Normalize(&fp->self_vel);
-        dx = SQ(fp->cur_pos.x - fp2->cur_pos.x);
-        dy = SQ(fp->cur_pos.y - fp2->cur_pos.y);
+        dx = MU_P(SQ(fp->cur_pos.x - fp2->cur_pos.x));
+        dy = MU_P(SQ(fp->cur_pos.y - fp2->cur_pos.y));
         dist = my_sqrtf(dx + dy, &y) / da->x98;
         fp->self_vel.x *= da->x94 + dist;
         fp->self_vel.y *= da->x94 + dist;
@@ -211,8 +211,8 @@ static inline bool checkNanaInRange(Fighter_GObj* gobj)
     Fighter_GObj* nana_gobj = Player_GetEntityAtIndex(fp->player_id, 1);
     if (nana_gobj != NULL) {
         Vec3* nana_pos = &GET_FIGHTER(nana_gobj)->cur_pos;
-        f32 dx = SQ(fp->cur_pos.x - nana_pos->x);
-        f32 dy = SQ(fp->cur_pos.y - nana_pos->y);
+        f32 dx = MU_P(SQ(fp->cur_pos.x - nana_pos->x));
+        f32 dy = MU_P(SQ(fp->cur_pos.y - nana_pos->y));
         if (sqrtf__Ff(dx + dy) < da->x7C &&
             ftNn_Init_8012300C(nana_gobj) == true)
         {

@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_rules.h>
 #include "if_2F6E.h"
 
 #include "if_2F72.h"
@@ -109,7 +110,8 @@ void ifStatus_802F7034(UNK_T arg0)
     }
     mr = big_thing->state.match_result;
     if (mr == OUTCOME_TIMEOUT) {
-        ifStatus_802F6EA4(0, a, b, c, arg0, NULL);
+        ifStatus_802F6EA4(mp_slippi_lgl_timeout_message(), a, b, c, arg0,
+                          NULL);
         return;
     }
     if (big_thing->start.x5_1) {

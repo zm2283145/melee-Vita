@@ -1,4 +1,5 @@
 #include "mnstagesel.h"
+#include <melee/slippi/slippi_online.h>
 
 #include <placeholder.h>
 
@@ -956,6 +957,12 @@ void mnStageSel_Scene_OnFrame(void)
         mnStageSel_804D6CAD -= 0x1E;
     } else {
         mnStageSel_804D6CAD = 0;
+    }
+    if (mp_slippi_css_online() && (mnStageSel_804D6CA0 & HSD_PAD_Z) &&
+        mnStageSel_804D6CAF == 0)
+    {
+        /* Slippi's FrozenStadiumToggle. */
+        mp_slippi_sss_toggle_alt();
     }
     if (mnStageSel_804D6CA4 != 0) {
         mnStageSel_804D6CA4 -= 1;

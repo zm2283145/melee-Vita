@@ -1,3 +1,4 @@
+#include <melee/slippi/slippi_ucf.h>
 #include "ftCo_Turn.h"
 
 #include <melee/ft/forward.h>
@@ -103,6 +104,7 @@ void ftCo_Turn_IASA(Fighter_GObj* gobj)
     }
     if (!fp->mv.co.turn.has_turned) {
         fp->facing_dir = -fp->facing_dir;
+        mp_ucf_dashback(fp);
     }
 
     RETURN_IF(ftCo_SpecialS_CheckInput(gobj));

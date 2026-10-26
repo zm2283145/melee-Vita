@@ -891,15 +891,15 @@ void ftPr_SpecialNTurn_Phys(HSD_GObj* gobj)
     f32 influence = da->xC8 * (x1C * slope);
     if (fp->coll_data.floor.normal.x > 0.0f) {
         if (x1C > 0.0f) {
-            fp->gr_vel += scale * (x1C + influence);
+            fp->gr_vel = MU_FMADDS(scale, x1C + influence, fp->gr_vel);
         } else {
-            fp->gr_vel += scale * (x1C + influence);
+            fp->gr_vel = MU_FMADDS(scale, x1C + influence, fp->gr_vel);
         }
     } else {
         if (x1C > 0.0f) {
-            fp->gr_vel += scale * (x1C - influence);
+            fp->gr_vel = MU_FMADDS(scale, x1C - influence, fp->gr_vel);
         } else {
-            fp->gr_vel += scale * (x1C - influence);
+            fp->gr_vel = MU_FMADDS(scale, x1C - influence, fp->gr_vel);
         }
     }
     fp->x74_self_accel.y = 0;

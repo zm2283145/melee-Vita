@@ -1403,10 +1403,10 @@ static int fn_801D8134(HSD_GObj* arg0, HSD_GObj* arg1)
         Ground_801C4DA0(&pos_gnd, &unk);
         ftLib_80086644(arg1, &pos_ft);
 
-        if ((pos_gnd.x - pos_ft.x) * (pos_gnd.x - pos_ft.x) +
-                (pos_gnd.y - pos_ft.y) * (pos_gnd.y - pos_ft.y) +
-                (pos_gnd.z - pos_ft.z) * (pos_gnd.z - pos_ft.z) <
-            yakumono_param->unk28 * yakumono_param->unk28)
+        if (MU_P((pos_gnd.x - pos_ft.x) * (pos_gnd.x - pos_ft.x)) +
+                MU_P((pos_gnd.y - pos_ft.y) * (pos_gnd.y - pos_ft.y)) +
+                MU_P((pos_gnd.z - pos_ft.z) * (pos_gnd.z - pos_ft.z)) <
+            MU_P(yakumono_param->unk28 * yakumono_param->unk28))
         {
             rand_val = HSD_Randf();
             diff = yakumono_param->unk24 - yakumono_param->unk20;
